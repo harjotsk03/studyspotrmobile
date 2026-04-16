@@ -9,6 +9,7 @@ import { Gabarito_400Regular, Gabarito_500Medium, Gabarito_600SemiBold, Gabarito
 import { InstrumentSans_400Regular, InstrumentSans_400Regular_Italic, InstrumentSans_500Medium, InstrumentSans_500Medium_Italic, InstrumentSans_600SemiBold, InstrumentSans_600SemiBold_Italic, InstrumentSans_700Bold, InstrumentSans_700Bold_Italic } from '@expo-google-fonts/instrument-sans';
 import { Colors } from './constants/Colors';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { SpotsProvider } from "./context/SpotsContext";
 
 import FeedScreen from './screens/FeedScreen';
 import CommunityScreen from './screens/CommunityScreen';
@@ -148,10 +149,12 @@ export default function App() {
 
   return (
     <AuthProvider>
-      <NavigationContainer>
-        <StatusBar style="dark" />
-        <AppContent />
-      </NavigationContainer>
+      <SpotsProvider>
+        <NavigationContainer>
+          <StatusBar style="dark" />
+          <AppContent />
+        </NavigationContainer>
+      </SpotsProvider>
     </AuthProvider>
   );
 }

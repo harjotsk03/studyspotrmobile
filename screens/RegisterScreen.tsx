@@ -60,8 +60,15 @@ export default function RegisterScreen() {
       );
       const data = await res.json();
 
-      if (!res.ok || data.exists || data.message != "Email is available.") {
-        setEmailError(data.message || "This email is already taken.");
+      console.log("validateStep0", data);
+
+      if (!res.ok || data.exists) {
+        setEmailError(data?.error || "This email is already taken.");
+        return false;
+      }
+
+      if (!res.ok || data.message != "Email is available.") {
+        setEmailError(data?.message || "This email is already taken.");
         return false;
       }
 

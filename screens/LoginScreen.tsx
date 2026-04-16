@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   Alert,
+  Pressable,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -14,6 +15,7 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Fonts } from "../constants/Fonts";
 import Button from "../components/Button";
 import Input from "../components/Input";
+import { Check, Circle, CircleCheck } from "lucide-react-native";
 
 type AuthStackParamList = {
   LoginScreen: undefined;
@@ -27,6 +29,7 @@ export default function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -49,8 +52,12 @@ export default function LoginScreen() {
         return;
       }
 
-      await login(data.user, data.access_token, data.refresh_token);
-      Alert.alert("Welcome", `${data.user.userProfile.first_name} ${data.user.userProfile.last_name}!`);
+      await login(data.user, data.access_token, data.refresh_token, rememberMe);
+      const firstName =
+        data.user?.userProfile?.first_name ?? data.user?.first_name ?? "";
+      const lastName =
+        data.user?.userProfile?.last_name ?? data.user?.last_name ?? "";
+      Alert.alert("Welcome", `${firstName} ${lastName}`.trim() || "Welcome!");
     } catch {
       Alert.alert("Network error", "Could not reach the server.");
     } finally {
@@ -87,12 +94,30 @@ export default function LoginScreen() {
             containerStyle={styles.fieldGap}
           />
 
-          <TouchableOpacity
-            style={styles.forgotPasswordButton}
-            onPress={() => navigation.navigate("ForgotPasswordScreen")}
-          >
-            <Text style={styles.forgotPasswordText}>Forgot your password?</Text>
-          </TouchableOpacity>
+          <View style={styles.actionsRow}>
+            <Pressable
+              style={styles.rememberMeButton}
+              onPress={() => setRememberMe((current) => !current)}
+            >
+              <View>
+                {rememberMe ? (
+                  <CircleCheck size={18} color={Colors.accent} />
+                ) : (
+                  <Circle size={18} color={Colors.dark} />
+                )}
+              </View>
+              <Text style={styles.rememberMeText}>Remember me</Text>
+            </Pressable>
+
+            <TouchableOpacity
+              style={styles.forgotPasswordButton}
+              onPress={() => navigation.navigate("ForgotPasswordScreen")}
+            >
+              <Text style={styles.forgotPasswordText}>
+                Forgot your password?
+              </Text>
+            </TouchableOpacity>
+          </View>
 
           <Button
             label="Log In"
@@ -108,7 +133,8 @@ export default function LoginScreen() {
           onPress={() => navigation.navigate("RegisterScreen")}
         >
           <Text style={styles.registerText}>
-            Don't have an account? <Text style={styles.registerTextLink}>Register</Text>
+            Don't have an account?{" "}
+            <Text style={styles.registerTextLink}>Register</Text>
           </Text>
         </TouchableOpacity>
       </View>
@@ -158,13 +184,47 @@ const styles = StyleSheet.create({
   fieldGap: {
     marginTop: 16,
   },
+  actionsRow: {
+    marginTop: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
   registerTextLink: {
     color: Colors.accent,
     fontFamily: Fonts.gabarito.medium,
   },
+  rememberMeButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  checkbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: "#CFCFCF",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#fff",
+  },
+  checkboxChecked: {
+    backgroundColor: Colors.accent,
+    borderColor: Colors.accent,
+  },
+  checkboxMark: {
+    color: "#fff",
+    fontSize: 11,
+    fontFamily: Fonts.gabarito.bold,
+  },
+  rememberMeText: {
+    color: Colors.dark,
+    fontFamily: Fonts.instrument.medium,
+    fontSize: 13,
+  },
   forgotPasswordButton: {
-    marginTop: 16,
-    width: "100%",
     alignItems: "flex-end",
   },
   forgotPasswordText: {

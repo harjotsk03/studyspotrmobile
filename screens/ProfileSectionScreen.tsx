@@ -99,13 +99,57 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
     }
   }, [section]);
 
+  const getErrorMessage = (data: unknown) => {
+    if (!data || typeof data !== "object") {
+      return "";
+    }
+
+    const error = "error" in data ? data.error : undefined;
+    const message = "message" in data ? data.message : undefined;
+    return typeof error === "string"
+      ? error
+      : typeof message === "string"
+        ? message
+        : "";
+  };
+
+  const shouldLogoutForExpiredToken = (status: number, data: unknown) => {
+    const message = getErrorMessage(data).toLowerCase();
+    return (
+      status === 403 ||
+      message.includes("expired token") ||
+      message.includes("token expired") ||
+      message.includes("jwt expired")
+    );
+  };
+
+  const fetchWithAuthGuard = async (
+    request: (accessToken: string) => Promise<Response>,
+  ) => {
+    if (!token) {
+      throw new Error("You are not logged in.");
+    }
+
+    const response = await request(token);
+    const data = await response.json().catch(() => null);
+
+    if (shouldLogoutForExpiredToken(response.status, data)) {
+      await logout();
+      throw new Error(
+        getErrorMessage(data) || "Session expired. Please log in again.",
+      );
+    }
+
+    return { response, data };
+  };
+
   const handleSave = async () => {
     if (section === 'settings') {
       return;
     }
 
-    if (!user?.id || !token) {
-      Alert.alert('Error', 'Could not find your profile.');
+    if (!user?.id) {
+      Alert.alert("Error", "Could not find your profile.");
       return;
     }
 
@@ -130,22 +174,22 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
 
     setSaving(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/auth/update-profile`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          user_id: user.id,
-          ...nextValues,
+      const { response, data } = await fetchWithAuthGuard((accessToken) =>
+        fetch(`${API_BASE_URL}/api/v1/auth/update-profile`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            user_id: user.id,
+            ...nextValues,
+          }),
         }),
-      });
+      );
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error ?? 'Failed to update profile.');
+      if (!response.ok) {
+        throw new Error(getErrorMessage(data) || "Failed to update profile.");
       }
 
       await updateProfile(data.user ?? nextValues);
@@ -159,27 +203,26 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
   };
 
   const handleDeleteAccount = async () => {
-    if (!token) {
-      Alert.alert('Error', 'You are not logged in.');
-      return;
-    }
-
     setDeleting(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/auth/deleteAccount`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const { response, data } = await fetchWithAuthGuard((accessToken) =>
+        fetch(`${API_BASE_URL}/api/v1/auth/deleteAccount`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }),
+      );
 
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.message ?? 'Failed to delete account');
+      if (!response.ok) {
+        throw new Error(getErrorMessage(data) || "Failed to delete account");
       }
 
       setShowDeleteModal(false);
       await logout();
     } catch (err: any) {
-      Alert.alert('Error', err.message ?? 'Something went wrong. Please try again.');
+      Alert.alert(
+        "Error",
+        err.message ?? "Something went wrong. Please try again.",
+      );
     } finally {
       setDeleting(false);
     }
