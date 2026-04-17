@@ -9,6 +9,7 @@ import { Gabarito_400Regular, Gabarito_500Medium, Gabarito_600SemiBold, Gabarito
 import { InstrumentSans_400Regular, InstrumentSans_400Regular_Italic, InstrumentSans_500Medium, InstrumentSans_500Medium_Italic, InstrumentSans_600SemiBold, InstrumentSans_600SemiBold_Italic, InstrumentSans_700Bold, InstrumentSans_700Bold_Italic } from '@expo-google-fonts/instrument-sans';
 import { Colors } from './constants/Colors';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { SearchStateProvider } from "./context/SearchStateContext";
 import { SpotsProvider } from "./context/SpotsContext";
 
 import FeedScreen from './screens/FeedScreen';
@@ -17,6 +18,9 @@ import CommunityDetailScreen, { type CommunityStackParamList } from './screens/C
 import ProfileSectionScreen, { type ProfileStackParamList } from './screens/ProfileSectionScreen';
 import SearchScreen from './screens/SearchScreen';
 import SpotsScreen from './screens/SpotsScreen';
+import SpotDetailScreen, {
+  type SpotsStackParamList,
+} from "./screens/SpotDetailScreen";
 import ProfileScreen from './screens/ProfileScreen';
 import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/RegisterScreen';
@@ -25,6 +29,7 @@ import { Fonts } from './constants/Fonts';
 
 const Tab = createBottomTabNavigator();
 const CommunityStack = createNativeStackNavigator<CommunityStackParamList>();
+const SpotsStack = createNativeStackNavigator<SpotsStackParamList>();
 const ProfileStack = createNativeStackNavigator<ProfileStackParamList>();
 const AuthStack = createNativeStackNavigator();
 
@@ -45,6 +50,21 @@ function ProfileStackScreen() {
       <ProfileStack.Screen name="ProfileHome" component={ProfileScreen} />
       <ProfileStack.Screen name="ProfileSection" component={ProfileSectionScreen} />
     </ProfileStack.Navigator>
+  );
+}
+
+function SpotsStackScreen() {
+  return (
+    <SpotsStack.Navigator
+      screenOptions={{
+        headerShown: false,
+        animation: "slide_from_right",
+        gestureEnabled: true,
+      }}
+    >
+      <SpotsStack.Screen name="SpotsHome" component={SpotsScreen} />
+      <SpotsStack.Screen name="SpotDetail" component={SpotDetailScreen} />
+    </SpotsStack.Navigator>
   );
 }
 
@@ -97,25 +117,25 @@ function AppContent() {
           );
         },
         tabBarActiveTintColor: Colors.accent,
-        tabBarInactiveTintColor: '#999',
+        tabBarInactiveTintColor: "#999",
         tabBarLabelStyle: {
           fontFamily: Fonts.gabarito.medium,
           fontSize: 12,
         },
         tabBarStyle: {
-          backgroundColor: '#fff',
+          backgroundColor: "#fff",
           height: 88,
           borderTopWidth: 1,
           paddingTop: 10,
           paddingHorizontal: 8,
-          borderTopColor: '#eee',
+          borderTopColor: "#eee",
         },
       })}
     >
       <Tab.Screen name="Feed" component={FeedScreen} />
       <Tab.Screen name="Community" component={CommunityStackScreen} />
       <Tab.Screen name="Search" component={SearchScreen} />
-      <Tab.Screen name="Spots" component={SpotsScreen} />
+      <Tab.Screen name="Spots" component={SpotsStackScreen} />
       <Tab.Screen name="Profile" component={ProfileStackScreen} />
     </Tab.Navigator>
   );
@@ -149,12 +169,14 @@ export default function App() {
 
   return (
     <AuthProvider>
-      <SpotsProvider>
-        <NavigationContainer>
-          <StatusBar style="dark" />
-          <AppContent />
-        </NavigationContainer>
-      </SpotsProvider>
+      <SearchStateProvider>
+        <SpotsProvider>
+          <NavigationContainer>
+            <StatusBar style="dark" />
+            <AppContent />
+          </NavigationContainer>
+        </SpotsProvider>
+      </SearchStateProvider>
     </AuthProvider>
   );
 }

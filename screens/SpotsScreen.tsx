@@ -1,5 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
+import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as Location from "expo-location";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -32,15 +34,53 @@ import { getSpotDescription } from "../utils/getSpotDescription";
 import { getSpotScore } from "../utils/getSpotScore";
 import { getSpotSearchText } from "../utils/getSpotSearchText";
 import { getSpotTitle } from "../utils/getSpotTitle";
+import type { SpotsStackParamList } from "./SpotDetailScreen";
 
 const CAROUSEL_GAP = 12;
+const DEFAULT_USER_REGION_DELTA = 0.012;
 const MINIMAL_MAP_STYLE = [
   {
     featureType: "poi",
     stylers: [{ visibility: "off" }],
   },
   {
+    featureType: "poi.business",
+    stylers: [{ visibility: "off" }],
+  },
+  {
+    featureType: "poi.medical",
+    stylers: [{ visibility: "off" }],
+  },
+  {
+    featureType: "poi.school",
+    stylers: [{ visibility: "off" }],
+  },
+  {
+    featureType: "poi.government",
+    stylers: [{ visibility: "off" }],
+  },
+  {
+    featureType: "poi.place_of_worship",
+    stylers: [{ visibility: "off" }],
+  },
+  {
+    featureType: "poi.attraction",
+    stylers: [{ visibility: "off" }],
+  },
+  {
+    featureType: "poi.park",
+    stylers: [{ visibility: "off" }],
+  },
+  {
     featureType: "transit",
+    stylers: [{ visibility: "off" }],
+  },
+  {
+    featureType: "transit.station",
+    stylers: [{ visibility: "off" }],
+  },
+  {
+    featureType: "transit.line",
     stylers: [{ visibility: "off" }],
   },
   {
@@ -63,6 +103,8 @@ export default function SpotsScreen() {
   const { width } = useWindowDimensions();
   const mapRef = useRef<MapView | null>(null);
   const previousSearchValue = useRef("");
+  const navigation =
+    useNavigation<NativeStackNavigationProp<SpotsStackParamList>>();
 
   const {
     spots,
@@ -84,6 +126,12 @@ export default function SpotsScreen() {
   const trimmedQuery = searchQuery.trim().toLowerCase();
   const hasActiveSearch = trimmedQuery.length > 0;
   const effectiveViewMode: SpotsViewMode = hasActiveSearch ? "list" : viewMode;
+  const currentFilterLabel =
+    filterKey === "mapReady"
+      ? "Map Ready"
+      : filterKey === "nearby"
+        ? "Nearby"
+        : "All";
 
   useEffect(() => {
     const previousTrimmed = previousSearchValue.current.trim();
@@ -166,57 +214,37 @@ export default function SpotsScreen() {
     [filteredSpots],
   );
 
+  const centerOnUserLocation = () => {
+    if (!userLocation || !mapRef.current) {
+      return;
+    }
+
+    setActiveSpotId(null);
+    mapRef.current.animateToRegion({
+      latitude: userLocation.latitude,
+      longitude: userLocation.longitude,
+      latitudeDelta: DEFAULT_USER_REGION_DELTA,
+      longitudeDelta: DEFAULT_USER_REGION_DELTA,
+    });
+  };
+
   useEffect(() => {
     if (
       effectiveViewMode !== "map" ||
       Platform.OS === "web" ||
-      !mapRef.current
+      !userLocation ||
+      !mapRef.current ||
+      activeSpotId
     ) {
       return;
     }
 
-    const coordinates = mapSpots
-      .map((spot) => getSpotCoordinates(spot))
-      .filter(
-        (coordinate): coordinate is { latitude: number; longitude: number } =>
-          coordinate !== null,
-      );
-
-    if (userLocation) {
-      coordinates.push(userLocation);
-    }
-
-    if (!coordinates.length) {
-      return;
-    }
-
     const timeoutId = setTimeout(() => {
-      if (!mapRef.current) {
-        return;
-      }
-
-      if (coordinates.length === 1) {
-        mapRef.current.animateToRegion({
-          ...coordinates[0],
-          latitudeDelta: 0.02,
-          longitudeDelta: 0.02,
-        });
-        return;
-      }
-
-      mapRef.current.fitToCoordinates(coordinates, {
-        animated: true,
-        edgePadding: {
-          top: 140,
-          right: 60,
-          bottom: tabBarHeight + 220,
-          left: 60,
-        },
-      });
+      centerOnUserLocation();
     }, 250);
 
     return () => clearTimeout(timeoutId);
-  }, [effectiveViewMode, mapSpots, tabBarHeight, userLocation]);
+  }, [activeSpotId, effectiveViewMode, userLocation]);
 
   const cardWidth = Math.min(width * 0.78, 320);
 
@@ -255,10 +283,8 @@ export default function SpotsScreen() {
         width={compact ? cardWidth : undefined}
         showViewOnMap={effectiveViewMode === "list"}
         onPress={() => {
-          focusSpotOnMap(spot);
-          if (!hasActiveSearch) {
-            setViewMode("map");
-          }
+          setActiveSpotId(spot.id);
+          navigation.navigate("SpotDetail", { spot });
         }}
         onViewOnMap={() => {
           setViewMode("map");
@@ -302,87 +328,83 @@ export default function SpotsScreen() {
         </View>
 
         <View style={styles.toolbarRow}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filterRow}
-          >
-            {[
-              { key: "all", label: "All" },
-              { key: "mapReady", label: "Map Ready" },
-              { key: "nearby", label: "Nearby" },
-            ].map((filter) => {
-              const selected = filterKey === filter.key;
-              const disabled = filter.key === "nearby" && !userLocation;
-
-              return (
-                <Pressable
-                  key={filter.key}
-                  onPress={() =>
-                    !disabled && setFilterKey(filter.key as SpotFilterKey)
-                  }
-                  style={[
-                    styles.filterChip,
-                    selected && styles.filterChipActive,
-                    disabled && styles.filterChipDisabled,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.filterChipLabel,
-                      selected && styles.filterChipLabelActive,
-                    ]}
-                  >
-                    {filter.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-
-          <View style={styles.viewToggle}>
+          <View style={styles.toolbarActions}>
             <Pressable
-              onPress={() => setViewMode("map")}
-              style={[
-                styles.viewToggleButton,
-                viewMode === "map" && styles.viewToggleButtonActive,
-              ]}
+              onPress={() =>
+                setFilterKey((current) => {
+                  if (current === "all") {
+                    return "mapReady";
+                  }
+
+                  if (current === "mapReady") {
+                    return userLocation ? "nearby" : "all";
+                  }
+
+                  return "all";
+                })
+              }
+              style={styles.iconActionButton}
             >
-              <Ionicons
-                name="map"
-                size={16}
-                color={viewMode === "map" ? "#fff" : Colors.dark}
-              />
-              <Text
-                style={[
-                  styles.viewToggleLabel,
-                  viewMode === "map" && styles.viewToggleLabelActive,
-                ]}
-              >
-                Map
-              </Text>
+              <Ionicons name="options-outline" size={16} color={Colors.dark} />
+              <Text style={styles.iconActionLabel}>{currentFilterLabel}</Text>
             </Pressable>
 
-            <Pressable
-              onPress={() => setViewMode("list")}
-              style={[
-                styles.viewToggleButton,
-                viewMode === "list" && styles.viewToggleButtonActive,
-              ]}
-            >
-              <Ionicons
-                name="list"
-                size={16}
-                color={viewMode === "list" ? "#fff" : Colors.dark}
-              />
-              <Text
+            <View style={styles.viewToggle}>
+              <Pressable
+                onPress={() => setViewMode("map")}
                 style={[
-                  styles.viewToggleLabel,
-                  viewMode === "list" && styles.viewToggleLabelActive,
+                  styles.viewToggleButton,
+                  viewMode === "map" && styles.viewToggleButtonActive,
                 ]}
               >
-                List
-              </Text>
+                <Ionicons
+                  name="map"
+                  size={16}
+                  color={viewMode === "map" ? "#fff" : Colors.dark}
+                />
+                <Text
+                  style={[
+                    styles.viewToggleLabel,
+                    viewMode === "map" && styles.viewToggleLabelActive,
+                  ]}
+                >
+                  Map
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => setViewMode("list")}
+                style={[
+                  styles.viewToggleButton,
+                  viewMode === "list" && styles.viewToggleButtonActive,
+                ]}
+              >
+                <Ionicons
+                  name="list"
+                  size={16}
+                  color={viewMode === "list" ? "#fff" : Colors.dark}
+                />
+                <Text
+                  style={[
+                    styles.viewToggleLabel,
+                    viewMode === "list" && styles.viewToggleLabelActive,
+                  ]}
+                >
+                  List
+                </Text>
+              </Pressable>
+            </View>
+
+            <Pressable
+              onPress={centerOnUserLocation}
+              style={[
+                styles.iconActionButton,
+                !userLocation && styles.iconActionButtonDisabled,
+              ]}
+              disabled={!userLocation}
+            >
+              <Ionicons name="locate-outline" size={16} color={Colors.dark} />
+              <Text style={styles.iconActionLabel}>My Spot</Text>
             </Pressable>
           </View>
         </View>
@@ -419,11 +441,12 @@ export default function SpotsScreen() {
               initialRegion={{
                 latitude: userLocation?.latitude ?? 37.78825,
                 longitude: userLocation?.longitude ?? -122.4324,
-                latitudeDelta: 0.05,
-                longitudeDelta: 0.05,
+                latitudeDelta: DEFAULT_USER_REGION_DELTA,
+                longitudeDelta: DEFAULT_USER_REGION_DELTA,
               }}
-              showsUserLocation={false}
+              showsUserLocation
               showsMyLocationButton={false}
+              showsPointsOfInterest={false}
               showsCompass={false}
               showsBuildings={false}
               showsTraffic={false}
@@ -443,7 +466,10 @@ export default function SpotsScreen() {
                     anchor={{ x: 0.5, y: 1 }}
                     title={getSpotTitle(spot)}
                     description={getSpotDescription(spot)}
-                    onPress={() => setActiveSpotId(spot.id)}
+                    onPress={() => {
+                      setActiveSpotId(spot.id);
+                      navigation.navigate("SpotDetail", { spot });
+                    }}
                   >
                     <SpotMapPin
                       rating={getSpotScore(spot)}
@@ -550,34 +576,14 @@ const styles = StyleSheet.create({
   toolbarRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    justifyContent: "space-between",
+    gap: 10,
   },
-  filterRow: {
-    gap: 8,
-    paddingRight: 8,
-  },
-  filterChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#E6E6E6",
-  },
-  filterChipActive: {
-    backgroundColor: Colors.dark,
-    borderColor: Colors.dark,
-  },
-  filterChipDisabled: {
-    opacity: 0.45,
-  },
-  filterChipLabel: {
-    fontFamily: Fonts.gabarito.medium,
-    fontSize: 13,
-    color: Colors.dark,
-  },
-  filterChipLabelActive: {
-    color: "#fff",
+  toolbarActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap",
   },
   viewToggle: {
     flexDirection: "row",
@@ -605,6 +611,25 @@ const styles = StyleSheet.create({
   },
   viewToggleLabelActive: {
     color: "#fff",
+  },
+  iconActionButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#E6E6E6",
+  },
+  iconActionButtonDisabled: {
+    opacity: 0.45,
+  },
+  iconActionLabel: {
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 13,
+    color: Colors.dark,
   },
   centeredState: {
     flex: 1,

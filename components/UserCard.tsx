@@ -9,6 +9,8 @@ interface UserCardProps {
   avatar?: ImageSourcePropType | string;
   onFollow?: () => void;
   followed?: boolean;
+  requested?: boolean;
+  loading?: boolean;
 }
 
 export default function UserCard({
@@ -17,8 +19,16 @@ export default function UserCard({
   avatar,
   onFollow,
   followed = false,
+  requested = false,
+  loading = false,
 }: UserCardProps) {
   const avatarSource = typeof avatar === 'string' ? { uri: avatar } : avatar;
+  const buttonLabel = requested
+    ? 'Requested'
+    : followed
+      ? 'Remove Friend'
+      : 'Add Friend';
+  const buttonVariant = requested || followed ? 'secondary' : 'default';
 
   return (
     <View style={styles.container}>
@@ -27,21 +37,29 @@ export default function UserCard({
           <Image source={avatarSource} style={styles.avatar} />
         ) : (
           <View style={[styles.avatar, styles.avatarPlaceholder]}>
-            <Text style={styles.avatarInitial}>{name.charAt(0).toUpperCase()}</Text>
+            <Text style={styles.avatarInitial}>
+              {name.charAt(0).toUpperCase()}
+            </Text>
           </View>
         )}
 
         <View style={styles.info}>
-          <Text style={styles.name} numberOfLines={1}>{name}</Text>
-          <Text style={styles.subtext} numberOfLines={1}>{subtext}</Text>
+          <Text style={styles.name} numberOfLines={1}>
+            {name}
+          </Text>
+          <Text style={styles.subtext} numberOfLines={1}>
+            {subtext}
+          </Text>
         </View>
       </View>
 
       <Button
-        label={followed ? 'Following' : 'Follow'}
-        variant={followed ? 'outline' : 'default'}
+        label={buttonLabel}
+        variant={buttonVariant}
         size="sm"
         fullWidth={true}
+        disabled={requested}
+        loading={loading}
         onPress={onFollow}
       />
     </View>
@@ -57,7 +75,7 @@ const styles = StyleSheet.create({
     width: 160,
     backgroundColor: "#fff",
     borderRadius: 24,
-    padding: 17,
+    padding: 14,
     borderWidth: 1,
     borderColor: "#D5D5D5",
   },
@@ -87,9 +105,10 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   name: {
+    textTransform: "capitalize",
     marginTop: 10,
     fontFamily: Fonts.instrument.semiBold,
-    fontSize: 16,
+    fontSize: 15,
     color: Colors.dark,
   },
   subtext: {

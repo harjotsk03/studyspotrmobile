@@ -1,12 +1,23 @@
-import { StyleSheet, Text, View } from 'react-native';
-import { Colors } from '../constants/Colors';
-import TopNav from '../components/TopNav';
+import { StyleSheet, View } from "react-native";
+import SearchModeToggle from "../components/SearchModeToggle";
+import { Colors } from "../constants/Colors";
+import TopNav from "../components/TopNav";
+import { useSearchState } from "../context/SearchStateContext";
+import UsersSearch from "../components/Search/UsersSearch";
+import CommunitiesSearch from "../components/Search/CommunitySearch";
 
 export default function SearchScreen() {
+  const { searchMode, setSearchMode } = useSearchState();
+
   return (
     <View style={styles.container}>
       <TopNav />
-      <Text style={styles.title}>Search</Text>
+
+      <View style={styles.content}>
+        <SearchModeToggle value={searchMode} onChange={setSearchMode} />
+      </View>
+
+      {searchMode === "users" ? <UsersSearch /> : <CommunitiesSearch />}
     </View>
   );
 }
@@ -16,10 +27,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.light,
   },
-  title: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: Colors.dark,
+  content: {
     paddingHorizontal: 20,
   },
 });

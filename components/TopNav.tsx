@@ -30,10 +30,13 @@ export default function TopNav({ onNotificationPress, onProfilePress }: TopNavPr
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
 
+
   const firstName = profile?.userProfile?.first_name ?? '';
   const initial = firstName.charAt(0).toUpperCase();
   const avatarColor = getColorForName(firstName || 'U');
-  const profileImage = profile?.userProfile?.avatar as string | undefined;
+  const profileImage = profile?.userProfile?.profile_photo as
+    | string
+    | undefined;
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>

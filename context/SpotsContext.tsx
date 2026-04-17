@@ -17,8 +17,25 @@ export type StudySpot = {
   title?: string;
   name?: string;
   description?: string;
+  address?: string;
   latitude?: number;
   longitude?: number;
+  noise_level?: string;
+  noice_level?: string;
+  lighting?: string;
+  tables?: string;
+  food_drink_allowed?: boolean;
+  wifi_available?: boolean;
+  outlets_available?: boolean;
+  whiteboards_available?: boolean;
+  group_work_friendly?: boolean;
+  open_time?: string;
+  close_time?: string;
+  rating?: number | string;
+  rating_count?: number | string;
+  created_by_name?: string;
+  created_by_profile_photo?: string;
+  image_url?: string;
   [key: string]: unknown;
 };
 
