@@ -15,6 +15,10 @@ import { SpotsProvider } from "./context/SpotsContext";
 import FeedScreen from './screens/FeedScreen';
 import CommunityScreen from './screens/CommunityScreen';
 import CommunityDetailScreen, { type CommunityStackParamList } from './screens/CommunityDetailScreen';
+import CreateCommunityScreen from "./screens/CreateCommunityScreen";
+import EditCommunityScreen from "./screens/EditCommunityScreen";
+import CommunityEventsScreen from "./screens/CommunityEventsScreen";
+import CreateEventScreen from "./screens/CreateEventScreen";
 import ProfileSectionScreen, { type ProfileStackParamList } from './screens/ProfileSectionScreen';
 import SearchScreen from './screens/SearchScreen';
 import SpotsScreen from './screens/SpotsScreen';
@@ -35,9 +39,30 @@ const AuthStack = createNativeStackNavigator();
 
 function CommunityStackScreen() {
   return (
-    <CommunityStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
+    <CommunityStack.Navigator
+      screenOptions={{ headerShown: false, animation: "slide_from_right" }}
+    >
       <CommunityStack.Screen name="CommunityList" component={CommunityScreen} />
-      <CommunityStack.Screen name="CommunityDetail" component={CommunityDetailScreen} />
+      <CommunityStack.Screen
+        name="CommunityDetail"
+        component={CommunityDetailScreen}
+      />
+      <CommunityStack.Screen
+        name="CreateCommunity"
+        component={CreateCommunityScreen}
+      />
+      <CommunityStack.Screen
+        name="EditCommunity"
+        component={EditCommunityScreen}
+      />
+      <CommunityStack.Screen
+        name="CommunityEvents"
+        component={CommunityEventsScreen}
+      />
+      <CommunityStack.Screen
+        name="CreateEvent"
+        component={CreateEventScreen}
+      />
     </CommunityStack.Navigator>
   );
 }

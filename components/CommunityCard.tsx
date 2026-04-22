@@ -55,13 +55,21 @@ export default function CommunityCard({
       <Text style={styles.name} numberOfLines={1}>
         {name}
       </Text>
-      <Text style={styles.members}>{members.toLocaleString()} members</Text>
+      <Text style={styles.members}>
+        {members.toLocaleString()} {members === 1 ? "member" : "members"}
+      </Text>
       <Text style={styles.description} numberOfLines={2}>
         {description}
       </Text>
 
       <View style={styles.buttonContainer}>
-        <Button label={"View"} variant={"secondary"} size="default" fullWidth={true} onPress={onPress} />
+        <Button
+          label={"View"}
+          variant={"secondary"}
+          size="default"
+          fullWidth={true}
+          onPress={onPress}
+        />
       </View>
     </Pressable>
   );
@@ -90,8 +98,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   iconImage: {
-    width: 36,
-    height: 36,
+    width: 56,
+    height: 56,
     borderRadius: 8,
   },
   iconInitial: {

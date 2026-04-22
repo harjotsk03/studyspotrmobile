@@ -1,121 +1,144 @@
-import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Colors } from '../constants/Colors';
-import { Fonts } from '../constants/Fonts';
-import Button from '../components/Button';
-import CommunityCard from '../components/CommunityCard';
-import TopNav from '../components/TopNav';
-import type { CommunityStackParamList } from './CommunityDetailScreen';
+import { useEffect, useState } from "react";
+import {
+  ActivityIndicator,
+  Image,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { Colors } from "../constants/Colors";
+import { Fonts } from "../constants/Fonts";
+import { API_BASE_URL } from "../constants/Api";
+import { useAuth } from "../context/AuthContext";
+import Button from "../components/Button";
+import CommunityCard from "../components/CommunityCard";
+import TopNav from "../components/TopNav";
+import type {
+  CommunityData,
+  CommunityStackParamList,
+} from "./CommunityDetailScreen";
 
-const COMMUNITIES = [
-  {
-    id: '1',
-    name: 'Sikhs in Tech Canada',
-    members: 342,
-    description: 'A community for Sikh students in tech across Canada. Resources, mentorship...',
-    color: '#FF9900',
-    memberAvatars: [
-      'https://i.pravatar.cc/100?u=m1',
-      'https://i.pravatar.cc/100?u=m2',
-      'https://i.pravatar.cc/100?u=m3',
-    ],
-  },
-  {
-    id: '2',
-    name: 'UBC Study Group',
-    members: 1204,
-    description: 'Find study partners, share notes, and ace your exams together at UBC.',
-    color: '#1A61A8',
-    memberAvatars: [
-      'https://i.pravatar.cc/100?u=m4',
-      'https://i.pravatar.cc/100?u=m5',
-      'https://i.pravatar.cc/100?u=m6',
-    ],
-  },
-  {
-    id: '3',
-    name: 'Women in STEM YVR',
-    members: 578,
-    description: 'Empowering women in science, technology, engineering, and math in Vancouver.',
-    color: '#E84393',
-    memberAvatars: [
-      'https://i.pravatar.cc/100?u=m7',
-      'https://i.pravatar.cc/100?u=m8',
-      'https://i.pravatar.cc/100?u=m9',
-    ],
-  },
-  {
-    id: '4',
-    name: 'Toronto Tech Meetups',
-    members: 2310,
-    description: 'Weekly meetups for developers, designers, and founders across the GTA.',
-    color: '#6C5CE7',
-    memberAvatars: [
-      'https://i.pravatar.cc/100?u=m10',
-      'https://i.pravatar.cc/100?u=m11',
-      'https://i.pravatar.cc/100?u=m12',
-    ],
-  },
-  {
-    id: '5',
-    name: 'Coffee & Code',
-    members: 189,
-    description: 'Casual co-working sessions at local cafés. Bring your laptop and good vibes.',
-    color: '#A0522D',
-    memberAvatars: [
-      'https://i.pravatar.cc/100?u=m13',
-      'https://i.pravatar.cc/100?u=m14',
-      'https://i.pravatar.cc/100?u=m15',
-    ],
-  },
-  {
-    id: '6',
-    name: 'Design Systems Club',
-    members: 445,
-    description: 'Discuss design tokens, component libraries, and building scalable UI systems.',
-    color: '#00B894',
-    memberAvatars: [
-      'https://i.pravatar.cc/100?u=m16',
-      'https://i.pravatar.cc/100?u=m17',
-      'https://i.pravatar.cc/100?u=m18',
-    ],
-  },
-  {
-    id: '7',
-    name: 'ML Paper Reading',
-    members: 267,
-    description: 'Bi-weekly deep dives into the latest machine learning research papers.',
-    color: '#191919',
-    memberAvatars: [
-      'https://i.pravatar.cc/100?u=m19',
-      'https://i.pravatar.cc/100?u=m20',
-      'https://i.pravatar.cc/100?u=m21',
-    ],
-  },
-  {
-    id: '8',
-    name: 'Startup Founders YVR',
-    members: 831,
-    description: 'Connect with fellow founders, share wins, and get honest feedback.',
-    color: '#FDCB6E',
-    memberAvatars: [
-      'https://i.pravatar.cc/100?u=m22',
-      'https://i.pravatar.cc/100?u=m23',
-      'https://i.pravatar.cc/100?u=m24',
-    ],
-  },
+// Cycle through these when the API doesn't return a colour
+const FALLBACK_COLORS = [
+  "#FF9900",
+  "#1A61A8",
+  "#E84393",
+  "#6C5CE7",
+  "#A0522D",
+  "#00B894",
+  "#191919",
+  "#FDCB6E",
 ];
 
+interface ApiMember {
+  avatar_url?: string;
+  profile_photo?: string;
+}
+
+interface ApiCommunity {
+  id: string;
+  name: string;
+  description?: string;
+  member_count: number;
+  latest_members?: (ApiMember | string)[];
+  avatar_url?: string;
+  banner_url?: string;
+  color?: string;
+  category?: string;
+  is_public?: boolean;
+  user_role?: string;
+}
+
+function toMemberAvatars(latest_members?: (ApiMember | string)[]): string[] {
+  if (!latest_members) return [];
+  return latest_members
+    .map((m) =>
+      typeof m === "string" ? m : (m.avatar_url ?? m.profile_photo ?? ""),
+    )
+    .filter(Boolean) as string[];
+}
+
+function toCommunityData(api: ApiCommunity, index: number): CommunityData {
+  return {
+    id: api.id,
+    name: api.name,
+    description: api.description ?? "",
+    members: api.member_count,
+    icon: api.avatar_url,
+    banner_url: api.banner_url,
+    color: api.color ?? FALLBACK_COLORS[index % FALLBACK_COLORS.length],
+    category: api.category,
+    is_public: api.is_public,
+    user_role: api.user_role,
+    memberAvatars: toMemberAvatars(api.latest_members),
+  };
+}
+
 export default function CommunityScreen() {
-  const navigation = useNavigation<NativeStackNavigationProp<CommunityStackParamList>>();
+  const navigation =
+    useNavigation<NativeStackNavigationProp<CommunityStackParamList>>();
+  const { token } = useAuth();
+
+  const [communities, setCommunities] = useState<CommunityData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+
+  const fetchCommunities = async (isRefresh = false) => {
+    if (!token) return;
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+    setError("");
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/v1/communities?limit=20&offset=0`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+        },
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
+      const mapped: CommunityData[] = (json.communities as ApiCommunity[]).map(
+        (c, i) => toCommunityData(c, i),
+      );
+      setCommunities(mapped);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to load communities.",
+      );
+    } finally {
+      if (isRefresh) setRefreshing(false);
+      else setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void fetchCommunities();
+  }, [token]);
 
   return (
     <View style={styles.container}>
       <TopNav />
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => fetchCommunities(true)}
+            tintColor={Colors.primary}
+            colors={[Colors.primary]}
+          />
+        }
+      >
         <Image
-          source={require('../assets/communityheader.png')}
+          source={require("../assets/communityheader.png")}
           style={styles.headerImage}
           resizeMode="cover"
         />
@@ -124,7 +147,11 @@ export default function CommunityScreen() {
           <Text style={styles.subtitle}>
             Host events, share posts, meet new people and connect!
           </Text>
-          <Button label="Create a Community" variant="accent" onPress={() => {}} />
+          <Button
+            label="Create a Community"
+            variant="accent"
+            onPress={() => navigation.navigate("CreateCommunity")}
+          />
         </View>
 
         <View style={styles.titleContainer}>
@@ -138,15 +165,33 @@ export default function CommunityScreen() {
 
         <View style={styles.communitiesContainer}>
           <Text style={styles.sectionTitle}>Popular Communities Near You</Text>
-          {COMMUNITIES.map((community) => (
+
+          {loading && (
+            <ActivityIndicator
+              size="large"
+              color={Colors.primary}
+              style={styles.loader}
+            />
+          )}
+
+          {!loading && !!error && <Text style={styles.errorText}>{error}</Text>}
+
+          {!loading && !error && communities.length === 0 && (
+            <Text style={styles.emptyText}>No communities found.</Text>
+          )}
+
+          {communities.map((community) => (
             <CommunityCard
               key={community.id}
               name={community.name}
               members={community.members}
               description={community.description}
+              icon={community.icon}
               color={community.color}
               memberAvatars={community.memberAvatars}
-              onPress={() => navigation.navigate('CommunityDetail', { community })}
+              onPress={() =>
+                navigation.navigate("CommunityDetail", { community })
+              }
             />
           ))}
         </View>
@@ -165,10 +210,10 @@ const styles = StyleSheet.create({
     marginTop: 6,
     paddingHorizontal: 16,
     paddingVertical: 14,
-    backgroundColor: '#ffffff',
+    backgroundColor: "#ffffff",
   },
   headerImage: {
-    width: '100%',
+    width: "100%",
     height: 124,
   },
   title: {
@@ -193,5 +238,22 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.gabarito.semiBold,
     color: Colors.dark,
     marginBottom: 14,
+  },
+  loader: {
+    marginTop: 32,
+  },
+  errorText: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14,
+    color: "#DC2626",
+    textAlign: "center",
+    marginTop: 24,
+  },
+  emptyText: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14,
+    color: "#888",
+    textAlign: "center",
+    marginTop: 24,
   },
 });
