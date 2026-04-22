@@ -194,7 +194,7 @@ export default function CreateEventScreen({ route }: Props) {
   const [endError, setEndError] = useState("");
 
   // Location section
-  const [locationOpen, setLocationOpen] = useState(false);
+  const [locationOpen, setLocationOpen] = useState(true);
   const [isOnline, setIsOnline] = useState(false);
   const [location, setLocation] = useState("");
   const [meetingUrl, setMeetingUrl] = useState("");
@@ -373,7 +373,7 @@ export default function CreateEventScreen({ route }: Props) {
             {communityName}
           </Text>
         </View>
-        <View style={styles.iconButton} />
+        <View style={[styles.iconButton, { opacity: 0 }]} />
       </View>
 
       <KeyboardAvoidingView
@@ -490,9 +490,7 @@ export default function CreateEventScreen({ route }: Props) {
                     onPress={() => openPicker("endTime")}
                   />
                 </View>
-                {!!endError && (
-                  <Text style={styles.errorText}>{endError}</Text>
-                )}
+                {!!endError && <Text style={styles.errorText}>{endError}</Text>}
 
                 {/* Inline picker — no Modal, renders directly */}
                 {pickerTarget !== null && (
@@ -698,7 +696,7 @@ const styles = StyleSheet.create({
   },
   fieldGap: { marginTop: 14 },
   textArea: { minHeight: 90, alignItems: "flex-start" },
-  dateRow: { flexDirection: "row", gap: 10 },
+  dateRow: { flexDirection: "column", gap: 10 },
   errorText: {
     fontFamily: Fonts.instrument.regular,
     fontSize: 12,

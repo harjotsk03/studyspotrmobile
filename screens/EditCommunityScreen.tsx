@@ -12,7 +12,6 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import * as ImagePicker from "expo-image-picker";
 import { useNavigation } from "@react-navigation/native";
 import type {
   NativeStackNavigationProp,
@@ -21,10 +20,8 @@ import type {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   ArrowLeft,
-  CameraIcon,
   FileTextIcon,
   GlobeIcon,
-  ImageIcon,
   LockIcon,
   TagIcon,
   TypeIcon,
@@ -42,7 +39,7 @@ import type {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const ICON_SIZE = 72;
+const ICON_SIZE = 72; // kept for layout spacing
 
 const CATEGORIES = [
   "Technology",
@@ -55,8 +52,6 @@ const CATEGORIES = [
   "Social",
   "Other",
 ];
-
-type ImageAsset = ImagePicker.ImagePickerAsset;
 
 type Props = NativeStackScreenProps<CommunityStackParamList, "EditCommunity">;
 
@@ -84,86 +79,6 @@ async function updateCommunity(
   return json.community as CommunityData;
 }
 
-async function getImageUploadUrls(
-  token: string,
-  communityId: string,
-  avatarAsset: ImageAsset | null,
-  bannerAsset: ImageAsset | null,
-) {
-  const body = {
-    avatar: avatarAsset
-      ? {
-          filename: avatarAsset.fileName ?? "avatar.jpg",
-          contentType: avatarAsset.mimeType ?? "image/jpeg",
-        }
-      : null,
-    banner: bannerAsset
-      ? {
-          filename: bannerAsset.fileName ?? "banner.jpg",
-          contentType: bannerAsset.mimeType ?? "image/jpeg",
-        }
-      : null,
-  };
-  const res = await fetch(
-    `${API_BASE_URL}/api/v1/communities/${communityId}/image-upload-urls`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(body),
-    },
-  );
-  const json = await res.json();
-  if (!res.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
-  return json as {
-    avatar?: { uploadUrl: string; path: string };
-    banner?: { uploadUrl: string; path: string };
-  };
-}
-
-async function uploadToSignedUrl(
-  uploadUrl: string,
-  fileUri: string,
-  contentType: string,
-) {
-  const fileRes = await fetch(fileUri);
-  const blob = await fileRes.blob();
-  const res = await fetch(uploadUrl, {
-    method: "PUT",
-    headers: { "Content-Type": contentType || "application/octet-stream" },
-    body: blob,
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Upload failed: HTTP ${res.status} ${text}`);
-  }
-}
-
-async function confirmImages(
-  token: string,
-  communityId: string,
-  avatarPath?: string,
-  bannerPath?: string,
-) {
-  const res = await fetch(
-    `${API_BASE_URL}/api/v1/communities/${communityId}/images`,
-    {
-      method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({ avatarPath, bannerPath }),
-    },
-  );
-  const json = await res.json();
-  if (!res.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
-}
-
 // ─── Screen ──────────────────────────────────────────────────────────────────
 
 export default function EditCommunityScreen({ route }: Props) {
@@ -182,36 +97,6 @@ export default function EditCommunityScreen({ route }: Props) {
   const [isPublic, setIsPublic] = useState(community.is_public ?? true);
   const [nameError, setNameError] = useState("");
 
-  // New image picks (null = unchanged)
-  const [avatarAsset, setAvatarAsset] = useState<ImageAsset | null>(null);
-  const [bannerAsset, setBannerAsset] = useState<ImageAsset | null>(null);
-
-  // ── Image picking ────────────────────────────────────────────────────────
-
-  const pickImage = async (
-    type: "avatar" | "banner",
-    aspect: [number, number],
-  ) => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert(
-        "Permission required",
-        "Please allow photo library access to pick an image.",
-      );
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect,
-      quality: 0.85,
-    });
-    if (!result.canceled && result.assets.length > 0) {
-      if (type === "avatar") setAvatarAsset(result.assets[0]);
-      else setBannerAsset(result.assets[0]);
-    }
-  };
-
   // ── Save ─────────────────────────────────────────────────────────────────
 
   const handleSave = async () => {
@@ -223,7 +108,7 @@ export default function EditCommunityScreen({ route }: Props) {
 
     setLoading(true);
     try {
-      await updateCommunity(
+      const updated = await updateCommunity(
         token,
         community.id,
         name.trim(),
@@ -231,39 +116,10 @@ export default function EditCommunityScreen({ route }: Props) {
         isPublic,
         category,
       );
-
-      if (avatarAsset || bannerAsset) {
-        const urls = await getImageUploadUrls(
-          token,
-          community.id,
-          avatarAsset,
-          bannerAsset,
-        );
-        if (urls.avatar?.uploadUrl && avatarAsset?.uri) {
-          await uploadToSignedUrl(
-            urls.avatar.uploadUrl,
-            avatarAsset.uri,
-            avatarAsset.mimeType ?? "image/jpeg",
-          );
-        }
-        if (urls.banner?.uploadUrl && bannerAsset?.uri) {
-          await uploadToSignedUrl(
-            urls.banner.uploadUrl,
-            bannerAsset.uri,
-            bannerAsset.mimeType ?? "image/jpeg",
-          );
-        }
-        await confirmImages(
-          token,
-          community.id,
-          urls.avatar?.path,
-          urls.banner?.path,
-        );
-      }
-
-      Alert.alert("Saved!", "Your community has been updated.", [
-        { text: "OK", onPress: () => navigation.goBack() },
-      ]);
+      // Navigate back and hand the freshly-updated community to the detail screen
+      navigation.navigate("CommunityDetail", {
+        community: { ...community, ...updated },
+      });
     } catch (err) {
       Alert.alert(
         "Save failed",
@@ -276,8 +132,8 @@ export default function EditCommunityScreen({ route }: Props) {
 
   // ── Computed banner / avatar sources ─────────────────────────────────────
 
-  const bannerUri = bannerAsset?.uri ?? community.banner_url ?? null;
-  const avatarUri = avatarAsset?.uri ?? community.icon ?? null;
+  const bannerUri = community.banner_url ?? null;
+  const avatarUri = community.icon ?? null;
 
   // ── Render ───────────────────────────────────────────────────────────────
 
@@ -307,10 +163,7 @@ export default function EditCommunityScreen({ route }: Props) {
           keyboardShouldPersistTaps="handled"
         >
           {/* Banner */}
-          <Pressable
-            onPress={() => pickImage("banner", [16, 9])}
-            style={styles.bannerWrapper}
-          >
+          <View style={styles.bannerWrapper}>
             {bannerUri ? (
               <Image
                 source={{ uri: bannerUri }}
@@ -326,33 +179,21 @@ export default function EditCommunityScreen({ route }: Props) {
                 </Text>
               </View>
             )}
-            {/* Edit overlay */}
-            <View style={styles.bannerOverlay}>
-              <ImageIcon size={20} color="#fff" strokeWidth={2} />
-              <Text style={styles.overlayLabel}>Change Banner</Text>
-            </View>
-          </Pressable>
+          </View>
 
           {/* Avatar — half overlapping banner */}
           <View style={styles.avatarAnchor}>
-            <Pressable
-              onPress={() => pickImage("avatar", [1, 1])}
+            <View
               style={[styles.iconBox, { backgroundColor: community.color }]}
             >
               {avatarUri ? (
-                <Image
-                  source={{ uri: avatarUri }}
-                  style={styles.iconImage}
-                />
+                <Image source={{ uri: avatarUri }} style={styles.iconImage} />
               ) : (
                 <Text style={styles.iconInitial}>
                   {community.name.charAt(0).toUpperCase()}
                 </Text>
               )}
-              <View style={styles.iconOverlay}>
-                <CameraIcon size={16} color="#fff" strokeWidth={2} />
-              </View>
-            </Pressable>
+            </View>
           </View>
 
           {/* Form */}
@@ -501,19 +342,6 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.gabarito.bold,
     color: "rgba(255,255,255,0.4)",
   },
-  bannerOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-  },
-  overlayLabel: {
-    fontFamily: Fonts.gabarito.medium,
-    fontSize: 15,
-    color: "#fff",
-  },
   // Avatar icon
   avatarAnchor: {
     backgroundColor: "#fff",
@@ -541,12 +369,6 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontFamily: Fonts.gabarito.bold,
     fontSize: 30,
-  },
-  iconOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    alignItems: "center",
-    justifyContent: "center",
   },
   // Form
   form: {

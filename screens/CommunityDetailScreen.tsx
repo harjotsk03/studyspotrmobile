@@ -60,6 +60,10 @@ export type CommunityStackParamList = {
     communityId: string;
     communityName: string;
   };
+  CommunityMembers: {
+    communityId: string;
+    communityName: string;
+  };
 };
 
 type Props = NativeStackScreenProps<CommunityStackParamList, "CommunityDetail">;
@@ -106,6 +110,11 @@ export default function CommunityDetailScreen({ route }: Props) {
       cancelled = true;
     };
   }, [initialCommunity.id, token]);
+
+  // Sync state when the edit screen navigates back with an updated community
+  useEffect(() => {
+    setCommunity(route.params.community);
+  }, [route.params.community]);
 
   const isAdmin =
     community.user_role === "owner" || community.user_role === "admin";
@@ -232,7 +241,15 @@ export default function CommunityDetailScreen({ route }: Props) {
                 <Info size={20} color={Colors.dark} strokeWidth={2} />
                 <Text style={styles.actionLabel}>Details</Text>
               </Pressable>
-              <Pressable style={styles.actionButton}>
+              <Pressable
+                style={styles.actionButton}
+                onPress={() =>
+                  navigation.navigate("CommunityMembers", {
+                    communityId: community.id,
+                    communityName: community.name,
+                  })
+                }
+              >
                 <Users size={20} color={Colors.dark} strokeWidth={2} />
                 <Text style={styles.actionLabel}>Members</Text>
               </Pressable>

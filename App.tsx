@@ -19,6 +19,7 @@ import CreateCommunityScreen from "./screens/CreateCommunityScreen";
 import EditCommunityScreen from "./screens/EditCommunityScreen";
 import CommunityEventsScreen from "./screens/CommunityEventsScreen";
 import CreateEventScreen from "./screens/CreateEventScreen";
+import CommunityMembersScreen from "./screens/CommunityMembersScreen";
 import ProfileSectionScreen, { type ProfileStackParamList } from './screens/ProfileSectionScreen';
 import SearchScreen from './screens/SearchScreen';
 import SpotsScreen from './screens/SpotsScreen';
@@ -59,9 +60,10 @@ function CommunityStackScreen() {
         name="CommunityEvents"
         component={CommunityEventsScreen}
       />
+      <CommunityStack.Screen name="CreateEvent" component={CreateEventScreen} />
       <CommunityStack.Screen
-        name="CreateEvent"
-        component={CreateEventScreen}
+        name="CommunityMembers"
+        component={CommunityMembersScreen}
       />
     </CommunityStack.Navigator>
   );

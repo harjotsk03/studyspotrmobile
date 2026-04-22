@@ -30,46 +30,17 @@ import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "../context/AuthContext";
 import type { CommunityStackParamList } from "./CommunityDetailScreen";
+import EventDetailDrawer, {
+  type CommunityEvent,
+  type RsvpStatus,
+  formatDate,
+} from "./EventDetailDrawer";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type EventFilter = "upcoming" | "previous";
 
-interface CommunityEvent {
-  id: string;
-  title: string;
-  description?: string;
-  start_time: string;
-  end_time?: string;
-  location?: string;
-  attendee_count?: number;
-}
-
-type Props = NativeStackScreenProps<
-  CommunityStackParamList,
-  "CommunityEvents"
->;
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function formatDate(iso: string) {
-  const d = new Date(iso);
-  return {
-    day: d.toLocaleDateString("en-US", { day: "2-digit" }),
-    month: d.toLocaleDateString("en-US", { month: "short" }).toUpperCase(),
-    time: d.toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    }),
-    full: d.toLocaleDateString("en-US", {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    }),
-  };
-}
+type Props = NativeStackScreenProps<CommunityStackParamList, "CommunityEvents">;
 
 // ─── Tab Toggle ──────────────────────────────────────────────────────────────
 
@@ -176,12 +147,23 @@ const toggleStyles = StyleSheet.create({
 
 // ─── Event Card ──────────────────────────────────────────────────────────────
 
-function EventCard({ event }: { event: CommunityEvent }) {
+function EventCard({
+  event,
+  onPress,
+}: {
+  event: CommunityEvent;
+  onPress: () => void;
+}) {
   const { day, month, time, full } = formatDate(event.start_time);
 
   return (
-    <View style={cardStyles.container}>
-      {/* Date badge */}
+    <Pressable
+      style={({ pressed }) => [
+        cardStyles.container,
+        pressed && { opacity: 0.75 },
+      ]}
+      onPress={onPress}
+    >
       <View style={cardStyles.dateBadge}>
         <Text style={cardStyles.dateDay}>{day}</Text>
         <Text style={cardStyles.dateMonth}>{month}</Text>
@@ -224,7 +206,7 @@ function EventCard({ event }: { event: CommunityEvent }) {
           </Text>
         )}
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -304,6 +286,10 @@ export default function CommunityEventsScreen({ route }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [selectedEvent, setSelectedEvent] = useState<CommunityEvent | null>(
+    null,
+  );
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const fetchEvents = useCallback(
     async (isRefresh = false) => {
@@ -323,16 +309,11 @@ export default function CommunityEventsScreen({ route }: Props) {
         );
         const json = await res.json();
         if (!res.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
-        // API returns { upcoming: [], previous: [], now: string }
         const list: CommunityEvent[] =
-          filter === "upcoming"
-            ? (json.upcoming ?? [])
-            : (json.previous ?? []);
+          filter === "upcoming" ? (json.upcoming ?? []) : (json.previous ?? []);
         setEvents(list);
       } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Failed to load events.",
-        );
+        setError(err instanceof Error ? err.message : "Failed to load events.");
       } finally {
         if (isRefresh) setRefreshing(false);
         else setLoading(false);
@@ -344,6 +325,31 @@ export default function CommunityEventsScreen({ route }: Props) {
   useEffect(() => {
     void fetchEvents();
   }, [fetchEvents]);
+
+  function openEvent(event: CommunityEvent) {
+    setSelectedEvent(event);
+    setDrawerOpen(true);
+  }
+
+  function handleAttendanceChange(
+    eventId: string,
+    newCount: number,
+    newStatus: RsvpStatus,
+  ) {
+    setEvents((prev) =>
+      prev.map((e) =>
+        e.id === eventId
+          ? { ...e, attendee_count: newCount, user_rsvp_status: newStatus }
+          : e,
+      ),
+    );
+    // Keep selectedEvent in sync so the drawer has fresh data if reopened
+    setSelectedEvent((prev) =>
+      prev?.id === eventId
+        ? { ...prev, attendee_count: newCount, user_rsvp_status: newStatus }
+        : prev,
+    );
+  }
 
   return (
     <View style={styles.screen}>
@@ -427,10 +433,24 @@ export default function CommunityEventsScreen({ route }: Props) {
           )}
 
           {events.map((event) => (
-            <EventCard key={event.id} event={event} />
+            <EventCard
+              key={event.id}
+              event={event}
+              onPress={() => openEvent(event)}
+            />
           ))}
         </ScrollView>
       )}
+
+      {/* Event detail drawer */}
+      <EventDetailDrawer
+        event={selectedEvent}
+        visible={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        communityId={communityId}
+        token={token}
+        onAttendanceChange={handleAttendanceChange}
+      />
     </View>
   );
 }
