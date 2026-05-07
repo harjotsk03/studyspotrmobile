@@ -6,17 +6,36 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from "react-native";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "../context/AuthContext";
+import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import Input from "../components/Input";
 import Button from "../components/Button";
-import { ArrowRightIcon, AtSignIcon, LockIcon, MailIcon, UserIcon } from "lucide-react-native";
+import {
+  ArrowRightIcon,
+  AtSignIcon,
+  Check,
+  Eye,
+  EyeOff,
+  LockIcon,
+  MailIcon,
+  UserIcon,
+  X,
+} from "lucide-react-native";
 
 const TOTAL_STEPS = 3;
+
+type AuthStackParamList = {
+  LoginScreen: undefined;
+  RegisterScreen: undefined;
+  ForgotPasswordScreen: undefined;
+};
 
 const STEP_SUBTITLES = [
   "What's your name and email?",
@@ -24,8 +43,33 @@ const STEP_SUBTITLES = [
   "Pick a username",
 ];
 
+const PASSWORD_REQUIREMENTS = [
+  {
+    label: "Must be at least 6 characters",
+    test: (value: string) => value.length >= 6,
+  },
+  {
+    label: "Must have a special character",
+    test: (value: string) => /[^A-Za-z0-9]/.test(value),
+  },
+  {
+    label: "Must have one uppercase letter",
+    test: (value: string) => /[A-Z]/.test(value),
+  },
+  {
+    label: "Must have one lowercase letter",
+    test: (value: string) => /[a-z]/.test(value),
+  },
+  {
+    label: "Must have one number",
+    test: (value: string) => /\d/.test(value),
+  },
+];
+
 export default function RegisterScreen() {
   const { login } = useAuth();
+  const navigation =
+    useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(false);
 
@@ -38,9 +82,33 @@ export default function RegisterScreen() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [confirmError, setConfirmError] = useState("");
+  const [showPasswordRules, setShowPasswordRules] = useState(false);
+  const [showPasswords, setShowPasswords] = useState(false);
 
   const [username, setUsername] = useState("");
   const [usernameError, setUsernameError] = useState("");
+
+  const passwordChecks = PASSWORD_REQUIREMENTS.map((requirement) => ({
+    ...requirement,
+    met: requirement.test(password),
+  }));
+  const isPasswordStrong = passwordChecks.every(
+    (requirement) => requirement.met,
+  );
+  const passwordVisibilityToggle = (
+    <TouchableOpacity
+      accessibilityLabel={showPasswords ? "Hide passwords" : "Show passwords"}
+      accessibilityRole="button"
+      activeOpacity={0.7}
+      onPress={() => setShowPasswords((visible) => !visible)}
+    >
+      {showPasswords ? (
+        <EyeOff size={18} color="#999" />
+      ) : (
+        <Eye size={18} color="#999" />
+      )}
+    </TouchableOpacity>
+  );
 
   const validateStep0 = async (): Promise<boolean> => {
     if (!firstName.trim() || !lastName.trim() || !email.trim()) {
@@ -85,8 +153,9 @@ export default function RegisterScreen() {
   const validateStep1 = (): boolean => {
     let valid = true;
 
-    if (password.length < 6) {
-      setPasswordError("Password must be at least 6 characters.");
+    if (!isPasswordStrong) {
+      setPasswordError("Password must meet all strength requirements.");
+      setShowPasswordRules(true);
       valid = false;
     } else {
       setPasswordError("");
@@ -244,17 +313,54 @@ export default function RegisterScreen() {
           <>
             <Input
               label="Password"
-              placeholder="At least 6 characters"
+              placeholder="Create a strong password"
               value={password}
               onChangeText={(t) => {
                 setPassword(t);
                 if (passwordError) setPasswordError("");
               }}
-              secureTextEntry
+              onFocus={() => setShowPasswordRules(true)}
+              onBlur={() => setShowPasswordRules(false)}
+              secureTextEntry={!showPasswords}
               autoComplete="new-password"
               icon={<LockIcon size={18} color="#999" />}
+              rightIcon={passwordVisibilityToggle}
               error={passwordError}
             />
+
+            {showPasswordRules && (
+              <View style={styles.passwordRulesCard}>
+                <Text style={styles.passwordRulesTitle}>
+                  Password must include:
+                </Text>
+                {passwordChecks.map((requirement) => (
+                  <View key={requirement.label} style={styles.passwordRuleRow}>
+                    <View
+                      style={[
+                        styles.passwordRuleIcon,
+                        requirement.met
+                          ? styles.passwordRuleIconMet
+                          : styles.passwordRuleIconUnmet,
+                      ]}
+                    >
+                      {requirement.met ? (
+                        <Check size={12} strokeWidth={3} color="#fff" />
+                      ) : (
+                        <X size={12} strokeWidth={3} color="#fff" />
+                      )}
+                    </View>
+                    <Text
+                      style={[
+                        styles.passwordRuleText,
+                        requirement.met && styles.passwordRuleTextMet,
+                      ]}
+                    >
+                      {requirement.label}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
 
             <Input
               label="Confirm Password"
@@ -264,9 +370,10 @@ export default function RegisterScreen() {
                 setConfirmPassword(t);
                 if (confirmError) setConfirmError("");
               }}
-              secureTextEntry
+              secureTextEntry={!showPasswords}
               autoComplete="new-password"
               icon={<LockIcon size={18} color="#999" />}
+              rightIcon={passwordVisibilityToggle}
               error={confirmError}
               containerStyle={styles.fieldGap}
             />
@@ -302,12 +409,24 @@ export default function RegisterScreen() {
             label={step === TOTAL_STEPS - 1 ? "Create Account" : "Next"}
             variant="default"
             loading={loading}
-            icon={<ArrowRightIcon size={16} strokeWidth={3} color={Colors.light} />}
+            icon={
+              <ArrowRightIcon size={16} strokeWidth={3} color={Colors.light} />
+            }
             iconPosition="right"
             onPress={handleNext}
             style={styles.nextButton}
           />
         </View>
+
+        <TouchableOpacity
+          style={styles.loginLink}
+          onPress={() => navigation.navigate("LoginScreen")}
+        >
+          <Text style={styles.loginLinkText}>
+            Already have an account?{" "}
+            <Text style={styles.loginLinkTextAccent}>Log in</Text>
+          </Text>
+        </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -362,6 +481,52 @@ const styles = StyleSheet.create({
   fieldGap: {
     marginTop: 16,
   },
+  passwordRulesCard: {
+    backgroundColor: "#fff",
+    borderColor: "#E5E7EB",
+    borderRadius: 14,
+    borderWidth: 1,
+    marginTop: 10,
+    padding: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  passwordRulesTitle: {
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 13,
+    color: Colors.dark,
+    marginBottom: 8,
+  },
+  passwordRuleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 6,
+  },
+  passwordRuleIcon: {
+    alignItems: "center",
+    justifyContent: "center",
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+  },
+  passwordRuleIconMet: {
+    backgroundColor: "#16A34A",
+  },
+  passwordRuleIconUnmet: {
+    backgroundColor: "#DC2626",
+  },
+  passwordRuleText: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 13,
+    color: "#666",
+  },
+  passwordRuleTextMet: {
+    color: Colors.dark,
+  },
   buttonRow: {
     flexDirection: "row",
     gap: 12,
@@ -372,5 +537,20 @@ const styles = StyleSheet.create({
   },
   nextButton: {
     flex: 2,
+  },
+  loginLink: {
+    alignItems: "center",
+    marginTop: "auto",
+    paddingTop: 22,
+  },
+  loginLinkText: {
+    color: Colors.dark,
+    fontFamily: Fonts.gabarito.regular,
+    fontSize: 15,
+    textAlign: "center",
+  },
+  loginLinkTextAccent: {
+    color: Colors.accent,
+    fontFamily: Fonts.gabarito.medium,
   },
 });

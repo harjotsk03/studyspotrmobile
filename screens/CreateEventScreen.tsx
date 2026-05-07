@@ -1,8 +1,11 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
+  Animated,
+  Easing,
   KeyboardAvoidingView,
   LayoutAnimation,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -26,9 +29,7 @@ import {
   CalendarIcon,
   ChevronDown,
   ClockIcon,
-  GlobeIcon,
   LinkIcon,
-  LockIcon,
   MapPinIcon,
   Users2Icon,
   FileTextIcon,
@@ -85,6 +86,39 @@ function toISO(date: Date, time: Date): string {
   const combined = new Date(date);
   combined.setHours(time.getHours(), time.getMinutes(), 0, 0);
   return combined.toISOString();
+}
+
+function getPickerTitle(target: PickerTarget | null) {
+  if (target === "startDate") return "Start Date";
+  if (target === "startTime") return "Start Time";
+  if (target === "endDate") return "End Date";
+  if (target === "endTime") return "End Time";
+  return "";
+}
+
+function getDurationSummary(
+  startDate: Date | null,
+  startTime: Date | null,
+  endDate: Date | null,
+  endTime: Date | null,
+) {
+  if (!startDate || !startTime || !endDate || !endTime) {
+    return null;
+  }
+
+  const start = new Date(toISO(startDate, startTime));
+  const end = new Date(toISO(endDate, endTime));
+  const totalMinutes = Math.floor((end.getTime() - start.getTime()) / 60000);
+
+  if (totalMinutes <= 0) {
+    return "End must be after start.";
+  }
+
+  const days = Math.floor(totalMinutes / (24 * 60));
+  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+  const minutes = totalMinutes % 60;
+
+  return `${days} days ${hours} hours ${minutes} mins`;
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
@@ -203,17 +237,21 @@ export default function CreateEventScreen({ route }: Props) {
   // Attendance section
   const [attendanceOpen, setAttendanceOpen] = useState(false);
   const [discoverableToAll, setDiscoverableToAll] = useState(true);
-  const [rsvpOnly, setRsvpOnly] = useState(false);
-  const [womenOnly, setWomenOnly] = useState(false);
-  const [allowNonMembers, setAllowNonMembers] = useState(false);
   const [maxAttendees, setMaxAttendees] = useState("");
 
   // Date picker state
   const [pickerTarget, setPickerTarget] = useState<PickerTarget | null>(null);
   const [pickerMode, setPickerMode] = useState<"date" | "time">("date");
   const [pickerValue, setPickerValue] = useState(new Date());
+  const pickerAnimation = useRef(new Animated.Value(0)).current;
 
   const [loading, setLoading] = useState(false);
+  const durationSummary = getDurationSummary(
+    startDate,
+    startTime,
+    endDate,
+    endTime,
+  );
 
   // ── Section toggles ──────────────────────────────────────────────────────
 
@@ -239,6 +277,36 @@ export default function CreateEventScreen({ route }: Props) {
     setPickerTarget(target);
   };
 
+  useEffect(() => {
+    if (!pickerTarget) return;
+
+    pickerAnimation.setValue(0);
+    Animated.timing(pickerAnimation, {
+      toValue: 1,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [pickerAnimation, pickerTarget]);
+
+  const closePicker = () => {
+    Animated.timing(pickerAnimation, {
+      toValue: 0,
+      duration: 160,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) {
+        setPickerTarget(null);
+      }
+    });
+  };
+
+  const selectPickerValue = (date = pickerValue) => {
+    applyPickerValue(date);
+    closePicker();
+  };
+
   const applyPickerValue = (date: Date) => {
     if (pickerTarget === "startDate") setStartDate(date);
     else if (pickerTarget === "startTime") setStartTime(date);
@@ -247,7 +315,13 @@ export default function CreateEventScreen({ route }: Props) {
   };
 
   const onPickerChange = (_event: DateTimePickerEvent, date?: Date) => {
-    if (date) setPickerValue(date);
+    if (!date) return;
+
+    setPickerValue(date);
+
+    if (Platform.OS === "android") {
+      selectPickerValue(date);
+    }
   };
 
   // ── Validation ───────────────────────────────────────────────────────────
@@ -304,8 +378,7 @@ export default function CreateEventScreen({ route }: Props) {
     if (!validate() || !token) return;
 
     const startISO = toISO(startDate!, startTime!);
-    const endISO =
-      endDate && endTime ? toISO(endDate, endTime) : undefined;
+    const endISO = endDate && endTime ? toISO(endDate, endTime) : undefined;
 
     const maxAttendeesNum = maxAttendees.trim()
       ? parseInt(maxAttendees.trim(), 10)
@@ -332,18 +405,30 @@ export default function CreateEventScreen({ route }: Props) {
             location: isOnline ? undefined : location.trim(),
             meeting_url: isOnline ? meetingUrl.trim() : undefined,
             discoverable_to_all: discoverableToAll,
-            rsvp_only: rsvpOnly,
-            women_only: womenOnly,
-            allow_non_members: allowNonMembers,
             max_attendees: maxAttendeesNum,
           }),
         },
       );
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
-      Alert.alert("Event created!", `"${title.trim()}" is live.`, [
-        { text: "OK", onPress: () => navigation.goBack() },
-      ]);
+      const createdEventId =
+        json.event?.id ?? json.event_id ?? json.id ?? json.event?.event_id;
+
+      if (!createdEventId || typeof createdEventId !== "string") {
+        Alert.alert(
+          "Event created!",
+          "The event is live, but the server did not return an event id for invites.",
+          [{ text: "OK", onPress: () => navigation.goBack() }],
+        );
+        return;
+      }
+
+      navigation.replace("InviteEvent", {
+        communityId,
+        communityName,
+        eventId: createdEventId,
+        eventTitle: title.trim(),
+      });
     } catch (err) {
       Alert.alert(
         "Failed to create event",
@@ -384,6 +469,7 @@ export default function CreateEventScreen({ route }: Props) {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={styles.scroll}
+          scrollEnabled={pickerTarget === null}
         >
           {/* ── Primary fields ────────────────────────────────────────── */}
           <View style={styles.card}>
@@ -490,48 +576,21 @@ export default function CreateEventScreen({ route }: Props) {
                     onPress={() => openPicker("endTime")}
                   />
                 </View>
+                <View style={styles.durationCard}>
+                  <Text style={styles.durationLabel}>Duration</Text>
+                  <Text
+                    style={[
+                      styles.durationValue,
+                      !durationSummary && styles.durationPlaceholder,
+                      durationSummary === "End must be after start." &&
+                        styles.durationError,
+                    ]}
+                  >
+                    {durationSummary ??
+                      "Select start and end date/time to calculate."}
+                  </Text>
+                </View>
                 {!!endError && <Text style={styles.errorText}>{endError}</Text>}
-
-                {/* Inline picker — no Modal, renders directly */}
-                {pickerTarget !== null && (
-                  <View style={pickerStyles.inlineCard}>
-                    <View style={pickerStyles.inlineHeader}>
-                      <Text style={pickerStyles.inlineLabel}>
-                        {pickerTarget === "startDate"
-                          ? "Start Date"
-                          : pickerTarget === "startTime"
-                            ? "Start Time"
-                            : pickerTarget === "endDate"
-                              ? "End Date"
-                              : "End Time"}
-                      </Text>
-                      <View style={pickerStyles.inlineActions}>
-                        <Pressable
-                          onPress={() => setPickerTarget(null)}
-                          style={pickerStyles.inlineBtn}
-                        >
-                          <Text style={pickerStyles.cancelText}>Cancel</Text>
-                        </Pressable>
-                        <Pressable
-                          onPress={() => {
-                            applyPickerValue(pickerValue);
-                            setPickerTarget(null);
-                          }}
-                          style={[pickerStyles.inlineBtn, pickerStyles.doneBtn]}
-                        >
-                          <Text style={pickerStyles.doneText}>Done</Text>
-                        </Pressable>
-                      </View>
-                    </View>
-                    <DateTimePicker
-                      value={pickerValue}
-                      mode={pickerMode}
-                      display="spinner"
-                      onChange={onPickerChange}
-                      style={pickerStyles.picker}
-                    />
-                  </View>
-                )}
               </>
             )}
           </View>
@@ -546,12 +605,7 @@ export default function CreateEventScreen({ route }: Props) {
             {locationOpen && (
               <>
                 <ToggleRow
-                  label={isOnline ? "Online event" : "In-person event"}
-                  description={
-                    isOnline
-                      ? "Share a meeting link with attendees"
-                      : "Provide a physical location"
-                  }
+                  label="Online event"
                   value={isOnline}
                   onValueChange={(v) => {
                     setIsOnline(v);
@@ -607,24 +661,6 @@ export default function CreateEventScreen({ route }: Props) {
                   value={discoverableToAll}
                   onValueChange={setDiscoverableToAll}
                 />
-                <ToggleRow
-                  label="RSVP only"
-                  description="Attendees must RSVP to join"
-                  value={rsvpOnly}
-                  onValueChange={setRsvpOnly}
-                />
-                <ToggleRow
-                  label="Women only"
-                  description="Restrict attendance to women"
-                  value={womenOnly}
-                  onValueChange={setWomenOnly}
-                />
-                <ToggleRow
-                  label="Allow non-members"
-                  description="Let people outside the community attend"
-                  value={allowNonMembers}
-                  onValueChange={setAllowNonMembers}
-                />
                 <Input
                   label="Max Attendees"
                   placeholder="Leave blank for unlimited"
@@ -649,6 +685,66 @@ export default function CreateEventScreen({ route }: Props) {
           />
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <Modal
+        visible={pickerTarget !== null}
+        transparent
+        animationType="none"
+        onRequestClose={closePicker}
+      >
+        <View style={pickerStyles.backdrop}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={closePicker} />
+          <Animated.View
+            style={[
+              pickerStyles.modalCard,
+              {
+                opacity: pickerAnimation,
+                transform: [
+                  {
+                    translateY: pickerAnimation.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [24, 0],
+                    }),
+                  },
+                  {
+                    scale: pickerAnimation.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.96, 1],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <View style={pickerStyles.modalHeader}>
+              <Text style={pickerStyles.modalLabel}>
+                {getPickerTitle(pickerTarget)}
+              </Text>
+              <View style={pickerStyles.modalActions}>
+                <Pressable onPress={closePicker} style={pickerStyles.modalBtn}>
+                  <Text style={pickerStyles.cancelText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => selectPickerValue()}
+                  style={[pickerStyles.modalBtn, pickerStyles.doneBtn]}
+                >
+                  <Text style={pickerStyles.doneText}>Select</Text>
+                </Pressable>
+              </View>
+            </View>
+            <DateTimePicker
+              value={pickerValue}
+              mode={pickerMode}
+              display="spinner"
+              onChange={onPickerChange}
+              textColor={Colors.dark}
+              themeVariant="light"
+              accentColor={Colors.primary}
+              style={pickerStyles.picker}
+            />
+          </Animated.View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -697,6 +793,34 @@ const styles = StyleSheet.create({
   fieldGap: { marginTop: 14 },
   textArea: { minHeight: 90, alignItems: "flex-start" },
   dateRow: { flexDirection: "column", gap: 10 },
+  durationCard: {
+    marginTop: 12,
+    borderRadius: 12,
+    backgroundColor: Colors.light,
+    borderWidth: 1,
+    borderColor: "#eee",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  durationLabel: {
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 12,
+    color: "#777",
+    marginBottom: 2,
+  },
+  durationValue: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 15,
+    color: Colors.dark,
+  },
+  durationPlaceholder: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 13,
+    color: "#999",
+  },
+  durationError: {
+    color: "#DC2626",
+  },
   errorText: {
     fontFamily: Fonts.instrument.regular,
     fontSize: 12,
@@ -796,15 +920,20 @@ const toggleRowStyles = StyleSheet.create({
 });
 
 const pickerStyles = StyleSheet.create({
-  inlineCard: {
-    marginTop: 12,
-    borderRadius: 14,
+  backdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.52)",
+    justifyContent: "center",
+    padding: 20,
+  },
+  modalCard: {
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: "#e8e8e8",
-    backgroundColor: "#fafafa",
+    backgroundColor: "#fff",
     overflow: "hidden",
   },
-  inlineHeader: {
+  modalHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -813,16 +942,16 @@ const pickerStyles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#e8e8e8",
   },
-  inlineLabel: {
+  modalLabel: {
     fontFamily: Fonts.gabarito.semiBold,
     fontSize: 15,
     color: Colors.dark,
   },
-  inlineActions: {
+  modalActions: {
     flexDirection: "row",
     gap: 8,
   },
-  inlineBtn: {
+  modalBtn: {
     paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 20,
@@ -842,6 +971,7 @@ const pickerStyles = StyleSheet.create({
   },
   picker: {
     width: "100%",
-    backgroundColor: "#fafafa",
+    height: 216,
+    backgroundColor: "#fff",
   },
 });

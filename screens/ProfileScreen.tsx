@@ -3,12 +3,13 @@ import {
   Alert,
   Image,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
-} from 'react-native';
+} from "react-native";
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Colors } from '../constants/Colors';
@@ -18,11 +19,13 @@ import ProfileSectionButton from '../components/ProfileSectionButton';
 import ProfileStat from '../components/ProfileStat';
 import type { ProfileSectionKey, ProfileStackParamList } from './ProfileSectionScreen';
 import { Share, UserPlus } from 'lucide-react-native';
+import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 
 export default function ProfileScreen() {
-  const { profile, logout } = useAuth();
+  const { profile, logout, refreshProfile } = useAuth();
   const navigation = useNavigation<NativeStackNavigationProp<ProfileStackParamList>>();
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const user = profile?.userProfile;
   const profilePhotoUri =
@@ -34,11 +37,8 @@ export default function ProfileScreen() {
     setAvatarLoadFailed(false);
   }, [profilePhotoUri]);
 
-  const initials = useMemo(() => {
-    const first = user?.first_name?.trim()?.charAt(0) ?? '';
-    const last = user?.last_name?.trim()?.charAt(0) ?? '';
-    return `${first}${last}`.toUpperCase() || '?';
-  }, [user?.first_name, user?.last_name]);
+  const initials = useMemo(() => getUserInitials(user ?? {}), [user]);
+  const avatarColor = useMemo(() => getUserAvatarColor(user ?? {}), [user]);
 
   const stats = [
     { label: 'Spots Created', value: String(user?.spots_created_count ?? 0) },
@@ -79,11 +79,28 @@ export default function ProfileScreen() {
     ]);
   };
 
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await refreshProfile();
+    setRefreshing(false);
+  };
+
   return (
     <View style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void handleRefresh()}
+            tintColor={Colors.primary}
+            colors={[Colors.primary]}
+            progressViewOffset={48}
+            title={refreshing ? "Refreshing profile..." : undefined}
+            titleColor={Colors.primary}
+          />
+        }
       >
         <View style={styles.header}>
           <Pressable style={styles.headerButton}>
@@ -103,7 +120,9 @@ export default function ProfileScreen() {
               onError={() => setAvatarLoadFailed(true)}
             />
           ) : (
-            <View style={styles.avatarFallback}>
+            <View
+              style={[styles.avatarFallback, { backgroundColor: avatarColor }]}
+            >
               <Text style={styles.avatarInitials}>{initials}</Text>
             </View>
           )}
@@ -139,7 +158,7 @@ export default function ProfileScreen() {
                 title={item.title}
                 subtitle={item.subtitle}
                 onPress={() =>
-                  navigation.navigate('ProfileSection', { section: item.key })
+                  navigation.navigate("ProfileSection", { section: item.key })
                 }
               />
             ))}
@@ -181,7 +200,6 @@ const styles = StyleSheet.create({
     width: 92,
     height: 92,
     borderRadius: 46,
-    backgroundColor: Colors.accent,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 16,
@@ -253,7 +271,7 @@ const styles = StyleSheet.create({
     gap: 4,
     alignItems: "center",
   },
-  statsContainer:{
+  statsContainer: {
     flexDirection: "row",
     alignItems: "center",
     gap: 20,

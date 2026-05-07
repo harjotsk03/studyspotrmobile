@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Image,
   Modal,
@@ -14,10 +15,17 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { CalendarDays, Check, MapPin, Share2 } from "lucide-react-native";
+import {
+  CalendarDays,
+  Check,
+  MapPin,
+  Share2,
+  Trash2,
+} from "lucide-react-native";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
+import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 
 // ─── Shared Types ─────────────────────────────────────────────────────────────
 
@@ -36,6 +44,10 @@ export interface CommunityEvent {
   start_time: string;
   end_time?: string;
   location?: string;
+  is_online?: boolean;
+  meeting_url?: string;
+  event_type?: string;
+  max_attendees?: number | null;
   attendee_count?: number;
   attendees?: Attendee[];
   user_rsvp_status?: RsvpStatus;
@@ -322,7 +334,13 @@ function AttendeeAvatar({
   index: number;
 }) {
   return (
-    <View style={[styles.avatarCircle, index > 0 && styles.avatarOverlap]}>
+    <View
+      style={[
+        styles.avatarCircle,
+        { backgroundColor: getUserAvatarColor(attendee) },
+        index > 0 && styles.avatarOverlap,
+      ]}
+    >
       {attendee.avatar_url ? (
         <Image
           source={{ uri: attendee.avatar_url }}
@@ -330,7 +348,7 @@ function AttendeeAvatar({
         />
       ) : (
         <Text style={styles.avatarInitial}>
-          {attendee.name.charAt(0).toUpperCase()}
+          {getUserInitials(attendee)}
         </Text>
       )}
     </View>
@@ -345,11 +363,17 @@ interface EventDetailDrawerProps {
   onClose: () => void;
   communityId: string;
   token: string | null;
+  /** Whether the parent community is open to the public */
+  communityIsPublic: boolean;
+  /** The current user's role in the community (undefined = not a member) */
+  userCommunityRole?: string;
   onAttendanceChange?: (
     eventId: string,
     newCount: number,
     newStatus: RsvpStatus,
   ) => void;
+  canDeleteEvent?: boolean;
+  onEventDeleted?: (eventId: string) => void;
 }
 
 export default function EventDetailDrawer({
@@ -358,7 +382,11 @@ export default function EventDetailDrawer({
   onClose,
   communityId,
   token,
+  communityIsPublic,
+  userCommunityRole,
   onAttendanceChange,
+  canDeleteEvent = false,
+  onEventDeleted,
 }: EventDetailDrawerProps) {
   const insets = useSafeAreaInsets();
   const translateY = useRef(new Animated.Value(800)).current;
@@ -370,6 +398,14 @@ export default function EventDetailDrawer({
   const [attendeeCount, setAttendeeCount] = useState(0);
   const [actionLoading, setActionLoading] = useState(false);
   const [leaveConfirmVisible, setLeaveConfirmVisible] = useState(false);
+  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
+  // Local community membership state (for when user joins from the drawer)
+  const [communityJoinStatus, setCommunityJoinStatus] = useState<
+    "pending" | "accepted" | null
+  >(null);
+  const [communityJoinLoading, setCommunityJoinLoading] = useState(false);
 
   // Confirm overlay
   const confirmScale = useRef(new Animated.Value(0.88)).current;
@@ -516,6 +552,7 @@ export default function EventDetailDrawer({
       footerFade.setValue(1);
       footerSlideY.setValue(0);
       countBounce.setValue(1);
+      setCommunityJoinStatus(null);
       setDetailEvent(event);
       setRsvpStatus(event.user_rsvp_status ?? null);
       setAttendeeCount(event.attendee_count ?? 0);
@@ -655,6 +692,44 @@ export default function EventDetailDrawer({
     });
   }
 
+  function openDeleteConfirm() {
+    setDeleteConfirmVisible(true);
+    confirmScale.setValue(0.88);
+    confirmOpacity.setValue(0);
+    Animated.parallel([
+      Animated.spring(confirmScale, {
+        toValue: 1,
+        useNativeDriver: true,
+        damping: 18,
+        stiffness: 260,
+        mass: 0.7,
+      }),
+      Animated.timing(confirmOpacity, {
+        toValue: 1,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }
+
+  function closeDeleteConfirm(cb?: () => void) {
+    Animated.parallel([
+      Animated.timing(confirmScale, {
+        toValue: 0.88,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+      Animated.timing(confirmOpacity, {
+        toValue: 0,
+        duration: 140,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setDeleteConfirmVisible(false);
+      cb?.();
+    });
+  }
+
   async function handleLeave() {
     if (!token || !detailEvent) return;
     setActionLoading(true);
@@ -688,6 +763,46 @@ export default function EventDetailDrawer({
     }
   }
 
+  async function handleDeleteEvent() {
+    if (!token || !detailEvent || !canDeleteEvent) return;
+
+    setDeleteLoading(true);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/v1/communities/${communityId}/events/${detailEvent.id}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+        },
+      );
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(
+          data?.error || data?.message || "Could not delete this event.",
+        );
+      }
+
+      const deletedEventId = detailEvent.id;
+      closeDeleteConfirm(() => {
+        animateOut(() => {
+          onEventDeleted?.(deletedEventId);
+          onClose();
+        });
+      });
+    } catch (err) {
+      Alert.alert(
+        "Delete failed",
+        err instanceof Error ? err.message : "Please try again.",
+      );
+    } finally {
+      setDeleteLoading(false);
+    }
+  }
+
   async function handleShare() {
     if (!detailEvent) return;
     try {
@@ -697,6 +812,33 @@ export default function EventDetailDrawer({
       });
     } catch {
       // silent
+    }
+  }
+
+  async function handleJoinCommunity() {
+    if (!token) return;
+    setCommunityJoinLoading(true);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/v1/communities/${communityId}/join`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+        },
+      );
+      const json = await res.json();
+      if (res.ok) {
+        const status: "pending" | "accepted" =
+          json.membership?.status ?? json.status ?? "pending";
+        setCommunityJoinStatus(status);
+      }
+    } catch {
+      // silent
+    } finally {
+      setCommunityJoinLoading(false);
     }
   }
 
@@ -741,6 +883,28 @@ export default function EventDetailDrawer({
 
   const isgoing = rsvpStatus === "going";
   const isPending = rsvpStatus === "pending";
+  const now = Date.now();
+  const eventStartsAt = new Date(detailEvent.start_time);
+  const eventEndsAt = detailEvent.end_time
+    ? new Date(detailEvent.end_time)
+    : null;
+  const isPastEvent = eventStartsAt.getTime() < now;
+  const isEventInProgress =
+    eventStartsAt.getTime() <= now &&
+    (!eventEndsAt || eventEndsAt.getTime() > now);
+
+  // Public community → everyone can RSVP.
+  // Private community → only if already a member OR just got accepted via the drawer.
+  const canJoin =
+    communityIsPublic ||
+    !!userCommunityRole ||
+    communityJoinStatus === "accepted";
+
+  // User hit "join community" from the drawer but it's pending admin approval.
+  const awaitingCommunityApproval =
+    !communityIsPublic &&
+    !userCommunityRole &&
+    communityJoinStatus === "pending";
 
   return (
     <Modal
@@ -771,6 +935,12 @@ export default function EventDetailDrawer({
           showsVerticalScrollIndicator={false}
           bounces={false}
         >
+          {isEventInProgress && (
+            <View style={styles.inProgressTag}>
+              <Text style={styles.inProgressTagText}>Event in progress</Text>
+            </View>
+          )}
+
           {/* Title */}
           <Text style={styles.eventTitle}>{detailEvent.title}</Text>
 
@@ -793,8 +963,22 @@ export default function EventDetailDrawer({
             </View>
           </View>
 
-          {/* Location */}
-          {!!detailEvent.location && (
+          {/* Location / online */}
+          {detailEvent.is_online ? (
+            <View style={styles.infoBlock}>
+              <View style={styles.infoIconBox}>
+                <MapPin size={18} color={Colors.primary} strokeWidth={2} />
+              </View>
+              <View style={styles.infoTexts}>
+                <Text style={styles.infoLabel}>Online event</Text>
+                {!!detailEvent.meeting_url && (
+                  <Text style={styles.infoValue} numberOfLines={1}>
+                    {detailEvent.meeting_url}
+                  </Text>
+                )}
+              </View>
+            </View>
+          ) : !!detailEvent.location ? (
             <View style={styles.infoBlock}>
               <View style={styles.infoIconBox}>
                 <MapPin size={18} color={Colors.primary} strokeWidth={2} />
@@ -804,7 +988,7 @@ export default function EventDetailDrawer({
                 <Text style={styles.infoValue}>{detailEvent.location}</Text>
               </View>
             </View>
-          )}
+          ) : null}
 
           {/* Description */}
           {!!detailEvent.description && (
@@ -860,7 +1044,10 @@ export default function EventDetailDrawer({
                 key={i}
                 style={[
                   styles.particle,
-                  { backgroundColor: PARTICLE_COLORS[i % PARTICLE_COLORS.length] },
+                  {
+                    backgroundColor:
+                      PARTICLE_COLORS[i % PARTICLE_COLORS.length],
+                  },
                   {
                     opacity: p.opacity,
                     transform: [
@@ -884,7 +1071,16 @@ export default function EventDetailDrawer({
               },
             ]}
           >
-            {isgoing ? (
+            {isPastEvent ? (
+              <TouchableOpacity
+                style={styles.fullShareButton}
+                activeOpacity={0.8}
+                onPress={() => void handleShare()}
+              >
+                <Share2 size={20} color={Colors.dark} strokeWidth={2} />
+                <Text style={styles.fullShareButtonText}>Share Event</Text>
+              </TouchableOpacity>
+            ) : isgoing ? (
               <FooterButton
                 label="Leave Event"
                 variant="leave"
@@ -898,23 +1094,49 @@ export default function EventDetailDrawer({
                 onPress={openLeaveConfirm}
                 loading={actionLoading}
               />
-            ) : (
+            ) : canJoin ? (
               <FooterButton
                 label="Join Event"
                 variant="join"
                 onPress={() => void handleJoin()}
                 loading={actionLoading}
               />
+            ) : awaitingCommunityApproval ? (
+              /* Already requested — waiting for admin */
+              <View style={styles.lockedButton}>
+                <Text style={styles.lockedButtonText}>
+                  Community request sent — pending approval
+                </Text>
+              </View>
+            ) : (
+              /* Private community — not yet a member, offer to request */
+              <FooterButton
+                label="Request to Join Community"
+                variant="join"
+                onPress={() => void handleJoinCommunity()}
+                loading={communityJoinLoading}
+              />
             )}
           </Animated.View>
 
-          <TouchableOpacity
-            style={styles.shareButton}
-            activeOpacity={0.7}
-            onPress={() => void handleShare()}
-          >
-            <Share2 size={20} color={Colors.dark} strokeWidth={2} />
-          </TouchableOpacity>
+          {!isPastEvent && (
+            <TouchableOpacity
+              style={styles.shareButton}
+              activeOpacity={0.7}
+              onPress={() => void handleShare()}
+            >
+              <Share2 size={20} color={Colors.dark} strokeWidth={2} />
+            </TouchableOpacity>
+          )}
+          {canDeleteEvent && (
+            <TouchableOpacity
+              style={[styles.shareButton, styles.deleteEventButton]}
+              activeOpacity={0.7}
+              onPress={openDeleteConfirm}
+            >
+              <Trash2 size={20} color="#DC2626" strokeWidth={2} />
+            </TouchableOpacity>
+          )}
         </View>
       </Animated.View>
 
@@ -958,6 +1180,65 @@ export default function EventDetailDrawer({
                   })
                 }
               />
+            </View>
+          </Animated.View>
+        </View>
+      )}
+
+      {/* Delete event confirm overlay */}
+      {deleteConfirmVisible && (
+        <View style={styles.deleteModalBackdrop} pointerEvents="box-none">
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => {
+              if (!deleteLoading) closeDeleteConfirm();
+            }}
+          />
+          <Animated.View
+            style={[
+              styles.deleteModalCard,
+              {
+                opacity: confirmOpacity,
+                transform: [{ scale: confirmScale }],
+              },
+            ]}
+          >
+            <Text style={styles.deleteModalTitle}>Delete Event?</Text>
+            <Text style={styles.deleteModalBody}>
+              This will permanently delete{" "}
+              <Text style={styles.deleteModalStrong}>{detailEvent.title}</Text>.
+              This action can't be undone.
+            </Text>
+
+            <View style={styles.deleteModalActions}>
+              <TouchableOpacity
+                style={[
+                  styles.deleteModalButton,
+                  styles.deleteModalButtonSecondary,
+                ]}
+                onPress={() => closeDeleteConfirm()}
+                activeOpacity={0.7}
+                disabled={deleteLoading}
+              >
+                <Text style={styles.deleteModalButtonSecondaryText}>Keep</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.deleteModalButton,
+                  styles.deleteModalButtonDestructive,
+                ]}
+                onPress={() => void handleDeleteEvent()}
+                activeOpacity={0.7}
+                disabled={deleteLoading}
+              >
+                {deleteLoading ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.deleteModalButtonDestructiveText}>
+                    Delete
+                  </Text>
+                )}
+              </TouchableOpacity>
             </View>
           </Animated.View>
         </View>
@@ -1010,6 +1291,21 @@ const styles = StyleSheet.create({
     color: Colors.dark,
     marginBottom: 12,
     lineHeight: 28,
+  },
+  inProgressTag: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginBottom: 10,
+  },
+  inProgressTagText: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 12,
+    color: "#92400E",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
   },
   // ── Info blocks ─────────────────────────────────────────────────────────
   infoBlock: {
@@ -1081,7 +1377,6 @@ const styles = StyleSheet.create({
     width: AVATAR_SIZE,
     height: AVATAR_SIZE,
     borderRadius: AVATAR_SIZE / 2,
-    backgroundColor: Colors.primary + "22",
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 2,
@@ -1097,7 +1392,7 @@ const styles = StyleSheet.create({
   avatarInitial: {
     fontFamily: Fonts.gabarito.bold,
     fontSize: 16,
-    color: Colors.primary,
+    color: "#fff",
   },
   attendeeCountText: {
     fontFamily: Fonts.instrument.medium,
@@ -1137,6 +1432,41 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  fullShareButton: {
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: "#F2F2F2",
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  fullShareButtonText: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 16,
+    color: Colors.dark,
+  },
+  deleteEventButton: {
+    backgroundColor: "#FEF2F2",
+    borderWidth: 1,
+    borderColor: "#FECACA",
+  },
+  lockedButton: {
+    flex: 1,
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: "#F2F2F2",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: "#E0E0E0",
+    borderStyle: "dashed",
+  },
+  lockedButtonText: {
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 15,
+    color: "#999",
+  },
   // ── Leave confirm ────────────────────────────────────────────────────────
   confirmBackdrop: {
     ...StyleSheet.absoluteFillObject,
@@ -1172,9 +1502,72 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginBottom: 24,
   },
+  confirmStrong: {
+    fontFamily: Fonts.instrument.semiBold,
+    color: Colors.dark,
+  },
   confirmActions: {
     flexDirection: "row",
     gap: 10,
     width: "100%",
+  },
+  deleteModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 32,
+  },
+  deleteModalCard: {
+    width: "100%",
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 24,
+    gap: 12,
+  },
+  deleteModalTitle: {
+    fontFamily: Fonts.gabarito.bold,
+    fontSize: 20,
+    color: Colors.dark,
+    textAlign: "center",
+  },
+  deleteModalBody: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 15,
+    color: "#555",
+    textAlign: "center",
+    lineHeight: 22,
+  },
+  deleteModalStrong: {
+    fontFamily: Fonts.instrument.medium,
+    color: Colors.dark,
+  },
+  deleteModalActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 8,
+  },
+  deleteModalButton: {
+    flex: 1,
+    height: 48,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  deleteModalButtonSecondary: {
+    backgroundColor: "#F0F0F0",
+  },
+  deleteModalButtonSecondaryText: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 15,
+    color: Colors.dark,
+  },
+  deleteModalButtonDestructive: {
+    backgroundColor: "#E53E3E",
+  },
+  deleteModalButtonDestructiveText: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 15,
+    color: "#fff",
   },
 });

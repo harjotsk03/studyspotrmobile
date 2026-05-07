@@ -2,6 +2,16 @@ import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Colors } from '../constants/Colors';
 import { Fonts } from '../constants/Fonts';
 import Button from './Button';
+import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
+
+interface LatestMember {
+  id?: string;
+  first_name?: string;
+  last_name?: string;
+  username?: string;
+  profile_photo?: string;
+  avatar_url?: string;
+}
 
 interface CommunityCardProps {
   name: string;
@@ -9,6 +19,7 @@ interface CommunityCardProps {
   description: string;
   icon?: string;
   color?: string;
+  latestMembers?: LatestMember[];
   memberAvatars?: string[];
   joined?: boolean;
   onJoin?: () => void;
@@ -21,11 +32,17 @@ export default function CommunityCard({
   description,
   icon,
   color = Colors.accent,
+  latestMembers = [],
   memberAvatars = [],
   joined = false,
   onJoin,
   onPress,
 }: CommunityCardProps) {
+  const displayedMembers: LatestMember[] =
+    latestMembers.length > 0
+      ? latestMembers
+      : memberAvatars.map((profile_photo) => ({ profile_photo }));
+
   return (
     <Pressable style={styles.container} onPress={onPress}>
       <View style={styles.topRow}>
@@ -39,15 +56,36 @@ export default function CommunityCard({
           )}
         </View>
 
-        {memberAvatars.length > 0 && (
+        {displayedMembers.length > 0 && (
           <View style={styles.avatarStack}>
-            {memberAvatars.slice(0, 3).map((uri, i) => (
-              <Image
-                key={i}
-                source={{ uri }}
-                style={[styles.memberAvatar, { right: i * 18 }]}
-              />
-            ))}
+            {displayedMembers.slice(0, 3).map((member, i) => {
+              const photoUri = member.profile_photo ?? member.avatar_url;
+
+              return (
+                <View
+                  key={member.id ?? member.username ?? photoUri ?? i}
+                  style={[
+                    styles.memberAvatar,
+                    {
+                      right: i * 18,
+                      zIndex: displayedMembers.length - i,
+                      backgroundColor: getUserAvatarColor(member),
+                    },
+                  ]}
+                >
+                  <Text style={styles.memberInitials}>
+                    {getUserInitials(member)}
+                  </Text>
+
+                  {photoUri ? (
+                    <Image
+                      source={{ uri: photoUri }}
+                      style={styles.memberAvatarImage}
+                    />
+                  ) : null}
+                </View>
+              );
+            })}
           </View>
         )}
       </View>
@@ -61,16 +99,6 @@ export default function CommunityCard({
       <Text style={styles.description} numberOfLines={2}>
         {description}
       </Text>
-
-      <View style={styles.buttonContainer}>
-        <Button
-          label={"View"}
-          variant={"secondary"}
-          size="default"
-          fullWidth={true}
-          onPress={onPress}
-        />
-      </View>
     </Pressable>
   );
 }
@@ -108,10 +136,9 @@ const styles = StyleSheet.create({
     fontSize: 26,
   },
   avatarStack: {
-    flexDirection: "row-reverse",
-    alignItems: "center",
     width: 30 + 18 * 2,
     height: 30,
+    position: "relative",
   },
   memberAvatar: {
     width: 30,
@@ -120,6 +147,20 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "#fff",
     position: "absolute",
+    top: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  memberAvatarImage: {
+    ...StyleSheet.absoluteFillObject,
+    width: "100%",
+    height: "100%",
+  },
+  memberInitials: {
+    color: "#fff",
+    fontFamily: Fonts.gabarito.bold,
+    fontSize: 10,
   },
   name: {
     fontFamily: Fonts.gabarito.semiBold,
@@ -138,7 +179,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.dark,
     lineHeight: 20,
-    marginBottom: 16,
   },
   buttonContainer: {
     flexDirection: "row",

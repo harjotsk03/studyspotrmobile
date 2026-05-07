@@ -44,6 +44,7 @@ interface AuthState {
     rememberMe?: boolean,
   ) => Promise<void>;
   updateProfile: (updates: Partial<UserProfileData>) => Promise<void>;
+  refreshProfile: () => Promise<UserProfile | null>;
   logout: () => Promise<void>;
 }
 
@@ -318,6 +319,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setRememberSession(rememberMe);
   };
 
+  const persistProfile = async (nextProfile: UserProfile) => {
+    if (rememberSession) {
+      await AsyncStorage.setItem(
+        STORAGE_KEYS.profile,
+        JSON.stringify(nextProfile),
+      );
+    }
+  };
+
   const updateProfile = async (updates: Partial<UserProfileData>) => {
     setProfile((current) => {
       if (!current) {
@@ -333,13 +343,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
 
       if (rememberSession) {
-        void AsyncStorage.setItem(
-          STORAGE_KEYS.profile,
-          JSON.stringify(nextProfile),
-        );
+        void persistProfile(nextProfile);
       }
       return nextProfile;
     });
+  };
+
+  const refreshProfile = async () => {
+    if (!token) {
+      return null;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/auth/profile`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+      });
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok || !data) {
+        return null;
+      }
+
+      const nextProfile = normalizeProfile(data.user ?? data.profile ?? data);
+      setProfile(nextProfile);
+      await persistProfile(nextProfile);
+      return nextProfile;
+    } catch {
+      return null;
+    }
   };
 
   return (
@@ -350,6 +384,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isLoading,
         login,
         updateProfile,
+        refreshProfile,
         logout,
       }}
     >

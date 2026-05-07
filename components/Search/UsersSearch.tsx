@@ -15,6 +15,7 @@ import { Colors } from "../../constants/Colors";
 import { Fonts } from "../../constants/Fonts";
 import { useAuth } from "../../context/AuthContext";
 import { useSuggestedUsers, type SuggestedUser } from "../../hooks/useSuggestedUsers";
+import { getUserAvatarColor, getUserInitials } from "../../utils/avatar";
 
 const SEARCH_LIMIT = 10;
 const SEARCH_DEBOUNCE_MS = 150;
@@ -269,9 +270,15 @@ export default function UsersSearch() {
                 {avatarUri ? (
                   <Image source={{ uri: avatarUri }} style={styles.avatar} />
                 ) : (
-                  <View style={[styles.avatar, styles.avatarFallback]}>
+                  <View
+                    style={[
+                      styles.avatar,
+                      styles.avatarFallback,
+                      { backgroundColor: getUserAvatarColor(item) },
+                    ]}
+                  >
                     <Text style={styles.avatarInitial}>
-                      {displayName.charAt(0).toUpperCase()}
+                      {getUserInitials({ ...item, name: displayName })}
                     </Text>
                   </View>
                 )}
@@ -363,7 +370,6 @@ const styles = StyleSheet.create({
   avatarFallback: {
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: Colors.primary,
   },
   avatarInitial: {
     color: "#fff",

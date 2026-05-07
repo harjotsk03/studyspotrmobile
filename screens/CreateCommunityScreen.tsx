@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Alert,
   Image,
@@ -30,11 +30,29 @@ import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "../context/AuthContext";
 import Button from "../components/Button";
 import Input from "../components/Input";
-import type { CommunityStackParamList } from "./CommunityDetailScreen";
+import type {
+  CommunityData,
+  CommunityStackParamList,
+} from "./CommunityDetailScreen";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type ImageAsset = ImagePicker.ImagePickerAsset;
+
+type CreatedCommunity = {
+  id: string;
+  name?: string;
+  description?: string;
+  members?: number;
+  member_count?: number;
+  icon?: string;
+  avatar_url?: string;
+  banner_url?: string;
+  color?: string;
+  category?: string;
+  is_public?: boolean;
+  user_role?: string;
+};
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -43,7 +61,7 @@ const TOTAL_STEPS = 3;
 const STEP_SUBTITLES = [
   "Give your community a name and description",
   "Pick a category and set visibility",
-  "Add an avatar and banner photo",
+  "Add optional avatar and banner photos",
 ];
 
 const CATEGORIES = [
@@ -67,18 +85,21 @@ async function createCommunity(
   is_public: boolean,
   category: string,
 ) {
-  const res = await fetch(`${API_BASE_URL}/api/v1/communities/create-community`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
+  const res = await fetch(
+    `${API_BASE_URL}/api/v1/communities/create-community`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ name, description, is_public, category }),
     },
-    body: JSON.stringify({ name, description, is_public, category }),
-  });
+  );
   const json = await res.json();
   if (!res.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
-  return json.community as { id: string };
+  return json.community as CreatedCommunity;
 }
 
 async function getCommunityImageUploadUrls(
@@ -87,20 +108,25 @@ async function getCommunityImageUploadUrls(
   avatarAsset: ImageAsset | null,
   bannerAsset: ImageAsset | null,
 ) {
-  const body = {
-    avatar: avatarAsset
-      ? {
-          filename: avatarAsset.fileName ?? "avatar.jpg",
-          contentType: avatarAsset.mimeType ?? "image/jpeg",
-        }
-      : null,
-    banner: bannerAsset
-      ? {
-          filename: bannerAsset.fileName ?? "banner.jpg",
-          contentType: bannerAsset.mimeType ?? "image/jpeg",
-        }
-      : null,
-  };
+  const body: {
+    avatar?: { filename: string; contentType: string };
+    banner?: { filename: string; contentType: string };
+  } = {};
+
+  if (avatarAsset) {
+    body.avatar = {
+      filename: avatarAsset.fileName ?? "avatar.jpg",
+      contentType: avatarAsset.mimeType ?? "image/jpeg",
+    };
+  }
+
+  if (bannerAsset) {
+    body.banner = {
+      filename: bannerAsset.fileName ?? "banner.jpg",
+      contentType: bannerAsset.mimeType ?? "image/jpeg",
+    };
+  }
+
   const res = await fetch(
     `${API_BASE_URL}/api/v1/communities/${communityId}/image-upload-urls`,
     {
@@ -159,7 +185,7 @@ async function confirmCommunityImages(
   );
   const json = await res.json();
   if (!res.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
-  return json.community;
+  return json.community as CreatedCommunity | undefined;
 }
 
 // ─── Screen ──────────────────────────────────────────────────────────────────
@@ -171,6 +197,7 @@ export default function CreateCommunityScreen() {
 
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(false);
+  const submitInFlightRef = useRef(false);
 
   // Step 0
   const [name, setName] = useState("");
@@ -186,6 +213,35 @@ export default function CreateCommunityScreen() {
   // Step 2
   const [avatarAsset, setAvatarAsset] = useState<ImageAsset | null>(null);
   const [bannerAsset, setBannerAsset] = useState<ImageAsset | null>(null);
+
+  const buildCreatedCommunityData = (
+    community: CreatedCommunity,
+  ): CommunityData => ({
+    id: community.id,
+    name: community.name ?? name.trim(),
+    description: community.description ?? description.trim(),
+    members: community.members ?? community.member_count ?? 1,
+    icon: community.icon ?? community.avatar_url,
+    banner_url: community.banner_url,
+    color: community.color ?? Colors.accent,
+    category: community.category ?? category,
+    is_public: community.is_public ?? isPublic,
+    user_role: community.user_role ?? "owner",
+    memberAvatars: [],
+  });
+
+  const resetToCreatedCommunity = (community: CreatedCommunity) => {
+    navigation.reset({
+      index: 1,
+      routes: [
+        { name: "CommunityList" },
+        {
+          name: "CommunityDetail",
+          params: { community: buildCreatedCommunityData(community) },
+        },
+      ],
+    });
+  };
 
   // ── Validation ──────────────────────────────────────────────────────────
 
@@ -247,14 +303,15 @@ export default function CreateCommunityScreen() {
   // ── Submit ───────────────────────────────────────────────────────────────
 
   const handleSubmit = async () => {
+    if (loading || submitInFlightRef.current) return;
     if (!token) {
       Alert.alert("Error", "You must be logged in to create a community.");
       return;
     }
+    submitInFlightRef.current = true;
     setLoading(true);
     try {
-      // 1) Create community
-      const community = await createCommunity(
+      let community = await createCommunity(
         token,
         name.trim(),
         description.trim(),
@@ -262,42 +319,67 @@ export default function CreateCommunityScreen() {
         category,
       );
 
-      // 2) Get signed upload URLs (only if images were selected)
-      const urls = await getCommunityImageUploadUrls(
-        token,
-        community.id,
-        avatarAsset,
-        bannerAsset,
-      );
+      if (avatarAsset || bannerAsset) {
+        try {
+          const urls = await getCommunityImageUploadUrls(
+            token,
+            community.id,
+            avatarAsset,
+            bannerAsset,
+          );
 
-      // 3) Upload images
-      if (urls.avatar?.uploadUrl && avatarAsset?.uri) {
-        await uploadToSignedUrl(
-          urls.avatar.uploadUrl,
-          avatarAsset.uri,
-          avatarAsset.mimeType ?? "image/jpeg",
-        );
-      }
-      if (urls.banner?.uploadUrl && bannerAsset?.uri) {
-        await uploadToSignedUrl(
-          urls.banner.uploadUrl,
-          bannerAsset.uri,
-          bannerAsset.mimeType ?? "image/jpeg",
-        );
-      }
+          if (avatarAsset?.uri && !urls.avatar?.uploadUrl) {
+            throw new Error("Could not prepare avatar upload.");
+          }
+          if (bannerAsset?.uri && !urls.banner?.uploadUrl) {
+            throw new Error("Could not prepare banner upload.");
+          }
 
-      // 4) Confirm & link images
-      await confirmCommunityImages(
-        token,
-        community.id,
-        urls.avatar?.path,
-        urls.banner?.path,
-      );
+          if (urls.avatar?.uploadUrl && avatarAsset?.uri) {
+            await uploadToSignedUrl(
+              urls.avatar.uploadUrl,
+              avatarAsset.uri,
+              avatarAsset.mimeType ?? "image/jpeg",
+            );
+          }
+          if (urls.banner?.uploadUrl && bannerAsset?.uri) {
+            await uploadToSignedUrl(
+              urls.banner.uploadUrl,
+              bannerAsset.uri,
+              bannerAsset.mimeType ?? "image/jpeg",
+            );
+          }
+
+          if (urls.avatar?.path || urls.banner?.path) {
+            const updatedCommunity = await confirmCommunityImages(
+              token,
+              community.id,
+              urls.avatar?.path,
+              urls.banner?.path,
+            );
+            if (updatedCommunity) {
+              community = { ...community, ...updatedCommunity };
+            }
+          }
+        } catch {
+          Alert.alert(
+            "Community created",
+            "Your community was created, but the images could not be uploaded. You can add them later.",
+            [
+              {
+                text: "OK",
+                onPress: () => resetToCreatedCommunity(community),
+              },
+            ],
+          );
+          return;
+        }
+      }
 
       Alert.alert(
         "Community created!",
         `"${name.trim()}" is live. Go check it out.`,
-        [{ text: "OK", onPress: () => navigation.navigate("CommunityList") }],
+        [{ text: "OK", onPress: () => resetToCreatedCommunity(community) }],
       );
     } catch (err) {
       Alert.alert(
@@ -305,6 +387,7 @@ export default function CreateCommunityScreen() {
         err instanceof Error ? err.message : "Please try again.",
       );
     } finally {
+      submitInFlightRef.current = false;
       setLoading(false);
     }
   };
@@ -504,6 +587,7 @@ export default function CreateCommunityScreen() {
               label="Back"
               variant="accent"
               onPress={() => setStep(step - 1)}
+              disabled={loading}
               style={styles.backButton}
             />
           ) : (
@@ -511,6 +595,7 @@ export default function CreateCommunityScreen() {
               label="Cancel"
               variant="accent"
               onPress={() => navigation.goBack()}
+              disabled={loading}
               style={styles.backButton}
             />
           )}
@@ -519,11 +604,7 @@ export default function CreateCommunityScreen() {
             variant="default"
             loading={loading}
             icon={
-              <ArrowRightIcon
-                size={16}
-                strokeWidth={3}
-                color={Colors.light}
-              />
+              <ArrowRightIcon size={16} strokeWidth={3} color={Colors.light} />
             }
             iconPosition="right"
             onPress={handleNext}
@@ -613,7 +694,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.accent + "18",
   },
   chipText: {
-    fontFamily: Fonts.instrument.regular,
+    fontFamily: Fonts.gabarito.medium,
     fontSize: 14,
     color: "#555",
   },
@@ -713,8 +794,10 @@ const styles = StyleSheet.create({
   },
   pickerHint: {
     fontFamily: Fonts.instrument.regular,
-    fontSize: 13,
+    fontSize: 12,
+    maxWidth: 90,
     color: "#aaa",
+    textAlign: "center",
   },
   // Buttons
   buttonRow: {

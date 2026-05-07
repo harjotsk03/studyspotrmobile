@@ -15,7 +15,7 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Fonts } from "../constants/Fonts";
 import Button from "../components/Button";
 import Input from "../components/Input";
-import { Check, Circle, CircleCheck } from "lucide-react-native";
+import { Circle, CircleCheck, Eye, EyeOff } from "lucide-react-native";
 
 type AuthStackParamList = {
   LoginScreen: undefined;
@@ -30,6 +30,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -89,8 +90,24 @@ export default function LoginScreen() {
             placeholder="Password"
             value={password}
             onChangeText={setPassword}
-            secureTextEntry
+            secureTextEntry={!showPassword}
             autoComplete="password"
+            rightIcon={
+              <TouchableOpacity
+                accessibilityLabel={
+                  showPassword ? "Hide password" : "Show password"
+                }
+                accessibilityRole="button"
+                activeOpacity={0.7}
+                onPress={() => setShowPassword((visible) => !visible)}
+              >
+                {showPassword ? (
+                  <EyeOff size={18} color="#999" />
+                ) : (
+                  <Eye size={18} color="#999" />
+                )}
+              </TouchableOpacity>
+            }
             containerStyle={styles.fieldGap}
           />
 

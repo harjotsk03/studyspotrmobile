@@ -275,7 +275,13 @@ const cardStyles = StyleSheet.create({
 // ─── Screen ──────────────────────────────────────────────────────────────────
 
 export default function CommunityEventsScreen({ route }: Props) {
-  const { communityId, communityName, isAdmin } = route.params;
+  const {
+    communityId,
+    communityName,
+    isAdmin,
+    communityIsPublic,
+    userCommunityRole,
+  } = route.params;
   const navigation =
     useNavigation<NativeStackNavigationProp<CommunityStackParamList>>();
   const insets = useSafeAreaInsets();
@@ -349,6 +355,12 @@ export default function CommunityEventsScreen({ route }: Props) {
         ? { ...prev, attendee_count: newCount, user_rsvp_status: newStatus }
         : prev,
     );
+  }
+
+  function handleEventDeleted(eventId: string) {
+    setEvents((prev) => prev.filter((event) => event.id !== eventId));
+    setSelectedEvent(null);
+    setDrawerOpen(false);
   }
 
   return (
@@ -449,7 +461,11 @@ export default function CommunityEventsScreen({ route }: Props) {
         onClose={() => setDrawerOpen(false)}
         communityId={communityId}
         token={token}
+        communityIsPublic={communityIsPublic}
+        userCommunityRole={userCommunityRole}
         onAttendanceChange={handleAttendanceChange}
+        canDeleteEvent={isAdmin}
+        onEventDeleted={handleEventDeleted}
       />
     </View>
   );

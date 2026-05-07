@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   FlatList,
   Image,
   Pressable,
   RefreshControl,
+  SectionList,
   StyleSheet,
   Text,
   TextInput,
@@ -18,12 +20,13 @@ import type {
   NativeStackNavigationProp,
   NativeStackScreenProps,
 } from "@react-navigation/native-stack";
-import { ArrowLeft, Search, Users, X } from "lucide-react-native";
+import { ArrowLeft, Check, Search, Users, X } from "lucide-react-native";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "../context/AuthContext";
 import type { CommunityStackParamList } from "./CommunityDetailScreen";
+import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,6 +41,7 @@ interface MemberUser {
 interface Member {
   user: MemberUser;
   role: string | null;
+  status: "pending" | "accepted";
   joined_at: string | null;
 }
 
@@ -47,7 +51,7 @@ type Props = NativeStackScreenProps<CommunityStackParamList, "CommunityMembers">
 
 const ROLE_PRIORITY: Record<string, number> = { owner: 0, admin: 1, member: 2 };
 
-function sortMembers(members: Member[]): Member[] {
+function sortAccepted(members: Member[]): Member[] {
   return [...members].sort((a, b) => {
     const pa = ROLE_PRIORITY[a.role ?? ""] ?? 3;
     const pb = ROLE_PRIORITY[b.role ?? ""] ?? 3;
@@ -61,6 +65,12 @@ function formatJoinDate(iso: string | null): string {
   return `Joined ${d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
 }
 
+function formatRequestDate(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return `Requested ${d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+}
+
 function displayName(user: MemberUser): string {
   const full = [user.first_name, user.last_name].filter(Boolean).join(" ");
   return full || user.username || "Unknown";
@@ -70,7 +80,6 @@ function displayName(user: MemberUser): string {
 
 function RoleBadge({ role }: { role: string | null }) {
   if (!role || role === "member") return null;
-
   const isOwner = role === "owner";
   return (
     <View
@@ -112,20 +121,39 @@ const badgeStyles = StyleSheet.create({
 
 const AVATAR_SIZE = 46;
 
-function MemberRow({ item }: { item: Member }) {
+function MemberRow({
+  item,
+  isAdmin,
+  onRespond,
+  respondingId,
+}: {
+  item: Member;
+  isAdmin: boolean;
+  onRespond?: (userId: string, decision: "accept" | "reject") => void;
+  respondingId?: string | null;
+}) {
   const name = displayName(item.user);
-  const initial = name.charAt(0).toUpperCase();
+  const isPending = item.status === "pending";
+  const isResponding = respondingId === item.user.id;
 
   return (
     <View style={rowStyles.container}>
-      <View style={rowStyles.avatar}>
+      <View
+        style={[
+          rowStyles.avatar,
+          { backgroundColor: getUserAvatarColor({ ...item.user, name }) },
+          isPending && rowStyles.avatarPending,
+        ]}
+      >
         {item.user.profile_photo ? (
           <Image
             source={{ uri: item.user.profile_photo }}
             style={rowStyles.avatarImg}
           />
         ) : (
-          <Text style={rowStyles.avatarInitial}>{initial}</Text>
+          <Text style={rowStyles.avatarInitial}>
+            {getUserInitials({ ...item.user, name })}
+          </Text>
         )}
       </View>
 
@@ -138,12 +166,41 @@ function MemberRow({ item }: { item: Member }) {
             @{item.user.username}
           </Text>
         )}
-        {!!item.joined_at && (
-          <Text style={rowStyles.joinDate}>{formatJoinDate(item.joined_at)}</Text>
+        {!isPending && (
+          <Text style={rowStyles.joinDate}>
+            {formatJoinDate(item.joined_at)}
+          </Text>
         )}
       </View>
 
-      <RoleBadge role={item.role} />
+      {isPending && isAdmin ? (
+        isResponding ? (
+          <ActivityIndicator size="small" color={Colors.primary} />
+        ) : (
+          <View style={rowStyles.respondRow}>
+            <Pressable
+              style={rowStyles.acceptBtn}
+              onPress={() => onRespond?.(item.user.id, "accept")}
+            >
+              <Check size={14} color="#16A34A" strokeWidth={2.5} />
+              <Text style={rowStyles.acceptText}>Accept</Text>
+            </Pressable>
+            <Pressable
+              style={rowStyles.rejectBtn}
+              onPress={() => onRespond?.(item.user.id, "reject")}
+            >
+              <X size={14} color="#DC2626" strokeWidth={2.5} />
+              <Text style={rowStyles.rejectText}>Decline</Text>
+            </Pressable>
+          </View>
+        )
+      ) : !isPending ? (
+        <RoleBadge role={item.role} />
+      ) : (
+        <View style={rowStyles.pendingBadge}>
+          <Text style={rowStyles.pendingBadgeText}>Pending</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -161,11 +218,13 @@ const rowStyles = StyleSheet.create({
     width: AVATAR_SIZE,
     height: AVATAR_SIZE,
     borderRadius: AVATAR_SIZE / 2,
-    backgroundColor: Colors.primary + "1A",
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
     flexShrink: 0,
+  },
+  avatarPending: {
+    opacity: 0.6,
   },
   avatarImg: {
     width: AVATAR_SIZE,
@@ -175,7 +234,7 @@ const rowStyles = StyleSheet.create({
   avatarInitial: {
     fontFamily: Fonts.gabarito.bold,
     fontSize: 19,
-    color: Colors.primary,
+    color: "#fff",
   },
   info: {
     flex: 1,
@@ -197,6 +256,50 @@ const rowStyles = StyleSheet.create({
     color: "#BBB",
     marginTop: 2,
   },
+  respondRow: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  acceptBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#DCFCE7",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  acceptText: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 12,
+    color: "#16A34A",
+  },
+  rejectBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#FEE2E2",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  rejectText: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 12,
+    color: "#DC2626",
+  },
+  pendingBadge: {
+    backgroundColor: "#FEF3C7",
+    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+  },
+  pendingBadgeText: {
+    fontFamily: Fonts.instrument.semiBold,
+    fontSize: 11,
+    color: "#92400E",
+    letterSpacing: 0.3,
+  },
 });
 
 // ─── Separator ────────────────────────────────────────────────────────────────
@@ -210,7 +313,7 @@ function Separator() {
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function CommunityMembersScreen({ route }: Props) {
-  const { communityId, communityName } = route.params;
+  const { communityId, communityName, isAdmin } = route.params;
   const navigation =
     useNavigation<NativeStackNavigationProp<CommunityStackParamList>>();
   const insets = useSafeAreaInsets();
@@ -221,6 +324,7 @@ export default function CommunityMembersScreen({ route }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
+  const [respondingId, setRespondingId] = useState<string | null>(null);
 
   // Search bar focus animation
   const borderColor = useRef(new Animated.Value(0)).current;
@@ -267,9 +371,11 @@ export default function CommunityMembersScreen({ route }: Props) {
         );
         const json = await res.json();
         if (!res.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
-        setMembers(sortMembers(json.members ?? []));
+        setMembers(json.members ?? []);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load members.");
+        setError(
+          err instanceof Error ? err.message : "Failed to load members.",
+        );
       } finally {
         if (isRefresh) setRefreshing(false);
         else setLoading(false);
@@ -282,19 +388,77 @@ export default function CommunityMembersScreen({ route }: Props) {
     void fetchMembers();
   }, [fetchMembers]);
 
-  // ── Filtered list ─────────────────────────────────────────────────────────
+  async function handleRespond(userId: string, decision: "accept" | "reject") {
+    if (!token) return;
+    setRespondingId(userId);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/v1/communities/${communityId}/members/respond`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({ user_id: userId, decision }),
+        },
+      );
+      if (res.ok) {
+        if (decision === "accept") {
+          setMembers((prev) =>
+            prev.map((m) =>
+              m.user.id === userId ? { ...m, status: "accepted" as const } : m,
+            ),
+          );
+        } else {
+          setMembers((prev) => prev.filter((m) => m.user.id !== userId));
+        }
+      } else {
+        const json = await res.json();
+        Alert.alert("Error", json?.error ?? "Could not process the request.");
+      }
+    } catch {
+      Alert.alert("Error", "Something went wrong. Please try again.");
+    } finally {
+      setRespondingId(null);
+    }
+  }
 
-  const filtered = useMemo(() => {
+  // ── Split and filter lists ─────────────────────────────────────────────────
+
+  const { pending, accepted } = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return members;
-    return members.filter((m) => {
+    const matchesQuery = (m: Member) => {
+      if (!q) return true;
       const name = displayName(m.user).toLowerCase();
       const username = (m.user.username ?? "").toLowerCase();
       return name.includes(q) || username.includes(q);
-    });
+    };
+    return {
+      pending: members.filter((m) => m.status === "pending" && matchesQuery(m)),
+      accepted: sortAccepted(
+        members.filter((m) => m.status === "accepted" && matchesQuery(m)),
+      ),
+    };
   }, [members, query]);
 
+  const acceptedCount = members.filter((m) => m.status === "accepted").length;
+  const pendingCount = members.filter((m) => m.status === "pending").length;
+
   // ── Render ────────────────────────────────────────────────────────────────
+
+  // Build sections for SectionList: pending (admin only) + accepted
+  type SectionData = { title: string; data: Member[]; isPending: boolean };
+  const sections: SectionData[] = [];
+  if (isAdmin && pending.length > 0) {
+    sections.push({
+      title: "Pending Requests",
+      data: pending,
+      isPending: true,
+    });
+  }
+  sections.push({ title: "Members", data: accepted, isPending: false });
 
   return (
     <View style={styles.screen}>
@@ -315,15 +479,12 @@ export default function CommunityMembersScreen({ route }: Props) {
           </Text>
         </View>
 
-        {/* Placeholder to keep title centered */}
         <View style={[styles.iconButton, { opacity: 0 }]} />
       </View>
 
       {/* Search bar */}
       <View style={styles.searchWrapper}>
-        <Animated.View
-          style={[styles.searchBar, { borderColor: borderAnim }]}
-        >
+        <Animated.View style={[styles.searchBar, { borderColor: borderAnim }]}>
           <Search size={16} color="#AAA" strokeWidth={2.2} />
           <TextInput
             ref={inputRef}
@@ -371,11 +532,32 @@ export default function CommunityMembersScreen({ route }: Props) {
           </TouchableOpacity>
         </View>
       ) : (
-        <FlatList
-          data={filtered}
+        <SectionList
+          sections={sections}
           keyExtractor={(item) => item.user.id}
-          renderItem={({ item }) => <MemberRow item={item} />}
+          renderItem={({ item, section }) => (
+            <MemberRow
+              item={item}
+              isAdmin={isAdmin}
+              onRespond={section.isPending ? handleRespond : undefined}
+              respondingId={respondingId}
+            />
+          )}
           ItemSeparatorComponent={Separator}
+          SectionSeparatorComponent={() => (
+            <View style={{ height: 8, backgroundColor: Colors.light }} />
+          )}
+          renderSectionHeader={({ section }) => (
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionHeaderText}>
+                {section.isPending
+                  ? `${pendingCount} pending ${pendingCount === 1 ? "request" : "requests"}`
+                  : query
+                    ? `${accepted.length} of ${acceptedCount.toLocaleString()} ${acceptedCount === 1 ? "member" : "members"}`
+                    : `${acceptedCount.toLocaleString()} ${acceptedCount === 1 ? "member" : "members"}`}
+              </Text>
+            </View>
+          )}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           refreshControl={
@@ -386,33 +568,22 @@ export default function CommunityMembersScreen({ route }: Props) {
               colors={[Colors.primary]}
             />
           }
-          ListHeaderComponent={
-            members.length > 0 ? (
-              <View style={styles.listHeader}>
-                <Text style={styles.listHeaderText}>
-                  {filtered.length === members.length
-                    ? `${members.length.toLocaleString()} ${members.length === 1 ? "member" : "members"}`
-                    : `${filtered.length} of ${members.length.toLocaleString()} members`}
+          ListEmptyComponent={
+            accepted.length === 0 && (!isAdmin || pending.length === 0) ? (
+              <View style={styles.centeredBox}>
+                <Users size={44} color="#CCC" strokeWidth={1.5} />
+                <Text style={styles.emptyTitle}>
+                  {query ? "No results" : "No members yet"}
+                </Text>
+                <Text style={styles.emptySubtitle}>
+                  {query
+                    ? `Nobody matched "${query}"`
+                    : "This community has no members yet."}
                 </Text>
               </View>
             ) : null
           }
-          ListEmptyComponent={
-            <View style={styles.centeredBox}>
-              <Users size={44} color="#CCC" strokeWidth={1.5} />
-              <Text style={styles.emptyTitle}>
-                {query ? "No results" : "No members yet"}
-              </Text>
-              <Text style={styles.emptySubtitle}>
-                {query
-                  ? `Nobody matched "${query}"`
-                  : "This community has no members yet."}
-              </Text>
-            </View>
-          }
-          contentContainerStyle={
-            filtered.length === 0 ? { flex: 1 } : { paddingBottom: 40 }
-          }
+          contentContainerStyle={{ paddingBottom: 40 }}
         />
       )}
     </View>
@@ -483,12 +654,12 @@ const styles = StyleSheet.create({
   loader: {
     marginTop: 60,
   },
-  listHeader: {
+  sectionHeader: {
     paddingHorizontal: 20,
     paddingVertical: 10,
     backgroundColor: Colors.light,
   },
-  listHeaderText: {
+  sectionHeaderText: {
     fontFamily: Fonts.instrument.semiBold,
     fontSize: 12,
     color: "#AAA",

@@ -2,7 +2,13 @@ import { ActivityIndicator, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { Newspaper, Handshake, Search, MapPin, CircleUserRound, HeartHandshake, MapPinnedIcon, User } from 'lucide-react-native';
+import {
+  HeartHandshake,
+  Inbox,
+  MapPinnedIcon,
+  Newspaper,
+  User,
+} from "lucide-react-native";
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
 import { Gabarito_400Regular, Gabarito_500Medium, Gabarito_600SemiBold, Gabarito_700Bold, Gabarito_800ExtraBold, Gabarito_900Black } from '@expo-google-fonts/gabarito';
@@ -17,11 +23,13 @@ import CommunityScreen from './screens/CommunityScreen';
 import CommunityDetailScreen, { type CommunityStackParamList } from './screens/CommunityDetailScreen';
 import CreateCommunityScreen from "./screens/CreateCommunityScreen";
 import EditCommunityScreen from "./screens/EditCommunityScreen";
+import BrowseEventsScreen from "./screens/BrowseEventsScreen";
 import CommunityEventsScreen from "./screens/CommunityEventsScreen";
 import CreateEventScreen from "./screens/CreateEventScreen";
+import InviteEventScreen from "./screens/InviteEventScreen";
 import CommunityMembersScreen from "./screens/CommunityMembersScreen";
 import ProfileSectionScreen, { type ProfileStackParamList } from './screens/ProfileSectionScreen';
-import SearchScreen from './screens/SearchScreen';
+import InboxScreen from "./screens/InboxScreen";
 import SpotsScreen from './screens/SpotsScreen';
 import SpotDetailScreen, {
   type SpotsStackParamList,
@@ -60,7 +68,12 @@ function CommunityStackScreen() {
         name="CommunityEvents"
         component={CommunityEventsScreen}
       />
+      <CommunityStack.Screen
+        name="BrowseEvents"
+        component={BrowseEventsScreen}
+      />
       <CommunityStack.Screen name="CreateEvent" component={CreateEventScreen} />
+      <CommunityStack.Screen name="InviteEvent" component={InviteEventScreen} />
       <CommunityStack.Screen
         name="CommunityMembers"
         component={CommunityMembersScreen}
@@ -95,10 +108,13 @@ function SpotsStackScreen() {
   );
 }
 
-const tabIcons: Record<string, React.ComponentType<{ size: number; color: string; strokeWidth?: number }>> = {
+const tabIcons: Record<
+  string,
+  React.ComponentType<{ size: number; color: string; strokeWidth?: number }>
+> = {
   Feed: Newspaper,
   Community: HeartHandshake,
-  Search: Search,
+  Inbox: Inbox,
   Spots: MapPinnedIcon,
   Profile: User,
 };
@@ -161,8 +177,8 @@ function AppContent() {
     >
       <Tab.Screen name="Feed" component={FeedScreen} />
       <Tab.Screen name="Community" component={CommunityStackScreen} />
-      <Tab.Screen name="Search" component={SearchScreen} />
       <Tab.Screen name="Spots" component={SpotsStackScreen} />
+      <Tab.Screen name="Inbox" component={InboxScreen} />
       <Tab.Screen name="Profile" component={ProfileStackScreen} />
     </Tab.Navigator>
   );

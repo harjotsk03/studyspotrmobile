@@ -11,10 +11,11 @@ import {
 import { Colors } from '../constants/Colors';
 import { Fonts } from '../constants/Fonts';
 
-interface InputProps extends Omit<TextInputProps, 'style'> {
+interface InputProps extends Omit<TextInputProps, "style"> {
   label?: string;
   icon?: ReactNode;
-  iconPosition?: 'left' | 'right';
+  iconPosition?: "left" | "right";
+  rightIcon?: ReactNode;
   error?: string;
   containerStyle?: StyleProp<ViewStyle>;
   inputStyle?: StyleProp<ViewStyle>;
@@ -24,7 +25,9 @@ export default function Input({
   label,
   icon,
   iconPosition = "left",
+  rightIcon,
   error,
+
   containerStyle,
   inputStyle,
   onFocus,
@@ -72,6 +75,12 @@ export default function Input({
         {icon && iconPosition === "right" && (
           <View style={[styles.iconRight, multiline && styles.iconTopAligned]}>
             {icon}
+          </View>
+        )}
+
+        {rightIcon && (
+          <View style={[styles.iconRight, multiline && styles.iconTopAligned]}>
+            {rightIcon}
           </View>
         )}
       </View>

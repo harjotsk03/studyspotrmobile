@@ -153,6 +153,7 @@ export default function SuggestedUsers() {
             <UserCard
               name={getDisplayName(user)}
               subtext={getSubtext(user)}
+              avatarKey={user.id}
               avatar={getAvatar(user)}
               requested={Boolean(requestedIds[user.id])}
               loading={Boolean(requestingIds[user.id])}
@@ -165,7 +166,9 @@ export default function SuggestedUsers() {
           loadingMore ? (
             <View style={[styles.cardWrapper, styles.loadingCard]}>
               <Text style={styles.loadingTitle}>Loading...</Text>
-              <Text style={styles.loadingBody}>Finding more suggested users</Text>
+              <Text style={styles.loadingBody}>
+                Finding more suggested users
+              </Text>
             </View>
           ) : null
         }

@@ -37,6 +37,11 @@ import type {
   CommunityStackParamList,
 } from "./CommunityDetailScreen";
 
+type CommunityUpdateResponse = Partial<CommunityData> & {
+  avatar_url?: string;
+  member_count?: number;
+};
+
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const ICON_SIZE = 72; // kept for layout spacing
@@ -76,7 +81,7 @@ async function updateCommunity(
   });
   const json = await res.json();
   if (!res.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
-  return json.community as CommunityData;
+  return json.community as CommunityUpdateResponse;
 }
 
 // ─── Screen ──────────────────────────────────────────────────────────────────
@@ -116,9 +121,23 @@ export default function EditCommunityScreen({ route }: Props) {
         isPublic,
         category,
       );
+      const nextCommunity: CommunityData = {
+        ...community,
+        ...updated,
+        icon: updated.icon ?? updated.avatar_url ?? community.icon,
+        banner_url: updated.banner_url ?? community.banner_url,
+        color: updated.color ?? community.color,
+        members: updated.members ?? updated.member_count ?? community.members,
+        memberAvatars: updated.memberAvatars ?? community.memberAvatars,
+        latestMembers: updated.latestMembers ?? community.latestMembers,
+      };
       // Navigate back and hand the freshly-updated community to the detail screen
-      navigation.navigate("CommunityDetail", {
-        community: { ...community, ...updated },
+      navigation.reset({
+        index: 1,
+        routes: [
+          { name: "CommunityList" },
+          { name: "CommunityDetail", params: { community: nextCommunity } },
+        ],
       });
     } catch (err) {
       Alert.alert(

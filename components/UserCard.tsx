@@ -2,10 +2,12 @@ import { Image, StyleSheet, Text, View, type ImageSourcePropType } from 'react-n
 import { Colors } from '../constants/Colors';
 import { Fonts } from '../constants/Fonts';
 import Button from './Button';
+import { getUserAvatarColor, getUserInitials } from '../utils/avatar';
 
 interface UserCardProps {
   name: string;
   subtext?: string;
+  avatarKey?: string;
   avatar?: ImageSourcePropType | string;
   onFollow?: () => void;
   followed?: boolean;
@@ -16,6 +18,7 @@ interface UserCardProps {
 export default function UserCard({
   name,
   subtext = 'You may know',
+  avatarKey,
   avatar,
   onFollow,
   followed = false,
@@ -23,6 +26,7 @@ export default function UserCard({
   loading = false,
 }: UserCardProps) {
   const avatarSource = typeof avatar === 'string' ? { uri: avatar } : avatar;
+  const avatarUser = { id: avatarKey, name };
   const buttonLabel = requested
     ? 'Requested'
     : followed
@@ -36,9 +40,15 @@ export default function UserCard({
         {avatarSource ? (
           <Image source={avatarSource} style={styles.avatar} />
         ) : (
-          <View style={[styles.avatar, styles.avatarPlaceholder]}>
+          <View
+            style={[
+              styles.avatar,
+              styles.avatarPlaceholder,
+              { backgroundColor: getUserAvatarColor(avatarUser) },
+            ]}
+          >
             <Text style={styles.avatarInitial}>
-              {name.charAt(0).toUpperCase()}
+              {getUserInitials(avatarUser)}
             </Text>
           </View>
         )}
@@ -90,7 +100,6 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   avatarPlaceholder: {
-    backgroundColor: Colors.primary,
     alignItems: "center",
     justifyContent: "center",
   },
