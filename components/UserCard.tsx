@@ -1,8 +1,15 @@
-import { Image, StyleSheet, Text, View, type ImageSourcePropType } from 'react-native';
-import { Colors } from '../constants/Colors';
-import { Fonts } from '../constants/Fonts';
-import Button from './Button';
-import { getUserAvatarColor, getUserInitials } from '../utils/avatar';
+import {
+  Image,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type ImageSourcePropType,
+} from "react-native";
+import { Colors } from "../constants/Colors";
+import { Fonts } from "../constants/Fonts";
+import Button from "./Button";
+import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 
 interface UserCardProps {
   name: string;
@@ -10,6 +17,7 @@ interface UserCardProps {
   avatarKey?: string;
   avatar?: ImageSourcePropType | string;
   onFollow?: () => void;
+  onProfilePress?: () => void;
   followed?: boolean;
   requested?: boolean;
   loading?: boolean;
@@ -17,26 +25,31 @@ interface UserCardProps {
 
 export default function UserCard({
   name,
-  subtext = 'You may know',
+  subtext = "You may know",
   avatarKey,
   avatar,
   onFollow,
+  onProfilePress,
   followed = false,
   requested = false,
   loading = false,
 }: UserCardProps) {
-  const avatarSource = typeof avatar === 'string' ? { uri: avatar } : avatar;
+  const avatarSource = typeof avatar === "string" ? { uri: avatar } : avatar;
   const avatarUser = { id: avatarKey, name };
   const buttonLabel = requested
-    ? 'Requested'
+    ? "Requested"
     : followed
-      ? 'Remove Friend'
-      : 'Add Friend';
-  const buttonVariant = requested || followed ? 'secondary' : 'default';
+      ? "Remove Friend"
+      : "Add Friend";
+  const buttonVariant = requested || followed ? "secondary" : "default";
 
   return (
     <View style={styles.container}>
-      <View style={styles.left}>
+      <Pressable
+        style={styles.left}
+        onPress={onProfilePress}
+        disabled={!onProfilePress}
+      >
         {avatarSource ? (
           <Image source={avatarSource} style={styles.avatar} />
         ) : (
@@ -61,7 +74,7 @@ export default function UserCard({
             {subtext}
           </Text>
         </View>
-      </View>
+      </Pressable>
 
       <Button
         label={buttonLabel}

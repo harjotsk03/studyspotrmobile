@@ -1,21 +1,339 @@
-import { StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Image,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import { useEffect } from "react";
+import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { ChevronRight } from "lucide-react-native";
 import TopNav from "../components/TopNav";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
+import {
+  useNotifications,
+  type NotificationActor,
+  type NotificationItem,
+} from "../context/NotificationsContext";
+import type { RootStackParamList } from "../types/navigation";
+
+export type InboxStackParamList = {
+  InboxHome: undefined;
+  FriendRequests: undefined;
+};
+
+function formatActorName(actor?: NotificationActor | null) {
+  if (!actor) return "";
+
+  const fullName = [actor.first_name, actor.last_name]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+
+  return fullName || actor.username || "";
+}
+
+function formatNotificationTitle(notification: NotificationItem) {
+  const title = notification.title?.trim();
+  if (title) return title;
+
+  const actorName = formatActorName(notification.actor);
+  const communityName = notification.community?.name?.trim();
+
+  if (notification.type === "friend_request") {
+    return actorName
+      ? `${actorName} sent you a friend request`
+      : "New friend request";
+  }
+
+  if (notification.type === "friend_request_accepted") {
+    return actorName
+      ? `${actorName} accepted your follow request`
+      : "Follow request accepted";
+  }
+
+  if (notification.type === "community_join_request") {
+    if (actorName && communityName) {
+      return `${actorName} requested to join ${communityName}`;
+    }
+
+    return communityName
+      ? `New request to join ${communityName}`
+      : "New community join request";
+  }
+
+  if (actorName && communityName) {
+    return `${actorName} in ${communityName}`;
+  }
+
+  return actorName || communityName || "New notification";
+}
+
+function formatNotificationBody(notification: NotificationItem) {
+  const body =
+    notification.message?.trim() ||
+    notification.body?.trim() ||
+    notification.content?.trim();
+
+  if (body) return body;
+
+  if (notification.type === "friend_request") {
+    return "Open the request to respond.";
+  }
+
+  if (notification.type === "friend_request_accepted") {
+    return "You are now connected.";
+  }
+
+  if (notification.type === "community_join_request") {
+    return "Review this community membership request.";
+  }
+
+  return "You have a new update.";
+}
+
+function formatNotificationTypeLabel(type?: string | null) {
+  if (type === "community_join_request") return "Community request";
+  return "";
+}
+
+function formatFollowRequestSummary(requests: NotificationItem[]) {
+  if (requests.length === 0) return "No pending requests";
+
+  const firstUsername =
+    requests[0]?.actor?.username?.trim() ||
+    formatActorName(requests[0]?.actor) ||
+    "Someone";
+  const formattedUsername = firstUsername.startsWith("@")
+    ? firstUsername
+    : `@${firstUsername}`;
+
+  if (requests.length === 1) return formattedUsername;
+
+  const otherCount = requests.length - 1;
+  return `${formattedUsername} + ${otherCount} other${
+    otherCount === 1 ? "" : "s"
+  }`;
+}
+
+function formatNotificationTime(value?: string | null) {
+  if (!value) return "";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  const diffMs = Date.now() - date.getTime();
+  const diffMinutes = Math.floor(diffMs / 60000);
+  if (diffMinutes < 1) return "Just now";
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) return `${diffDays}d ago`;
+
+  return date.toLocaleDateString();
+}
 
 export default function InboxScreen() {
+  const navigation =
+    useNavigation<NativeStackNavigationProp<InboxStackParamList>>();
+  const rootNavigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const {
+    notifications,
+    unreadCount,
+    loading,
+    refreshing,
+    error,
+    refreshNotifications,
+    markNotificationRead,
+    markAllNotificationsRead,
+  } = useNotifications();
+  const friendRequests = notifications.filter(
+    (notification) => notification.type === "friend_request",
+  );
+  const visibleNotifications = notifications.filter(
+    (notification) => notification.type !== "friend_request",
+  );
+  const unreadVisibleNotificationIds = visibleNotifications
+    .filter((notification) => !notification.read_at)
+    .map((notification) => notification.id)
+    .join(",");
+
+  useEffect(() => {
+    if (!unreadVisibleNotificationIds) return;
+
+    const notificationIds = unreadVisibleNotificationIds.split(",");
+    void Promise.all(
+      notificationIds.map((notificationId) =>
+        markNotificationRead(notificationId),
+      ),
+    ).catch(() => {
+      // Polling will keep the inbox consistent if a read call fails.
+    });
+  }, [markNotificationRead, unreadVisibleNotificationIds]);
+
   return (
     <View style={styles.container}>
       <TopNav />
-      <View style={styles.content}>
-        <Text style={styles.title}>Inbox</Text>
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>No messages yet</Text>
-          <Text style={styles.emptyText}>
-            Conversations and updates will show up here.
+      <View style={styles.header}>
+        <View style={styles.headerRow}>
+          <Text style={styles.title}>Inbox</Text>
+          {unreadCount > 0 && (
+            <Pressable
+              onPress={() =>
+                void markAllNotificationsRead().catch((err) => {
+                  Alert.alert(
+                    "Error",
+                    err instanceof Error
+                      ? err.message
+                      : "Could not mark notifications as read.",
+                  );
+                })
+              }
+            >
+              <Text style={styles.markAllText}>Mark all read</Text>
+            </Pressable>
+          )}
+        </View>
+        {unreadCount > 0 && (
+          <Text style={styles.unreadText}>
+            {unreadCount} unread notification{unreadCount === 1 ? "" : "s"}
+          </Text>
+        )}
+      </View>
+
+      <Pressable
+        style={styles.requestShortcut}
+        onPress={() => navigation.navigate("FriendRequests")}
+      >
+        <View>
+          <Text style={styles.requestShortcutTitle}>Follow requests</Text>
+          <Text style={styles.requestShortcutText}>
+            {formatFollowRequestSummary(friendRequests)}
           </Text>
         </View>
-      </View>
+        <ChevronRight size={22} color={Colors.primary} strokeWidth={2.4} />
+      </Pressable>
+
+      {loading && (
+        <ActivityIndicator
+          size="large"
+          color={Colors.primary}
+          style={styles.loader}
+        />
+      )}
+
+      {!loading && !!error && (
+        <View style={styles.stateCard}>
+          <Text style={styles.emptyTitle}>Could not load inbox</Text>
+          <Text style={styles.emptyText}>{error}</Text>
+        </View>
+      )}
+
+      {!loading && !error && (
+        <FlatList
+          data={visibleNotifications}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void refreshNotifications()}
+              tintColor={Colors.primary}
+            />
+          }
+          ListEmptyComponent={
+            <View style={styles.stateCard}>
+              <Text style={styles.emptyTitle}>No notifications yet</Text>
+              <Text style={styles.emptyText}>
+                Community invites, requests, and updates will show up here.
+              </Text>
+            </View>
+          }
+          renderItem={({ item }) => {
+            const unread = !item.read_at;
+            const actorName = formatActorName(item.actor);
+            const typeLabel = formatNotificationTypeLabel(item.type);
+            const avatarInitial = (actorName || item.community?.name || "N")
+              .trim()
+              .charAt(0)
+              .toUpperCase();
+            const actorAvatarUri =
+              typeof item.actor?.profile_photo === "string" &&
+              item.actor.profile_photo.trim().length > 0
+                ? encodeURI(item.actor.profile_photo.trim())
+                : "";
+
+            return (
+              <Pressable
+                style={[
+                  styles.notificationCard,
+                  unread && styles.unreadNotificationCard,
+                ]}
+                onPress={() =>
+                  unread
+                    ? void markNotificationRead(item.id).catch((err) => {
+                        Alert.alert(
+                          "Error",
+                          err instanceof Error
+                            ? err.message
+                            : "Could not mark notification as read.",
+                        );
+                      })
+                    : undefined
+                }
+              >
+                <Pressable
+                  disabled={!item.actor?.id}
+                  onPress={() =>
+                    item.actor?.id
+                      ? rootNavigation.navigate("PublicProfile", {
+                          userId: item.actor.id,
+                        })
+                      : undefined
+                  }
+                  style={styles.avatar}
+                >
+                  {actorAvatarUri ? (
+                    <Image
+                      source={{ uri: actorAvatarUri }}
+                      style={styles.avatarImage}
+                    />
+                  ) : (
+                    <Text style={styles.avatarText}>{avatarInitial}</Text>
+                  )}
+                </Pressable>
+                <View style={styles.notificationBody}>
+                  {!!typeLabel && (
+                    <Text style={styles.typeLabel}>{typeLabel}</Text>
+                  )}
+                  <View style={styles.notificationHeader}>
+                    <Text style={styles.notificationTitle} numberOfLines={1}>
+                      {formatNotificationTitle(item)}
+                    </Text>
+                    {unread && <View style={styles.unreadDot} />}
+                  </View>
+                  <Text style={styles.notificationMessage} numberOfLines={2}>
+                    {formatNotificationBody(item)}
+                  </Text>
+                  <Text style={styles.notificationTime}>
+                    {formatNotificationTime(item.created_at)}
+                  </Text>
+                </View>
+              </Pressable>
+            );
+          }}
+        />
+      )}
     </View>
   );
 }
@@ -25,20 +343,65 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.light,
   },
-  content: {
-    flex: 1,
+  header: {
     paddingHorizontal: 20,
+  },
+  headerRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
   },
   title: {
     fontFamily: Fonts.gabarito.bold,
     fontSize: 32,
     color: Colors.dark,
+    marginBottom: 4,
+  },
+  markAllText: {
+    color: Colors.primary,
+    fontFamily: Fonts.instrument.semiBold,
+    fontSize: 13,
+  },
+  unreadText: {
+    fontFamily: Fonts.instrument.medium,
+    fontSize: 14,
+    color: Colors.primary,
     marginBottom: 16,
   },
-  emptyCard: {
+  requestShortcut: {
+    alignItems: "center",
     backgroundColor: "#fff",
     borderRadius: 18,
-    padding: 20,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginHorizontal: 20,
+    marginBottom: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+  },
+  requestShortcutTitle: {
+    color: Colors.dark,
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 18,
+  },
+  requestShortcutText: {
+    color: "#666",
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14,
+    marginTop: 4,
+  },
+  loader: {
+    marginTop: 28,
+  },
+  listContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 28,
+    gap: 12,
+  },
+  stateCard: {
+    borderRadius: 18,
+    marginHorizontal: 20,
+    marginTop: 12,
   },
   emptyTitle: {
     fontFamily: Fonts.gabarito.semiBold,
@@ -51,5 +414,80 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#666",
     lineHeight: 20,
+  },
+  notificationCard: {
+    backgroundColor: "#fff",
+    borderRadius: 18,
+    padding: 14,
+    flexDirection: "row",
+    gap: 12,
+    borderWidth: 1,
+    borderColor: "#fff",
+  },
+  unreadNotificationCard: {
+    borderColor: "rgba(26, 97, 168, 0.18)",
+    backgroundColor: "#F8FBFF",
+  },
+  avatar: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: Colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarImage: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+  },
+  avatarText: {
+    fontFamily: Fonts.gabarito.bold,
+    fontSize: 17,
+    color: "#fff",
+  },
+  notificationBody: {
+    flex: 1,
+    gap: 4,
+  },
+  notificationHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  typeLabel: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(255, 153, 0, 0.14)",
+    borderRadius: 999,
+    color: Colors.accent,
+    fontFamily: Fonts.instrument.semiBold,
+    fontSize: 11,
+    overflow: "hidden",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  notificationTitle: {
+    flex: 1,
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 16,
+    color: Colors.dark,
+  },
+  unreadDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: Colors.accent,
+  },
+  notificationMessage: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14,
+    color: "#555",
+    lineHeight: 19,
+  },
+  notificationTime: {
+    fontFamily: Fonts.instrument.medium,
+    fontSize: 12,
+    color: "#888",
+    marginTop: 2,
   },
 });

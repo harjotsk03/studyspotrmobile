@@ -4,10 +4,13 @@ import {
   ActivityIndicator,
   FlatList,
   Image,
+  Pressable,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import Button from "../Button";
 import Input from "../Input";
 import { API_BASE_URL } from "../../constants/Api";
@@ -16,6 +19,7 @@ import { Fonts } from "../../constants/Fonts";
 import { useAuth } from "../../context/AuthContext";
 import { useSuggestedUsers, type SuggestedUser } from "../../hooks/useSuggestedUsers";
 import { getUserAvatarColor, getUserInitials } from "../../utils/avatar";
+import type { RootStackParamList } from "../../types/navigation";
 
 const SEARCH_LIMIT = 10;
 const SEARCH_DEBOUNCE_MS = 150;
@@ -59,6 +63,8 @@ function sortUsers(users: SuggestedUser[]) {
 }
 
 export default function UsersSearch() {
+  const navigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [searchQuery, setSearchQuery] = useState("");
   const [results, setResults] = useState<SuggestedUser[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -266,7 +272,12 @@ export default function UsersSearch() {
 
           return (
             <View style={styles.resultRow}>
-              <View style={styles.resultLeft}>
+              <Pressable
+                style={styles.resultLeft}
+                onPress={() =>
+                  navigation.navigate("PublicProfile", { userId: item.id })
+                }
+              >
                 {avatarUri ? (
                   <Image source={{ uri: avatarUri }} style={styles.avatar} />
                 ) : (
@@ -291,7 +302,7 @@ export default function UsersSearch() {
                     {subtext}
                   </Text>
                 </View>
-              </View>
+              </Pressable>
 
               <Button
                 label={isFriends ? "Friends" : isPending ? "Requested" : "Add Friend"}

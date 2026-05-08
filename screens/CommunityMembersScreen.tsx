@@ -27,6 +27,7 @@ import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "../context/AuthContext";
 import type { CommunityStackParamList } from "./CommunityDetailScreen";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
+import type { RootStackParamList } from "../types/navigation";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -132,46 +133,55 @@ function MemberRow({
   onRespond?: (userId: string, decision: "accept" | "reject") => void;
   respondingId?: string | null;
 }) {
+  const rootNavigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const name = displayName(item.user);
   const isPending = item.status === "pending";
   const isResponding = respondingId === item.user.id;
 
   return (
     <View style={rowStyles.container}>
-      <View
-        style={[
-          rowStyles.avatar,
-          { backgroundColor: getUserAvatarColor({ ...item.user, name }) },
-          isPending && rowStyles.avatarPending,
-        ]}
+      <Pressable
+        style={rowStyles.identity}
+        onPress={() =>
+          rootNavigation.navigate("PublicProfile", { userId: item.user.id })
+        }
       >
-        {item.user.profile_photo ? (
-          <Image
-            source={{ uri: item.user.profile_photo }}
-            style={rowStyles.avatarImg}
-          />
-        ) : (
-          <Text style={rowStyles.avatarInitial}>
-            {getUserInitials({ ...item.user, name })}
-          </Text>
-        )}
-      </View>
+        <View
+          style={[
+            rowStyles.avatar,
+            { backgroundColor: getUserAvatarColor({ ...item.user, name }) },
+            isPending && rowStyles.avatarPending,
+          ]}
+        >
+          {item.user.profile_photo ? (
+            <Image
+              source={{ uri: item.user.profile_photo }}
+              style={rowStyles.avatarImg}
+            />
+          ) : (
+            <Text style={rowStyles.avatarInitial}>
+              {getUserInitials({ ...item.user, name })}
+            </Text>
+          )}
+        </View>
 
-      <View style={rowStyles.info}>
-        <Text style={rowStyles.name} numberOfLines={1}>
-          {name}
-        </Text>
-        {!!item.user.username && (
-          <Text style={rowStyles.username} numberOfLines={1}>
-            @{item.user.username}
+        <View style={rowStyles.info}>
+          <Text style={rowStyles.name} numberOfLines={1}>
+            {name}
           </Text>
-        )}
-        {!isPending && (
-          <Text style={rowStyles.joinDate}>
-            {formatJoinDate(item.joined_at)}
-          </Text>
-        )}
-      </View>
+          {!!item.user.username && (
+            <Text style={rowStyles.username} numberOfLines={1}>
+              @{item.user.username}
+            </Text>
+          )}
+          {!isPending && (
+            <Text style={rowStyles.joinDate}>
+              {formatJoinDate(item.joined_at)}
+            </Text>
+          )}
+        </View>
+      </Pressable>
 
       {isPending && isAdmin ? (
         isResponding ? (
@@ -212,6 +222,12 @@ const rowStyles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 12,
     backgroundColor: "#fff",
+    gap: 14,
+  },
+  identity: {
+    alignItems: "center",
+    flex: 1,
+    flexDirection: "row",
     gap: 14,
   },
   avatar: {

@@ -20,10 +20,13 @@ import ProfileStat from '../components/ProfileStat';
 import type { ProfileSectionKey, ProfileStackParamList } from './ProfileSectionScreen';
 import { Share, UserPlus } from 'lucide-react-native';
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
+import type { RootStackParamList } from "../types/navigation";
 
 export default function ProfileScreen() {
   const { profile, logout, refreshProfile } = useAuth();
   const navigation = useNavigation<NativeStackNavigationProp<ProfileStackParamList>>();
+  const rootNavigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -111,21 +114,30 @@ export default function ProfileScreen() {
           </Pressable>
         </View>
         <View style={styles.heroCard}>
-          {profilePhotoUri && !avatarLoadFailed ? (
-            <Image
-              key={profilePhotoUri}
-              source={{ uri: profilePhotoUri }}
-              style={styles.avatarImage}
-              resizeMode="cover"
-              onError={() => setAvatarLoadFailed(true)}
-            />
-          ) : (
-            <View
-              style={[styles.avatarFallback, { backgroundColor: avatarColor }]}
-            >
-              <Text style={styles.avatarInitials}>{initials}</Text>
-            </View>
-          )}
+          <Pressable
+            disabled={!user?.id}
+            onPress={() =>
+              user?.id
+                ? rootNavigation.navigate("PublicProfile", { userId: user.id })
+                : undefined
+            }
+          >
+            {profilePhotoUri && !avatarLoadFailed ? (
+              <Image
+                key={profilePhotoUri}
+                source={{ uri: profilePhotoUri }}
+                style={styles.avatarImage}
+                resizeMode="cover"
+                onError={() => setAvatarLoadFailed(true)}
+              />
+            ) : (
+              <View
+                style={[styles.avatarFallback, { backgroundColor: avatarColor }]}
+              >
+                <Text style={styles.avatarInitials}>{initials}</Text>
+              </View>
+            )}
+          </Pressable>
 
           <View style={styles.nameContainer}>
             <Text style={styles.name}>

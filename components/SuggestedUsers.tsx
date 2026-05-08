@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FlatList, StyleSheet, Text, View } from "react-native";
+import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import {
@@ -7,6 +9,7 @@ import {
   useSuggestedUsers,
 } from "../hooks/useSuggestedUsers";
 import UserCard from "./UserCard";
+import type { RootStackParamList } from "../types/navigation";
 
 const PAGE_SIZE = 10;
 
@@ -44,6 +47,8 @@ function getSubtext(user: SuggestedUser) {
 }
 
 export default function SuggestedUsers() {
+  const navigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const {
     fetchSuggestedUsers,
     sendFriendRequest,
@@ -158,6 +163,9 @@ export default function SuggestedUsers() {
               requested={Boolean(requestedIds[user.id])}
               loading={Boolean(requestingIds[user.id])}
               onFollow={() => void handleAddFriend(user.id)}
+              onProfilePress={() =>
+                navigation.navigate("PublicProfile", { userId: user.id })
+              }
             />
           </View>
         )}

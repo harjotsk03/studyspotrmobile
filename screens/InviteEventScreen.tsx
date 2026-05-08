@@ -26,6 +26,7 @@ import { useAuth } from "../context/AuthContext";
 import Button from "../components/Button";
 import type { CommunityStackParamList } from "./CommunityDetailScreen";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
+import type { RootStackParamList } from "../types/navigation";
 
 interface MemberUser {
   id: string;
@@ -51,10 +52,13 @@ function displayName(user: MemberUser) {
 }
 
 function Avatar({ user }: { user: MemberUser }) {
+  const navigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const name = displayName(user);
 
   return (
-    <View
+    <Pressable
+      onPress={() => navigation.navigate("PublicProfile", { userId: user.id })}
       style={[
         styles.avatar,
         { backgroundColor: getUserAvatarColor({ ...user, name }) },
@@ -67,7 +71,7 @@ function Avatar({ user }: { user: MemberUser }) {
           {getUserInitials({ ...user, name })}
         </Text>
       )}
-    </View>
+    </Pressable>
   );
 }
 

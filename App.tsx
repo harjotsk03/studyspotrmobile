@@ -15,6 +15,10 @@ import { Gabarito_400Regular, Gabarito_500Medium, Gabarito_600SemiBold, Gabarito
 import { InstrumentSans_400Regular, InstrumentSans_400Regular_Italic, InstrumentSans_500Medium, InstrumentSans_500Medium_Italic, InstrumentSans_600SemiBold, InstrumentSans_600SemiBold_Italic, InstrumentSans_700Bold, InstrumentSans_700Bold_Italic } from '@expo-google-fonts/instrument-sans';
 import { Colors } from './constants/Colors';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import {
+  NotificationsProvider,
+  useNotifications,
+} from "./context/NotificationsContext";
 import { SearchStateProvider } from "./context/SearchStateContext";
 import { SpotsProvider } from "./context/SpotsContext";
 
@@ -29,7 +33,9 @@ import CreateEventScreen from "./screens/CreateEventScreen";
 import InviteEventScreen from "./screens/InviteEventScreen";
 import CommunityMembersScreen from "./screens/CommunityMembersScreen";
 import ProfileSectionScreen, { type ProfileStackParamList } from './screens/ProfileSectionScreen';
-import InboxScreen from "./screens/InboxScreen";
+import InboxScreen, { type InboxStackParamList } from "./screens/InboxScreen";
+import FriendRequestsScreen from "./screens/FriendRequestsScreen";
+import PublicProfileScreen from "./screens/PublicProfileScreen";
 import SpotsScreen from './screens/SpotsScreen';
 import SpotDetailScreen, {
   type SpotsStackParamList,
@@ -39,11 +45,14 @@ import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/RegisterScreen';
 import ForgotPasswordScreen from './screens/ForgotPasswordScreen';
 import { Fonts } from './constants/Fonts';
+import type { RootStackParamList } from "./types/navigation";
 
 const Tab = createBottomTabNavigator();
+const RootStack = createNativeStackNavigator<RootStackParamList>();
 const CommunityStack = createNativeStackNavigator<CommunityStackParamList>();
 const SpotsStack = createNativeStackNavigator<SpotsStackParamList>();
 const ProfileStack = createNativeStackNavigator<ProfileStackParamList>();
+const InboxStack = createNativeStackNavigator<InboxStackParamList>();
 const AuthStack = createNativeStackNavigator();
 
 function CommunityStackScreen() {
@@ -108,6 +117,20 @@ function SpotsStackScreen() {
   );
 }
 
+function InboxStackScreen() {
+  return (
+    <InboxStack.Navigator
+      screenOptions={{ headerShown: false, animation: "slide_from_right" }}
+    >
+      <InboxStack.Screen name="InboxHome" component={InboxScreen} />
+      <InboxStack.Screen
+        name="FriendRequests"
+        component={FriendRequestsScreen}
+      />
+    </InboxStack.Navigator>
+  );
+}
+
 const tabIcons: Record<
   string,
   React.ComponentType<{ size: number; color: string; strokeWidth?: number }>
@@ -121,6 +144,7 @@ const tabIcons: Record<
 
 function AppContent() {
   const { profile, isLoading } = useAuth();
+  const { unreadCount } = useNotifications();
 
   if (isLoading) {
     return (
@@ -145,7 +169,7 @@ function AppContent() {
     );
   }
 
-  return (
+  const tabs = (
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
@@ -178,9 +202,29 @@ function AppContent() {
       <Tab.Screen name="Feed" component={FeedScreen} />
       <Tab.Screen name="Community" component={CommunityStackScreen} />
       <Tab.Screen name="Spots" component={SpotsStackScreen} />
-      <Tab.Screen name="Inbox" component={InboxScreen} />
+      <Tab.Screen
+        name="Inbox"
+        component={InboxStackScreen}
+        options={{
+          tabBarBadge:
+            unreadCount > 0
+              ? unreadCount > 99
+                ? "99+"
+                : unreadCount
+              : undefined,
+        }}
+      />
       <Tab.Screen name="Profile" component={ProfileStackScreen} />
     </Tab.Navigator>
+  );
+
+  return (
+    <RootStack.Navigator
+      screenOptions={{ headerShown: false, animation: "slide_from_right" }}
+    >
+      <RootStack.Screen name="MainTabs" children={() => tabs} />
+      <RootStack.Screen name="PublicProfile" component={PublicProfileScreen} />
+    </RootStack.Navigator>
   );
 }
 
@@ -212,14 +256,16 @@ export default function App() {
 
   return (
     <AuthProvider>
-      <SearchStateProvider>
-        <SpotsProvider>
-          <NavigationContainer>
-            <StatusBar style="dark" />
-            <AppContent />
-          </NavigationContainer>
-        </SpotsProvider>
-      </SearchStateProvider>
+      <NotificationsProvider>
+        <SearchStateProvider>
+          <SpotsProvider>
+            <NavigationContainer>
+              <StatusBar style="dark" />
+              <AppContent />
+            </NavigationContainer>
+          </SpotsProvider>
+        </SearchStateProvider>
+      </NotificationsProvider>
     </AuthProvider>
   );
 }

@@ -22,10 +22,13 @@ import {
   Share2,
   Trash2,
 } from "lucide-react-native";
+import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
+import type { RootStackParamList } from "../types/navigation";
 
 // ─── Shared Types ─────────────────────────────────────────────────────────────
 
@@ -333,8 +336,15 @@ function AttendeeAvatar({
   attendee: Attendee;
   index: number;
 }) {
+  const navigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+
   return (
-    <View
+    <TouchableOpacity
+      activeOpacity={0.75}
+      onPress={() =>
+        navigation.navigate("PublicProfile", { userId: attendee.id })
+      }
       style={[
         styles.avatarCircle,
         { backgroundColor: getUserAvatarColor(attendee) },
@@ -351,7 +361,7 @@ function AttendeeAvatar({
           {getUserInitials(attendee)}
         </Text>
       )}
-    </View>
+    </TouchableOpacity>
   );
 }
 
