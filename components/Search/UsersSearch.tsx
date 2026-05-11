@@ -1,7 +1,6 @@
 import { Search } from "lucide-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   FlatList,
   Image,
   Pressable,
@@ -13,6 +12,7 @@ import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import Button from "../Button";
 import Input from "../Input";
+import { SkeletonList, SkeletonRow } from "../Skeleton";
 import { API_BASE_URL } from "../../constants/Api";
 import { Colors } from "../../constants/Colors";
 import { Fonts } from "../../constants/Fonts";
@@ -238,10 +238,11 @@ export default function UsersSearch() {
       </View>
 
       {isSearching ? (
-        <View style={styles.stateContainer}>
-          <ActivityIndicator size="small" color={Colors.primary} />
-          <Text style={styles.stateText}>Searching users...</Text>
-        </View>
+        <SkeletonList
+          count={3}
+          style={styles.listContent}
+          row={<SkeletonRow avatarSize={54} lines={2} actions />}
+        />
       ) : null}
 
       {!isSearching && trimmedQuery.length > 0 && displayResults.length === 0 && !searchError ? (
@@ -250,7 +251,7 @@ export default function UsersSearch() {
         </View>
       ) : null}
 
-      <FlatList
+      {!isSearching && <FlatList
         data={displayResults}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContent}
@@ -316,7 +317,7 @@ export default function UsersSearch() {
             </View>
           );
         }}
-      />
+      />}
     </View>
   );
 }

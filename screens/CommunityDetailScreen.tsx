@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -31,6 +31,7 @@ import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "../context/AuthContext";
 import Button from "../components/Button";
+import { SkeletonBox } from "../components/Skeleton";
 import type {
   NativeStackNavigationProp,
   NativeStackScreenProps,
@@ -51,10 +52,14 @@ export interface CommunityData {
   members: number;
   description: string;
   icon?: string;
+  avatar_url?: string;
   banner_url?: string;
+  created_by?: string;
   color: string;
   category?: string;
   is_public?: boolean;
+  created_at?: string;
+  updated_at?: string;
   user_role?: string;
   /** 'pending' while awaiting admin approval; 'accepted' once in the community */
   user_membership_status?: "pending" | "accepted";
@@ -69,7 +74,12 @@ export interface CommunityData {
 
 export type CommunityStackParamList = {
   CommunityList: undefined;
-  CommunityDetail: { community: CommunityData };
+  CommunityDetail: {
+    community: CommunityData;
+    openMembers?: boolean;
+    highlightMemberUserId?: string;
+  };
+  CommunityInfo: { community: CommunityData };
   CreateCommunity: undefined;
   EditCommunity: { community: CommunityData };
   CommunityEvents: {
@@ -94,6 +104,7 @@ export type CommunityStackParamList = {
     communityId: string;
     communityName: string;
     isAdmin: boolean;
+    highlightUserId?: string;
   };
 };
 
@@ -175,9 +186,17 @@ export default function CommunityDetailScreen({ route }: Props) {
       icon: next.icon ?? next.avatar_url ?? prev.icon,
       banner_url: next.banner_url ?? prev.banner_url,
       color: next.color ?? prev.color,
-      members: next.members ?? next.member_count ?? prev.members,
-      memberAvatars: next.memberAvatars ?? prev.memberAvatars,
-      latestMembers: next.latestMembers ?? prev.latestMembers,
+      // Treat 0 / empty as "no value" so a partial param snapshot
+      // (e.g. coming from the inbox) doesn't wipe out fetched data.
+      members: next.members || next.member_count || prev.members,
+      memberAvatars:
+        next.memberAvatars && next.memberAvatars.length > 0
+          ? next.memberAvatars
+          : prev.memberAvatars,
+      latestMembers:
+        next.latestMembers && next.latestMembers.length > 0
+          ? next.latestMembers
+          : prev.latestMembers,
     }));
   }, [route.params.community]);
 
@@ -185,6 +204,34 @@ export default function CommunityDetailScreen({ route }: Props) {
     community.user_role === "owner" || community.user_role === "admin";
 
   const isOwner = community.user_role === "owner";
+
+  const hasAutoOpenedMembersRef = useRef(false);
+  const openMembersFlag = route.params.openMembers;
+  const highlightMemberUserId = route.params.highlightMemberUserId;
+
+  useEffect(() => {
+    if (!openMembersFlag || fetching || hasAutoOpenedMembersRef.current) return;
+
+    hasAutoOpenedMembersRef.current = true;
+    navigation.setParams({
+      openMembers: undefined,
+      highlightMemberUserId: undefined,
+    });
+    navigation.navigate("CommunityMembers", {
+      communityId: community.id,
+      communityName: community.name,
+      isAdmin,
+      highlightUserId: highlightMemberUserId,
+    });
+  }, [
+    openMembersFlag,
+    fetching,
+    isAdmin,
+    community.id,
+    community.name,
+    highlightMemberUserId,
+    navigation,
+  ]);
 
   // After fetch, is_member/is_pending come directly from the API.
   // Before fetch resolves, fall back to the mapped user_role/user_membership_status
@@ -362,9 +409,10 @@ export default function CommunityDetailScreen({ route }: Props) {
       </View>
 
       {fetching && (
-        <ActivityIndicator
-          size="small"
-          color={Colors.primary}
+        <SkeletonBox
+          width="40%"
+          height={8}
+          radius={4}
           style={styles.fetchingIndicator}
         />
       )}
@@ -465,7 +513,12 @@ export default function CommunityDetailScreen({ route }: Props) {
                   <Text style={styles.actionLabel}>Events</Text>
                 </Pressable>
               )}
-              <Pressable style={styles.actionButton}>
+              <Pressable
+                style={styles.actionButton}
+                onPress={() =>
+                  navigation.navigate("CommunityInfo", { community })
+                }
+              >
                 <Info size={20} color={Colors.dark} strokeWidth={2} />
                 <Text style={styles.actionLabel}>Details</Text>
               </Pressable>

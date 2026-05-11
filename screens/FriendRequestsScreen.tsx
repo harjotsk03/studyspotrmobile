@@ -1,5 +1,4 @@
 import {
-  ActivityIndicator,
   Alert,
   FlatList,
   Image,
@@ -13,6 +12,7 @@ import { useEffect, useState } from "react";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { ArrowLeft } from "lucide-react-native";
+import { SkeletonList, SkeletonRow } from "../components/Skeleton";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import {
@@ -114,10 +114,10 @@ export default function FriendRequestsScreen() {
       </View>
 
       {loading && (
-        <ActivityIndicator
-          size="large"
-          color={Colors.primary}
-          style={styles.loader}
+        <SkeletonList
+          count={5}
+          style={styles.listContent}
+          row={<SkeletonRow avatarSize={48} lines={2} actions />}
         />
       )}
 
@@ -196,7 +196,9 @@ export default function FriendRequestsScreen() {
                   <View style={styles.requestBody}>
                     <Text style={styles.requestTitle}>{actorName}</Text>
                     {!!item.actor?.username && (
-                      <Text style={styles.username}>@{item.actor.username}</Text>
+                      <Text style={styles.username}>
+                        @{item.actor.username}
+                      </Text>
                     )}
                   </View>
                 </TouchableOpacity>

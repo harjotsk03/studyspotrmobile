@@ -24,6 +24,7 @@ import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "../context/AuthContext";
 import Button from "../components/Button";
+import { SkeletonList, SkeletonRow } from "../components/Skeleton";
 import type { CommunityStackParamList } from "./CommunityDetailScreen";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import type { RootStackParamList } from "../types/navigation";
@@ -393,10 +394,10 @@ export default function InviteEventScreen({ route }: Props) {
       </View>
 
       {loading ? (
-        <ActivityIndicator
-          size="large"
-          color={Colors.primary}
-          style={styles.loader}
+        <SkeletonList
+          count={7}
+          style={styles.listContent}
+          row={<SkeletonRow avatarSize={AVATAR_SIZE} lines={2} actions />}
         />
       ) : error ? (
         <View style={styles.centeredBox}>

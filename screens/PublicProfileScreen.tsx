@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  ActivityIndicator,
   Alert,
   Image,
   RefreshControl,
@@ -16,6 +15,7 @@ import { ArrowLeft } from "lucide-react-native";
 import { API_BASE_URL } from "../constants/Api";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
+import { SkeletonBox, SkeletonCard } from "../components/Skeleton";
 import { useAuth } from "../context/AuthContext";
 import ProfileStat from "../components/ProfileStat";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
@@ -250,11 +250,28 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
       </View>
 
       {loading && (
-        <ActivityIndicator
-          size="large"
-          color={Colors.primary}
-          style={styles.loader}
-        />
+        <View style={styles.scroll}>
+          <View style={styles.heroCard}>
+            <SkeletonBox width={96} height={96} radius={48} />
+            <SkeletonBox width={170} height={24} radius={12} style={{ marginTop: 16 }} />
+            <SkeletonBox width={110} height={14} radius={7} style={{ marginTop: 8 }} />
+            <SkeletonBox width={128} height={41} radius={14} style={{ marginTop: 18 }} />
+          </View>
+          <View style={styles.statsContainer}>
+            {[0, 1, 2].map((item) => (
+              <View key={item} style={styles.statSkeleton}>
+                <SkeletonBox width={42} height={20} radius={10} />
+                <SkeletonBox width={70} height={12} radius={6} style={{ marginTop: 8 }} />
+              </View>
+            ))}
+          </View>
+          <SkeletonBox width="88%" height={15} radius={8} style={{ alignSelf: "center", marginTop: 24 }} />
+          <SkeletonCard style={styles.infoCard}>
+            <SkeletonBox width="65%" height={14} radius={7} />
+            <SkeletonBox width="56%" height={14} radius={7} />
+            <SkeletonBox width="72%" height={14} radius={7} />
+          </SkeletonCard>
+        </View>
       )}
 
       {!loading && !!error && (
@@ -464,6 +481,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 24,
     marginTop: 24,
+  },
+  statSkeleton: {
+    alignItems: "center",
   },
   bio: {
     color: "#555",

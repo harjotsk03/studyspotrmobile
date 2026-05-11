@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  ActivityIndicator,
   Image,
   Modal,
   Pressable,
@@ -20,6 +19,11 @@ import Button from "../components/Button";
 import CommunityCard from "../components/CommunityCard";
 import Input from "../components/Input";
 import TopNav from "../components/TopNav";
+import {
+  SkeletonBox,
+  SkeletonCard,
+  SkeletonList,
+} from "../components/Skeleton";
 import type {
   CommunityData,
   CommunityLatestMember,
@@ -287,10 +291,21 @@ export default function CommunityScreen() {
           </View>
 
           {loading && (
-            <ActivityIndicator
-              size="large"
-              color={Colors.primary}
-              style={styles.loader}
+            <SkeletonList
+              count={4}
+              row={
+                <SkeletonCard style={styles.communitySkeletonCard}>
+                  <View style={styles.communitySkeletonTop}>
+                    <SkeletonBox width={48} height={48} radius={24} />
+                    <View style={{ flex: 1, gap: 8 }}>
+                      <SkeletonBox width="65%" height={18} radius={9} />
+                      <SkeletonBox width="38%" height={13} radius={7} />
+                    </View>
+                  </View>
+                  <SkeletonBox width="100%" height={14} radius={7} />
+                  <SkeletonBox width="84%" height={14} radius={7} />
+                </SkeletonCard>
+              }
             />
           )}
 
@@ -485,6 +500,15 @@ const styles = StyleSheet.create({
   },
   loader: {
     marginTop: 32,
+  },
+  communitySkeletonCard: {
+    gap: 12,
+    padding: 16,
+  },
+  communitySkeletonTop: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 12,
   },
   errorText: {
     fontFamily: Fonts.instrument.regular,

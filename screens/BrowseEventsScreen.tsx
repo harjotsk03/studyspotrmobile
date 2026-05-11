@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -25,6 +24,7 @@ import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "../context/AuthContext";
 import Input from "../components/Input";
+import { SkeletonBox, SkeletonCard, SkeletonList } from "../components/Skeleton";
 import type { CommunityStackParamList } from "./CommunityDetailScreen";
 import EventDetailDrawer, {
   type CommunityEvent,
@@ -329,10 +329,19 @@ export default function BrowseEventsScreen() {
       </View>
 
       {loading ? (
-        <ActivityIndicator
-          size="large"
-          color={Colors.primary}
-          style={styles.loader}
+        <SkeletonList
+          count={4}
+          style={styles.list}
+          row={
+            <SkeletonCard style={styles.eventSkeletonCard}>
+              <SkeletonBox width="58%" height={18} radius={9} />
+              <SkeletonBox width="82%" height={14} radius={7} />
+              <View style={styles.eventSkeletonMeta}>
+                <SkeletonBox width={92} height={13} radius={7} />
+                <SkeletonBox width={74} height={13} radius={7} />
+              </View>
+            </SkeletonCard>
+          }
         />
       ) : (
         <ScrollView
@@ -453,6 +462,14 @@ const styles = StyleSheet.create({
   },
   loader: {
     marginTop: 48,
+  },
+  eventSkeletonCard: {
+    gap: 12,
+    padding: 16,
+  },
+  eventSkeletonMeta: {
+    flexDirection: "row",
+    gap: 10,
   },
   list: {
     paddingHorizontal: 16,

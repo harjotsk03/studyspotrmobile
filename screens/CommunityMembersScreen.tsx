@@ -25,6 +25,7 @@ import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "../context/AuthContext";
+import { SkeletonList, SkeletonRow } from "../components/Skeleton";
 import type { CommunityStackParamList } from "./CommunityDetailScreen";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import type { RootStackParamList } from "../types/navigation";
@@ -125,11 +126,15 @@ const AVATAR_SIZE = 46;
 function MemberRow({
   item,
   isAdmin,
+  isSelf,
+  isHighlighted,
   onRespond,
   respondingId,
 }: {
   item: Member;
   isAdmin: boolean;
+  isSelf: boolean;
+  isHighlighted: boolean;
   onRespond?: (userId: string, decision: "accept" | "reject") => void;
   respondingId?: string | null;
 }) {
@@ -140,9 +145,15 @@ function MemberRow({
   const isResponding = respondingId === item.user.id;
 
   return (
-    <View style={rowStyles.container}>
+    <View
+      style={[
+        rowStyles.container,
+        isHighlighted && rowStyles.containerHighlighted,
+      ]}
+    >
       <Pressable
         style={rowStyles.identity}
+        disabled={isSelf}
         onPress={() =>
           rootNavigation.navigate("PublicProfile", { userId: item.user.id })
         }
@@ -151,7 +162,6 @@ function MemberRow({
           style={[
             rowStyles.avatar,
             { backgroundColor: getUserAvatarColor({ ...item.user, name }) },
-            isPending && rowStyles.avatarPending,
           ]}
         >
           {item.user.profile_photo ? (
@@ -224,6 +234,12 @@ const rowStyles = StyleSheet.create({
     backgroundColor: "#fff",
     gap: 14,
   },
+  containerHighlighted: {
+    backgroundColor: "#FFF7E6",
+    borderLeftWidth: 3,
+    borderLeftColor: Colors.accent,
+    paddingLeft: 17,
+  },
   identity: {
     alignItems: "center",
     flex: 1,
@@ -238,9 +254,6 @@ const rowStyles = StyleSheet.create({
     justifyContent: "center",
     overflow: "hidden",
     flexShrink: 0,
-  },
-  avatarPending: {
-    opacity: 0.6,
   },
   avatarImg: {
     width: AVATAR_SIZE,
@@ -329,11 +342,12 @@ function Separator() {
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function CommunityMembersScreen({ route }: Props) {
-  const { communityId, communityName, isAdmin } = route.params;
+  const { communityId, communityName, isAdmin, highlightUserId } = route.params;
   const navigation =
     useNavigation<NativeStackNavigationProp<CommunityStackParamList>>();
   const insets = useSafeAreaInsets();
-  const { token } = useAuth();
+  const { token, profile } = useAuth();
+  const currentUserId = profile?.userProfile?.id;
 
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
@@ -531,10 +545,10 @@ export default function CommunityMembersScreen({ route }: Props) {
 
       {/* Content */}
       {loading ? (
-        <ActivityIndicator
-          size="large"
-          color={Colors.primary}
-          style={styles.loader}
+        <SkeletonList
+          count={7}
+          style={styles.memberSkeletonList}
+          row={<SkeletonRow avatarSize={AVATAR_SIZE} lines={3} actions />}
         />
       ) : error ? (
         <View style={styles.centeredBox}>
@@ -555,6 +569,10 @@ export default function CommunityMembersScreen({ route }: Props) {
             <MemberRow
               item={item}
               isAdmin={isAdmin}
+              isSelf={item.user.id === currentUserId}
+              isHighlighted={
+                !!highlightUserId && item.user.id === highlightUserId
+              }
               onRespond={section.isPending ? handleRespond : undefined}
               respondingId={respondingId}
             />
@@ -669,6 +687,9 @@ const styles = StyleSheet.create({
   },
   loader: {
     marginTop: 60,
+  },
+  memberSkeletonList: {
+    paddingHorizontal: 20,
   },
   sectionHeader: {
     paddingHorizontal: 20,

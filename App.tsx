@@ -1,7 +1,7 @@
-import { ActivityIndicator, View } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { View } from "react-native";
+import { NavigationContainer } from "@react-navigation/native";
+import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import {
   HeartHandshake,
   Inbox,
@@ -9,12 +9,28 @@ import {
   Newspaper,
   User,
 } from "lucide-react-native";
-import { StatusBar } from 'expo-status-bar';
-import { useFonts } from 'expo-font';
-import { Gabarito_400Regular, Gabarito_500Medium, Gabarito_600SemiBold, Gabarito_700Bold, Gabarito_800ExtraBold, Gabarito_900Black } from '@expo-google-fonts/gabarito';
-import { InstrumentSans_400Regular, InstrumentSans_400Regular_Italic, InstrumentSans_500Medium, InstrumentSans_500Medium_Italic, InstrumentSans_600SemiBold, InstrumentSans_600SemiBold_Italic, InstrumentSans_700Bold, InstrumentSans_700Bold_Italic } from '@expo-google-fonts/instrument-sans';
-import { Colors } from './constants/Colors';
-import { AuthProvider, useAuth } from './context/AuthContext';
+import { StatusBar } from "expo-status-bar";
+import { useFonts } from "expo-font";
+import {
+  Gabarito_400Regular,
+  Gabarito_500Medium,
+  Gabarito_600SemiBold,
+  Gabarito_700Bold,
+  Gabarito_800ExtraBold,
+  Gabarito_900Black,
+} from "@expo-google-fonts/gabarito";
+import {
+  InstrumentSans_400Regular,
+  InstrumentSans_400Regular_Italic,
+  InstrumentSans_500Medium,
+  InstrumentSans_500Medium_Italic,
+  InstrumentSans_600SemiBold,
+  InstrumentSans_600SemiBold_Italic,
+  InstrumentSans_700Bold,
+  InstrumentSans_700Bold_Italic,
+} from "@expo-google-fonts/instrument-sans";
+import { Colors } from "./constants/Colors";
+import { AuthProvider, useAuth } from "./context/AuthContext";
 import {
   NotificationsProvider,
   useNotifications,
@@ -22,9 +38,12 @@ import {
 import { SearchStateProvider } from "./context/SearchStateContext";
 import { SpotsProvider } from "./context/SpotsContext";
 
-import FeedScreen from './screens/FeedScreen';
-import CommunityScreen from './screens/CommunityScreen';
-import CommunityDetailScreen, { type CommunityStackParamList } from './screens/CommunityDetailScreen';
+import FeedScreen from "./screens/FeedScreen";
+import CommunityScreen from "./screens/CommunityScreen";
+import CommunityDetailScreen, {
+  type CommunityStackParamList,
+} from "./screens/CommunityDetailScreen";
+import CommunityInfoScreen from "./screens/CommunityInfoScreen";
 import CreateCommunityScreen from "./screens/CreateCommunityScreen";
 import EditCommunityScreen from "./screens/EditCommunityScreen";
 import BrowseEventsScreen from "./screens/BrowseEventsScreen";
@@ -32,20 +51,23 @@ import CommunityEventsScreen from "./screens/CommunityEventsScreen";
 import CreateEventScreen from "./screens/CreateEventScreen";
 import InviteEventScreen from "./screens/InviteEventScreen";
 import CommunityMembersScreen from "./screens/CommunityMembersScreen";
-import ProfileSectionScreen, { type ProfileStackParamList } from './screens/ProfileSectionScreen';
+import ProfileSectionScreen, {
+  type ProfileStackParamList,
+} from "./screens/ProfileSectionScreen";
 import InboxScreen, { type InboxStackParamList } from "./screens/InboxScreen";
 import FriendRequestsScreen from "./screens/FriendRequestsScreen";
 import PublicProfileScreen from "./screens/PublicProfileScreen";
-import SpotsScreen from './screens/SpotsScreen';
+import SpotsScreen from "./screens/SpotsScreen";
 import SpotDetailScreen, {
   type SpotsStackParamList,
 } from "./screens/SpotDetailScreen";
-import ProfileScreen from './screens/ProfileScreen';
-import LoginScreen from './screens/LoginScreen';
-import RegisterScreen from './screens/RegisterScreen';
-import ForgotPasswordScreen from './screens/ForgotPasswordScreen';
-import { Fonts } from './constants/Fonts';
+import ProfileScreen from "./screens/ProfileScreen";
+import LoginScreen from "./screens/LoginScreen";
+import RegisterScreen from "./screens/RegisterScreen";
+import ForgotPasswordScreen from "./screens/ForgotPasswordScreen";
+import { Fonts } from "./constants/Fonts";
 import type { RootStackParamList } from "./types/navigation";
+import { SkeletonBox } from "./components/Skeleton";
 
 const Tab = createBottomTabNavigator();
 const RootStack = createNativeStackNavigator<RootStackParamList>();
@@ -64,6 +86,10 @@ function CommunityStackScreen() {
       <CommunityStack.Screen
         name="CommunityDetail"
         component={CommunityDetailScreen}
+      />
+      <CommunityStack.Screen
+        name="CommunityInfo"
+        component={CommunityInfoScreen}
       />
       <CommunityStack.Screen
         name="CreateCommunity"
@@ -94,10 +120,17 @@ function CommunityStackScreen() {
 function ProfileStackScreen() {
   return (
     <ProfileStack.Navigator
-      screenOptions={{ headerShown: false, animation: 'slide_from_right', gestureEnabled: true }}
+      screenOptions={{
+        headerShown: false,
+        animation: "slide_from_right",
+        gestureEnabled: true,
+      }}
     >
       <ProfileStack.Screen name="ProfileHome" component={ProfileScreen} />
-      <ProfileStack.Screen name="ProfileSection" component={ProfileSectionScreen} />
+      <ProfileStack.Screen
+        name="ProfileSection"
+        component={ProfileSectionScreen}
+      />
     </ProfileStack.Navigator>
   );
 }
@@ -148,8 +181,27 @@ function AppContent() {
 
   if (isLoading) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.light }}>
-        <ActivityIndicator size="large" color={Colors.primary} />
+      <View
+        style={{
+          flex: 1,
+          justifyContent: "center",
+          alignItems: "center",
+          backgroundColor: Colors.light,
+        }}
+      >
+        <SkeletonBox width={96} height={96} radius={48} />
+        <SkeletonBox
+          width={150}
+          height={18}
+          radius={9}
+          style={{ marginTop: 22 }}
+        />
+        <SkeletonBox
+          width={100}
+          height={14}
+          radius={7}
+          style={{ marginTop: 10 }}
+        />
       </View>
     );
   }
@@ -224,6 +276,14 @@ function AppContent() {
     >
       <RootStack.Screen name="MainTabs" children={() => tabs} />
       <RootStack.Screen name="PublicProfile" component={PublicProfileScreen} />
+      <RootStack.Screen
+        name="CommunityDetail"
+        component={CommunityDetailScreen}
+      />
+      <RootStack.Screen
+        name="CommunityMembers"
+        component={CommunityMembersScreen}
+      />
     </RootStack.Navigator>
   );
 }
@@ -248,8 +308,27 @@ export default function App() {
 
   if (!fontsLoaded) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.light }}>
-        <ActivityIndicator size="large" color={Colors.primary} />
+      <View
+        style={{
+          flex: 1,
+          justifyContent: "center",
+          alignItems: "center",
+          backgroundColor: Colors.light,
+        }}
+      >
+        <SkeletonBox width={96} height={96} radius={48} />
+        <SkeletonBox
+          width={150}
+          height={18}
+          radius={9}
+          style={{ marginTop: 22 }}
+        />
+        <SkeletonBox
+          width={100}
+          height={14}
+          radius={7}
+          style={{ marginTop: 10 }}
+        />
       </View>
     );
   }

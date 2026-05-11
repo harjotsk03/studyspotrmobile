@@ -10,6 +10,7 @@ import {
 } from "../hooks/useSuggestedUsers";
 import UserCard from "./UserCard";
 import type { RootStackParamList } from "../types/navigation";
+import { SkeletonBox, SkeletonCard } from "./Skeleton";
 
 const PAGE_SIZE = 10;
 
@@ -148,35 +149,63 @@ export default function SuggestedUsers() {
     <View>
       <FlatList
         horizontal
-        data={users}
+        data={
+          initialLoaded
+            ? users
+            : Array.from(
+                { length: 4 },
+                (_, index) => ({ id: `skeleton-${index}` }) as SuggestedUser,
+              )
+        }
         showsHorizontalScrollIndicator={false}
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         keyExtractor={(item) => item.id}
         renderItem={({ item: user }) => (
           <View style={styles.cardWrapper}>
-            <UserCard
-              name={getDisplayName(user)}
-              subtext={getSubtext(user)}
-              avatarKey={user.id}
-              avatar={getAvatar(user)}
-              requested={Boolean(requestedIds[user.id])}
-              loading={Boolean(requestingIds[user.id])}
-              onFollow={() => void handleAddFriend(user.id)}
-              onProfilePress={() =>
-                navigation.navigate("PublicProfile", { userId: user.id })
-              }
-            />
+            {!initialLoaded ? (
+              <SkeletonCard style={styles.userSkeletonCard}>
+                <SkeletonBox width={90} height={90} radius={45} />
+                <SkeletonBox
+                  width="76%"
+                  height={15}
+                  radius={8}
+                  style={{ marginTop: 10 }}
+                />
+                <SkeletonBox
+                  width="52%"
+                  height={11}
+                  radius={6}
+                  style={{ marginTop: 6, marginBottom: 12 }}
+                />
+                <SkeletonBox width="100%" height={34} radius={12} />
+              </SkeletonCard>
+            ) : (
+              <UserCard
+                name={getDisplayName(user)}
+                subtext={getSubtext(user)}
+                avatarKey={user.id}
+                avatar={getAvatar(user)}
+                requested={Boolean(requestedIds[user.id])}
+                loading={Boolean(requestingIds[user.id])}
+                onFollow={() => void handleAddFriend(user.id)}
+                onProfilePress={() =>
+                  navigation.navigate("PublicProfile", { userId: user.id })
+                }
+              />
+            )}
           </View>
         )}
         ItemSeparatorComponent={() => <View style={styles.separator} />}
         ListFooterComponent={
           loadingMore ? (
-            <View style={[styles.cardWrapper, styles.loadingCard]}>
-              <Text style={styles.loadingTitle}>Loading...</Text>
-              <Text style={styles.loadingBody}>
-                Finding more suggested users
-              </Text>
+            <View style={styles.cardWrapper}>
+              <SkeletonCard style={styles.userSkeletonCard}>
+                <SkeletonBox width={90} height={90} radius={45} />
+                <SkeletonBox width="76%" height={15} radius={8} style={{ marginTop: 10 }} />
+                <SkeletonBox width="52%" height={11} radius={6} style={{ marginTop: 6, marginBottom: 12 }} />
+                <SkeletonBox width="100%" height={34} radius={12} />
+              </SkeletonCard>
             </View>
           ) : null
         }
@@ -208,28 +237,13 @@ const styles = StyleSheet.create({
   cardWrapper: {
     width: 168,
   },
-  loadingCard: {
-    height: 210,
-    borderRadius: 24,
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#D5D5D5",
-    padding: 18,
+  userSkeletonCard: {
     alignItems: "center",
+    borderRadius: 24,
+    height: 210,
     justifyContent: "center",
-  },
-  loadingTitle: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 18,
-    color: Colors.dark,
-  },
-  loadingBody: {
-    marginTop: 8,
-    textAlign: "center",
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 13,
-    lineHeight: 18,
-    color: "#777",
+    padding: 14,
+    width: 160,
   },
   helperText: {
     marginTop: 12,

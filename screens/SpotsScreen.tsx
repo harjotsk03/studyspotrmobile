@@ -5,7 +5,6 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as Location from "expo-location";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   FlatList,
   Platform,
   Pressable,
@@ -20,6 +19,11 @@ import MapView, { Marker } from "react-native-maps";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import SpotCard from "../components/SpotCard";
 import SpotMapPin from "../components/SpotMapPin";
+import {
+  SkeletonBox,
+  SkeletonCard,
+  SkeletonList,
+} from "../components/Skeleton";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import {
@@ -411,10 +415,17 @@ export default function SpotsScreen() {
       </View>
 
       {spotsLoading ? (
-        <View style={styles.centeredState}>
-          <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={styles.stateText}>Loading spots...</Text>
-        </View>
+        <SkeletonList
+          count={effectiveViewMode === "map" ? 3 : 5}
+          style={styles.listContent}
+          row={
+            <SkeletonCard style={styles.spotSkeletonCard}>
+              <SkeletonBox width="72%" height={18} radius={9} />
+              <SkeletonBox width="92%" height={14} radius={7} />
+              <SkeletonBox width="56%" height={13} radius={7} />
+            </SkeletonCard>
+          }
+        />
       ) : spotsError ? (
         <View style={styles.centeredState}>
           <Text style={styles.errorText}>{spotsError}</Text>
@@ -679,6 +690,10 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: 16,
     paddingTop: 8,
+  },
+  spotSkeletonCard: {
+    gap: 12,
+    padding: 16,
   },
   emptyMapState: {
     backgroundColor: "#fff",

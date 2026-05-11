@@ -1,5 +1,4 @@
 import {
-  ActivityIndicator,
   Alert,
   FlatList,
   Image,
@@ -14,6 +13,7 @@ import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { ChevronRight } from "lucide-react-native";
 import TopNav from "../components/TopNav";
+import { SkeletonList, SkeletonRow } from "../components/Skeleton";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import {
@@ -22,6 +22,7 @@ import {
   type NotificationItem,
 } from "../context/NotificationsContext";
 import type { RootStackParamList } from "../types/navigation";
+import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 
 export type InboxStackParamList = {
   InboxHome: undefined;
@@ -157,6 +158,44 @@ export default function InboxScreen() {
     markNotificationRead,
     markAllNotificationsRead,
   } = useNotifications();
+
+  const openCommunityJoinRequest = (notification: NotificationItem) => {
+    const communityId = notification.community?.id;
+    if (!communityId) return;
+
+    const actorId =
+      notification.actor?.id ?? notification.actor_user_id ?? undefined;
+
+    rootNavigation.navigate("CommunityDetail", {
+      community: {
+        id: communityId,
+        name: notification.community?.name ?? "",
+        members: 0,
+        description: "",
+        color: Colors.primary,
+        memberAvatars: [],
+      },
+      openMembers: true,
+      highlightMemberUserId: actorId,
+    });
+  };
+
+  const handleNotificationPress = (notification: NotificationItem) => {
+    if (!notification.read_at) {
+      void markNotificationRead(notification.id).catch((err) => {
+        Alert.alert(
+          "Error",
+          err instanceof Error
+            ? err.message
+            : "Could not mark notification as read.",
+        );
+      });
+    }
+
+    if (notification.type === "community_join_request") {
+      openCommunityJoinRequest(notification);
+    }
+  };
   const friendRequests = notifications.filter(
     (notification) => notification.type === "friend_request",
   );
@@ -225,10 +264,10 @@ export default function InboxScreen() {
       </Pressable>
 
       {loading && (
-        <ActivityIndicator
-          size="large"
-          color={Colors.primary}
-          style={styles.loader}
+        <SkeletonList
+          count={4}
+          style={styles.listContent}
+          row={<SkeletonRow avatarSize={42} lines={3} />}
         />
       )}
 
@@ -263,15 +302,18 @@ export default function InboxScreen() {
             const unread = !item.read_at;
             const actorName = formatActorName(item.actor);
             const typeLabel = formatNotificationTypeLabel(item.type);
-            const avatarInitial = (actorName || item.community?.name || "N")
-              .trim()
-              .charAt(0)
-              .toUpperCase();
             const actorAvatarUri =
               typeof item.actor?.profile_photo === "string" &&
               item.actor.profile_photo.trim().length > 0
                 ? encodeURI(item.actor.profile_photo.trim())
                 : "";
+            const avatarUser = {
+              id: item.actor?.id ?? item.community?.id,
+              first_name: item.actor?.first_name ?? undefined,
+              last_name: item.actor?.last_name ?? undefined,
+              username: item.actor?.username ?? undefined,
+              name: actorName || item.community?.name || "",
+            };
 
             return (
               <Pressable
@@ -279,18 +321,7 @@ export default function InboxScreen() {
                   styles.notificationCard,
                   unread && styles.unreadNotificationCard,
                 ]}
-                onPress={() =>
-                  unread
-                    ? void markNotificationRead(item.id).catch((err) => {
-                        Alert.alert(
-                          "Error",
-                          err instanceof Error
-                            ? err.message
-                            : "Could not mark notification as read.",
-                        );
-                      })
-                    : undefined
-                }
+                onPress={() => handleNotificationPress(item)}
               >
                 <Pressable
                   disabled={!item.actor?.id}
@@ -301,7 +332,10 @@ export default function InboxScreen() {
                         })
                       : undefined
                   }
-                  style={styles.avatar}
+                  style={[
+                    styles.avatar,
+                    { backgroundColor: getUserAvatarColor(avatarUser) },
+                  ]}
                 >
                   {actorAvatarUri ? (
                     <Image
@@ -309,7 +343,9 @@ export default function InboxScreen() {
                       style={styles.avatarImage}
                     />
                   ) : (
-                    <Text style={styles.avatarText}>{avatarInitial}</Text>
+                    <Text style={styles.avatarText}>
+                      {getUserInitials(avatarUser)}
+                    </Text>
                   )}
                 </Pressable>
                 <View style={styles.notificationBody}>
@@ -432,9 +468,9 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: Colors.primary,
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
   },
   avatarImage: {
     width: 42,
