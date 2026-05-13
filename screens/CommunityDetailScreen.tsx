@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -30,6 +30,7 @@ import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "../context/AuthContext";
+import { useCommunityMembershipVersion } from "../context/NotificationsContext";
 import Button from "../components/Button";
 import { SkeletonBox } from "../components/Skeleton";
 import type {
@@ -134,16 +135,18 @@ export default function CommunityDetailScreen({ route }: Props) {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function fetchCommunity() {
+  const communityId = initialCommunity.id;
+
+  const fetchCommunity = useCallback(
+    async (opts?: { silent?: boolean }) => {
       if (!token) {
-        setFetching(false);
+        if (!opts?.silent) setFetching(false);
         return;
       }
+      if (!opts?.silent) setFetching(true);
       try {
         const res = await fetch(
-          `${API_BASE_URL}/api/v1/communities/${initialCommunity.id}`,
+          `${API_BASE_URL}/api/v1/communities/${communityId}`,
           {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -152,7 +155,7 @@ export default function CommunityDetailScreen({ route }: Props) {
           },
         );
         const json = await res.json();
-        if (res.ok && !cancelled) {
+        if (res.ok) {
           const raw = json.community ?? json;
           setCommunity((prev) => ({
             ...prev,
@@ -168,14 +171,24 @@ export default function CommunityDetailScreen({ route }: Props) {
       } catch {
         // keep the navigation-param snapshot on network error
       } finally {
-        if (!cancelled) setFetching(false);
+        if (!opts?.silent) setFetching(false);
       }
-    }
+    },
+    [communityId, token],
+  );
+
+  useEffect(() => {
     void fetchCommunity();
-    return () => {
-      cancelled = true;
-    };
-  }, [initialCommunity.id, token]);
+  }, [fetchCommunity]);
+
+  // Silently refetch when this community's membership version bumps
+  // (e.g. an admin/owner just accepted the user into the community).
+  const membershipVersion = useCommunityMembershipVersion(communityId);
+  const initialMembershipVersionRef = useRef(membershipVersion);
+  useEffect(() => {
+    if (membershipVersion === initialMembershipVersionRef.current) return;
+    void fetchCommunity({ silent: true });
+  }, [membershipVersion, fetchCommunity]);
 
   // Sync state when the edit screen navigates back with an updated community
   useEffect(() => {

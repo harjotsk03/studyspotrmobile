@@ -3,8 +3,11 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Dimensions,
+  Easing,
   FlatList,
   Image,
+  Modal,
   Pressable,
   RefreshControl,
   SectionList,
@@ -20,7 +23,17 @@ import type {
   NativeStackNavigationProp,
   NativeStackScreenProps,
 } from "@react-navigation/native-stack";
-import { ArrowLeft, Check, Search, Users, X } from "lucide-react-native";
+import {
+  ArrowLeft,
+  Check,
+  MoreVertical,
+  Search,
+  Shield,
+  ShieldOff,
+  UserMinus,
+  Users,
+  X,
+} from "lucide-react-native";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
@@ -129,6 +142,7 @@ function MemberRow({
   isSelf,
   isHighlighted,
   onRespond,
+  onMore,
   respondingId,
 }: {
   item: Member;
@@ -136,6 +150,7 @@ function MemberRow({
   isSelf: boolean;
   isHighlighted: boolean;
   onRespond?: (userId: string, decision: "accept" | "reject") => void;
+  onMore?: (member: Member) => void;
   respondingId?: string | null;
 }) {
   const rootNavigation =
@@ -143,6 +158,8 @@ function MemberRow({
   const name = displayName(item.user);
   const isPending = item.status === "pending";
   const isResponding = respondingId === item.user.id;
+  const isOwner = item.role === "owner";
+  const canManage = isAdmin && !isSelf && !isPending && !isOwner;
 
   return (
     <View
@@ -215,7 +232,20 @@ function MemberRow({
           </View>
         )
       ) : !isPending ? (
-        <RoleBadge role={item.role} />
+        <View style={rowStyles.trailing}>
+          <RoleBadge role={item.role} />
+          {canManage && (
+            <Pressable
+              hitSlop={8}
+              onPress={() => onMore?.(item)}
+              style={rowStyles.moreBtn}
+              accessibilityLabel="Member actions"
+              accessibilityRole="button"
+            >
+              <MoreVertical size={18} color="#888" strokeWidth={2.2} />
+            </Pressable>
+          )}
+        </View>
       ) : (
         <View style={rowStyles.pendingBadge}>
           <Text style={rowStyles.pendingBadgeText}>Pending</Text>
@@ -329,6 +359,18 @@ const rowStyles = StyleSheet.create({
     color: "#92400E",
     letterSpacing: 0.3,
   },
+  trailing: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  moreBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });
 
 // ─── Separator ────────────────────────────────────────────────────────────────
@@ -338,6 +380,262 @@ function Separator() {
     <View style={{ height: 1, backgroundColor: "#F4F4F4", marginLeft: 80 }} />
   );
 }
+
+// ─── Member Actions Modal ─────────────────────────────────────────────────────
+
+const SCREEN_HEIGHT = Dimensions.get("window").height;
+
+function MemberActionsModal({
+  member,
+  onClose,
+  onPromote,
+  onDemote,
+  onRemove,
+  loading,
+}: {
+  member: Member | null;
+  onClose: () => void;
+  onPromote: () => void;
+  onDemote: () => void;
+  onRemove: () => void;
+  loading: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+  const [mounted, setMounted] = useState(false);
+  const [renderedMember, setRenderedMember] = useState<Member | null>(null);
+
+  const translateY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (member) {
+      setRenderedMember(member);
+      setMounted(true);
+      translateY.setValue(SCREEN_HEIGHT);
+      backdropOpacity.setValue(0);
+      Animated.parallel([
+        Animated.timing(translateY, {
+          toValue: 0,
+          duration: 320,
+          easing: Easing.bezier(0.22, 1, 0.36, 1),
+          useNativeDriver: true,
+        }),
+        Animated.timing(backdropOpacity, {
+          toValue: 1,
+          duration: 220,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else if (mounted) {
+      Animated.parallel([
+        Animated.timing(translateY, {
+          toValue: SCREEN_HEIGHT,
+          duration: 240,
+          easing: Easing.in(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(backdropOpacity, {
+          toValue: 0,
+          duration: 200,
+          easing: Easing.in(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]).start(({ finished }) => {
+        if (finished) {
+          setMounted(false);
+          setRenderedMember(null);
+        }
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [member]);
+
+  if (!mounted) return null;
+
+  const isAdminMember = renderedMember?.role === "admin";
+  const name = renderedMember ? displayName(renderedMember.user) : "";
+
+  return (
+    <Modal
+      visible
+      transparent
+      animationType="none"
+      statusBarTranslucent
+      onRequestClose={loading ? undefined : onClose}
+    >
+      <View style={modalStyles.root}>
+        <Animated.View
+          pointerEvents="none"
+          style={[modalStyles.backdrop, { opacity: backdropOpacity }]}
+        />
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={loading ? undefined : onClose}
+        />
+        <Animated.View
+          style={[
+            modalStyles.sheet,
+            { paddingBottom: Math.max(insets.bottom, 16) + 8 },
+            { transform: [{ translateY }] },
+          ]}
+          onStartShouldSetResponder={() => true}
+        >
+          <View style={modalStyles.handle} />
+
+          <View style={modalStyles.header}>
+            <Text style={modalStyles.title} numberOfLines={1}>
+              {name}
+            </Text>
+            <Text style={modalStyles.subtitle}>
+              {isAdminMember ? "Admin" : "Member"}
+            </Text>
+          </View>
+
+          <Pressable
+            disabled={loading}
+            style={({ pressed }) => [
+              modalStyles.action,
+              pressed && modalStyles.actionPressed,
+            ]}
+            onPress={isAdminMember ? onDemote : onPromote}
+          >
+            {isAdminMember ? (
+              <ShieldOff size={20} color={Colors.dark} strokeWidth={2} />
+            ) : (
+              <Shield size={20} color={Colors.dark} strokeWidth={2} />
+            )}
+            <Text style={modalStyles.actionText}>
+              {isAdminMember ? "Demote to Member" : "Promote to Admin"}
+            </Text>
+          </Pressable>
+
+          <View style={modalStyles.divider} />
+
+          <Pressable
+            disabled={loading}
+            style={({ pressed }) => [
+              modalStyles.action,
+              pressed && modalStyles.actionPressed,
+            ]}
+            onPress={onRemove}
+          >
+            <UserMinus size={20} color="#DC2626" strokeWidth={2} />
+            <Text style={[modalStyles.actionText, modalStyles.dangerText]}>
+              Remove from Community
+            </Text>
+          </Pressable>
+
+          <Pressable
+            disabled={loading}
+            style={({ pressed }) => [
+              modalStyles.cancelBtn,
+              pressed && modalStyles.actionPressed,
+            ]}
+            onPress={onClose}
+          >
+            <Text style={modalStyles.cancelText}>Cancel</Text>
+          </Pressable>
+
+          {loading && (
+            <View style={modalStyles.loadingOverlay} pointerEvents="none">
+              <ActivityIndicator size="small" color={Colors.primary} />
+            </View>
+          )}
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
+const modalStyles = StyleSheet.create({
+  root: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
+  sheet: {
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 8,
+    paddingHorizontal: 8,
+  },
+  handle: {
+    alignSelf: "center",
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#E0E0E0",
+    marginBottom: 8,
+  },
+  header: {
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F0F0F0",
+    marginBottom: 4,
+  },
+  title: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 18,
+    color: Colors.dark,
+  },
+  subtitle: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 13,
+    color: "#888",
+    marginTop: 2,
+  },
+  action: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 16,
+    borderRadius: 12,
+  },
+  actionPressed: {
+    backgroundColor: "#F5F5F5",
+  },
+  actionText: {
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 16,
+    color: Colors.dark,
+  },
+  dangerText: {
+    color: "#DC2626",
+  },
+  divider: {
+    height: 1,
+    backgroundColor: "#F4F4F4",
+    marginHorizontal: 12,
+  },
+  cancelBtn: {
+    marginTop: 6,
+    paddingVertical: 14,
+    alignItems: "center",
+    borderRadius: 12,
+    backgroundColor: "#F5F5F5",
+  },
+  cancelText: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 15,
+    color: Colors.dark,
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.6)",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+  },
+});
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
@@ -355,6 +653,8 @@ export default function CommunityMembersScreen({ route }: Props) {
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [respondingId, setRespondingId] = useState<string | null>(null);
+  const [actionMember, setActionMember] = useState<Member | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
   // Search bar focus animation
   const borderColor = useRef(new Animated.Value(0)).current;
@@ -418,6 +718,82 @@ export default function CommunityMembersScreen({ route }: Props) {
     void fetchMembers();
   }, [fetchMembers]);
 
+  async function handleRoleChange(userId: string, role: "admin" | "member") {
+    if (!token) return;
+    setActionLoading(true);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/v1/communities/${communityId}/members/${userId}/role`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({ role }),
+        },
+      );
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        Alert.alert("Error", json?.error ?? "Could not update role.");
+        return;
+      }
+      setMembers((prev) =>
+        prev.map((m) => (m.user.id === userId ? { ...m, role } : m)),
+      );
+      setActionMember(null);
+    } catch {
+      Alert.alert("Error", "Something went wrong. Please try again.");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleRemoveMember(userId: string) {
+    if (!token) return;
+    setActionLoading(true);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/v1/communities/${communityId}/members/${userId}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+        },
+      );
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        Alert.alert("Error", json?.error ?? "Could not remove member.");
+        return;
+      }
+      setMembers((prev) => prev.filter((m) => m.user.id !== userId));
+      setActionMember(null);
+    } catch {
+      Alert.alert("Error", "Something went wrong. Please try again.");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  function confirmRemove(member: Member) {
+    const name = displayName(member.user);
+    Alert.alert(
+      "Remove member?",
+      `Are you sure you want to remove ${name} from this community?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: () => handleRemoveMember(member.user.id),
+        },
+      ],
+    );
+  }
+
   async function handleRespond(userId: string, decision: "accept" | "reject") {
     if (!token) return;
     setRespondingId(userId);
@@ -434,18 +810,30 @@ export default function CommunityMembersScreen({ route }: Props) {
           body: JSON.stringify({ user_id: userId, decision }),
         },
       );
+      const json = await res.json().catch(() => null);
       if (res.ok) {
         if (decision === "accept") {
+          const acceptedAt =
+            json?.membership?.joined_at ??
+            json?.joined_at ??
+            new Date().toISOString();
+          const acceptedRole = json?.membership?.role ?? json?.role ?? "member";
           setMembers((prev) =>
             prev.map((m) =>
-              m.user.id === userId ? { ...m, status: "accepted" as const } : m,
+              m.user.id === userId
+                ? {
+                    ...m,
+                    status: "accepted" as const,
+                    joined_at: m.joined_at ?? acceptedAt,
+                    role: m.role ?? acceptedRole,
+                  }
+                : m,
             ),
           );
         } else {
           setMembers((prev) => prev.filter((m) => m.user.id !== userId));
         }
       } else {
-        const json = await res.json();
         Alert.alert("Error", json?.error ?? "Could not process the request.");
       }
     } catch {
@@ -574,6 +962,7 @@ export default function CommunityMembersScreen({ route }: Props) {
                 !!highlightUserId && item.user.id === highlightUserId
               }
               onRespond={section.isPending ? handleRespond : undefined}
+              onMore={section.isPending ? undefined : setActionMember}
               respondingId={respondingId}
             />
           )}
@@ -620,6 +1009,19 @@ export default function CommunityMembersScreen({ route }: Props) {
           contentContainerStyle={{ paddingBottom: 40 }}
         />
       )}
+
+      <MemberActionsModal
+        member={actionMember}
+        loading={actionLoading}
+        onClose={() => setActionMember(null)}
+        onPromote={() =>
+          actionMember && handleRoleChange(actionMember.user.id, "admin")
+        }
+        onDemote={() =>
+          actionMember && handleRoleChange(actionMember.user.id, "member")
+        }
+        onRemove={() => actionMember && confirmRemove(actionMember)}
+      />
     </View>
   );
 }

@@ -37,6 +37,11 @@ export type NotificationItem = {
   read_at?: string | null;
   actor?: NotificationActor | null;
   community?: NotificationCommunity | null;
+  community_id?: string | null;
+  metadata?: {
+    community_id?: string | null;
+    [key: string]: unknown;
+  } | null;
 };
 
 type NotificationsResponse = {
@@ -53,6 +58,12 @@ type NotificationsState = {
   loading: boolean;
   refreshing: boolean;
   error: string;
+  /**
+   * Bumped whenever a new `accepted_to_community` notification is observed
+   * for a given community while the app is running. Subscribers can watch the
+   * version for their community id and refetch to stay in sync.
+   */
+  communityMembershipVersions: Record<string, number>;
   refreshNotifications: () => Promise<void>;
   markNotificationRead: (notificationId: string) => Promise<void>;
   markAllNotificationsRead: () => Promise<void>;
@@ -86,6 +97,19 @@ function getResponseError(data: unknown, fallback: string) {
   return fallback;
 }
 
+function getCommunityIdFromNotification(
+  notification: NotificationItem,
+): string | null {
+  const candidate =
+    notification.community?.id ??
+    notification.community_id ??
+    notification.metadata?.community_id ??
+    null;
+  return typeof candidate === "string" && candidate.length > 0
+    ? candidate
+    : null;
+}
+
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const { token } = useAuth();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -93,7 +117,11 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [communityMembershipVersions, setCommunityMembershipVersions] =
+    useState<Record<string, number>>({});
   const isFetchingRef = useRef(false);
+  const seenMembershipNotificationIdsRef = useRef<Set<string>>(new Set());
+  const hasSeededMembershipNotificationsRef = useRef(false);
 
   const fetchNotifications = useCallback(
     async (mode: FetchMode = "initial") => {
@@ -123,13 +151,54 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
           throw new Error(json?.error ?? `HTTP ${res.status}`);
         }
 
-        setNotifications(
-          Array.isArray(json?.notifications) ? json.notifications : [],
-        );
+        const list = Array.isArray(json?.notifications)
+          ? json.notifications
+          : [];
+        setNotifications(list);
         setUnreadCount(
           typeof json?.unread_count === "number" ? json.unread_count : 0,
         );
         setError("");
+
+        // Track membership-related notifications so subscribers can refetch
+        // the affected community when they show up while the app is running.
+        const membershipItems = list.filter(
+          (item): item is NotificationItem =>
+            !!item &&
+            typeof item.id === "string" &&
+            item.id.length > 0 &&
+            item.type === "accepted_to_community",
+        );
+
+        if (!hasSeededMembershipNotificationsRef.current) {
+          // First successful fetch: just remember which ones we've already
+          // seen so we don't fire spurious refetches for old notifications.
+          for (const item of membershipItems) {
+            seenMembershipNotificationIdsRef.current.add(item.id);
+          }
+          hasSeededMembershipNotificationsRef.current = true;
+        } else {
+          const fresh = membershipItems.filter(
+            (item) => !seenMembershipNotificationIdsRef.current.has(item.id),
+          );
+          if (fresh.length > 0) {
+            const bumps: Record<string, number> = {};
+            for (const item of fresh) {
+              seenMembershipNotificationIdsRef.current.add(item.id);
+              const cid = getCommunityIdFromNotification(item);
+              if (cid) bumps[cid] = (bumps[cid] ?? 0) + 1;
+            }
+            if (Object.keys(bumps).length > 0) {
+              setCommunityMembershipVersions((prev) => {
+                const next = { ...prev };
+                for (const cid of Object.keys(bumps)) {
+                  next[cid] = (next[cid] ?? 0) + bumps[cid];
+                }
+                return next;
+              });
+            }
+          }
+        }
       } catch (err) {
         if (mode !== "poll") {
           setError(
@@ -154,6 +223,9 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       setRefreshing(false);
       setError("");
+      setCommunityMembershipVersions({});
+      seenMembershipNotificationIdsRef.current = new Set();
+      hasSeededMembershipNotificationsRef.current = false;
       return;
     }
 
@@ -325,6 +397,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
         loading,
         refreshing,
         error,
+        communityMembershipVersions,
         refreshNotifications,
         markNotificationRead,
         markAllNotificationsRead,
@@ -346,4 +419,18 @@ export function useNotifications() {
   }
 
   return context;
+}
+
+/**
+ * Returns a counter that is bumped whenever a new `accepted_to_community`
+ * notification is observed for the given community while the app is open.
+ * Subscribers can use this in a `useEffect` dependency array to silently
+ * refetch community state.
+ */
+export function useCommunityMembershipVersion(
+  communityId: string | undefined,
+): number {
+  const { communityMembershipVersions } = useNotifications();
+  if (!communityId) return 0;
+  return communityMembershipVersions[communityId] ?? 0;
 }

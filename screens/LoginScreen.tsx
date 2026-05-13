@@ -1,10 +1,12 @@
 import { useState } from "react";
 import {
   Alert,
+  Keyboard,
   Pressable,
   StyleSheet,
   Text,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   View,
 } from "react-native";
 import { Colors } from "../constants/Colors";
@@ -67,95 +69,97 @@ export default function LoginScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.inner}>
-        <View style={styles.content}>
-          <Text style={styles.title}>Welcome Back!</Text>
-          <Text style={styles.subtitle}>
-            Sign in to your account to continue
-          </Text>
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+      <View style={styles.container}>
+        <View style={styles.inner}>
+          <View style={styles.content}>
+            <Text style={styles.title}>Welcome Back!</Text>
+            <Text style={styles.subtitle}>
+              Sign in to your account to continue
+            </Text>
 
-          <Input
-            label="Email"
-            placeholder="Email"
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            autoComplete="email"
-            containerStyle={styles.fieldGap}
-          />
-          <Input
-            label="Password"
-            placeholder="Password"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry={!showPassword}
-            autoComplete="password"
-            rightIcon={
-              <TouchableOpacity
-                accessibilityLabel={
-                  showPassword ? "Hide password" : "Show password"
-                }
-                accessibilityRole="button"
-                activeOpacity={0.7}
-                onPress={() => setShowPassword((visible) => !visible)}
+            <Input
+              label="Email"
+              placeholder="Email"
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              autoComplete="email"
+              containerStyle={styles.fieldGap}
+            />
+            <Input
+              label="Password"
+              placeholder="Password"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry={!showPassword}
+              autoComplete="password"
+              rightIcon={
+                <TouchableOpacity
+                  accessibilityLabel={
+                    showPassword ? "Hide password" : "Show password"
+                  }
+                  accessibilityRole="button"
+                  activeOpacity={0.7}
+                  onPress={() => setShowPassword((visible) => !visible)}
+                >
+                  {showPassword ? (
+                    <EyeOff size={18} color="#999" />
+                  ) : (
+                    <Eye size={18} color="#999" />
+                  )}
+                </TouchableOpacity>
+              }
+              containerStyle={styles.fieldGap}
+            />
+
+            <View style={styles.actionsRow}>
+              <Pressable
+                style={styles.rememberMeButton}
+                onPress={() => setRememberMe((current) => !current)}
               >
-                {showPassword ? (
-                  <EyeOff size={18} color="#999" />
-                ) : (
-                  <Eye size={18} color="#999" />
-                )}
+                <View>
+                  {rememberMe ? (
+                    <CircleCheck size={18} color={Colors.accent} />
+                  ) : (
+                    <Circle size={18} color={Colors.dark} />
+                  )}
+                </View>
+                <Text style={styles.rememberMeText}>Remember me</Text>
+              </Pressable>
+
+              <TouchableOpacity
+                style={styles.forgotPasswordButton}
+                onPress={() => navigation.navigate("ForgotPasswordScreen")}
+              >
+                <Text style={styles.forgotPasswordText}>
+                  Forgot your password?
+                </Text>
               </TouchableOpacity>
-            }
-            containerStyle={styles.fieldGap}
-          />
+            </View>
 
-          <View style={styles.actionsRow}>
-            <Pressable
-              style={styles.rememberMeButton}
-              onPress={() => setRememberMe((current) => !current)}
-            >
-              <View>
-                {rememberMe ? (
-                  <CircleCheck size={18} color={Colors.accent} />
-                ) : (
-                  <Circle size={18} color={Colors.dark} />
-                )}
-              </View>
-              <Text style={styles.rememberMeText}>Remember me</Text>
-            </Pressable>
-
-            <TouchableOpacity
-              style={styles.forgotPasswordButton}
-              onPress={() => navigation.navigate("ForgotPasswordScreen")}
-            >
-              <Text style={styles.forgotPasswordText}>
-                Forgot your password?
-              </Text>
-            </TouchableOpacity>
+            <Button
+              label="Log In"
+              variant="default"
+              loading={loading}
+              style={styles.loginButton}
+              onPress={handleLogin}
+            />
           </View>
 
-          <Button
-            label="Log In"
-            variant="default"
-            loading={loading}
-            style={styles.loginButton}
-            onPress={handleLogin}
-          />
+          <TouchableOpacity
+            style={styles.footer}
+            onPress={() => navigation.navigate("RegisterScreen")}
+          >
+            <Text style={styles.registerText}>
+              Don't have an account?{" "}
+              <Text style={styles.registerTextLink}>Register</Text>
+            </Text>
+          </TouchableOpacity>
         </View>
-
-        <TouchableOpacity
-          style={styles.footer}
-          onPress={() => navigation.navigate("RegisterScreen")}
-        >
-          <Text style={styles.registerText}>
-            Don't have an account?{" "}
-            <Text style={styles.registerTextLink}>Register</Text>
-          </Text>
-        </TouchableOpacity>
       </View>
-    </View>
+    </TouchableWithoutFeedback>
   );
 }
 
