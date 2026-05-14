@@ -8,6 +8,7 @@ import {
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { API_BASE_URL } from "../constants/Api";
+import { postProfilePhotoMultipart } from "../utils/profilePhotoUpload";
 
 export interface UserProfileData {
   id: string;
@@ -45,6 +46,11 @@ interface AuthState {
   ) => Promise<void>;
   updateProfile: (updates: Partial<UserProfileData>) => Promise<void>;
   refreshProfile: () => Promise<UserProfile | null>;
+  /** Multipart `image` upload to `/api/v1/auth/update-profile-photo`. */
+  uploadProfilePhoto: (
+    localUri: string,
+    opts?: { contentType?: string; fileName?: string },
+  ) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -376,6 +382,83 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const uploadProfilePhoto = async (
+    localUri: string,
+    opts?: { contentType?: string; fileName?: string },
+  ) => {
+    if (!token) {
+      throw new Error("You are not logged in.");
+    }
+
+    const rawName =
+      opts?.fileName?.trim() ||
+      localUri.split("/").pop()?.split("?")[0] ||
+      "profile.jpg";
+    const ext = rawName.includes(".")
+      ? rawName.split(".").pop()?.toLowerCase()
+      : "";
+    const inferredMime =
+      ext === "png"
+        ? "image/png"
+        : ext === "webp"
+          ? "image/webp"
+          : ext === "heic" || ext === "heif"
+            ? "image/heic"
+            : "image/jpeg";
+    const contentType = opts?.contentType?.trim() || inferredMime;
+    const filename = rawName.includes(".") ? rawName : `${rawName}.jpg`;
+
+    const responseJson = (await postProfilePhotoMultipart({
+      token,
+      localUri,
+      contentType,
+      filename,
+    })) as Record<string, unknown> | null;
+
+    const data = responseJson;
+
+    let nextPhoto: string | undefined;
+    if (typeof data?.profile_photo === "string" && data.profile_photo.trim()) {
+      nextPhoto = data.profile_photo.trim();
+    }
+
+    const userBlob = data?.user ?? data?.profile;
+    if (
+      !nextPhoto &&
+      userBlob &&
+      typeof userBlob === "object" &&
+      userBlob !== null
+    ) {
+      const u = userBlob as Record<string, unknown>;
+      const combined =
+        (typeof u.profile_photo === "string" && u.profile_photo.trim()) ||
+        (typeof u.photo_url === "string" && u.photo_url.trim()) ||
+        (typeof u.avatar_url === "string" && u.avatar_url.trim()) ||
+        "";
+      nextPhoto = combined || undefined;
+    }
+
+    if (
+      userBlob &&
+      typeof userBlob === "object" &&
+      userBlob !== null &&
+      typeof (userBlob as Record<string, unknown>).id === "string"
+    ) {
+      await updateProfile({
+        ...(userBlob as Partial<UserProfileData>),
+        ...(nextPhoto ? { profile_photo: nextPhoto } : {}),
+      });
+      return;
+    }
+
+    if (nextPhoto) {
+      await updateProfile({ profile_photo: nextPhoto });
+      return;
+    }
+
+    await refreshProfile();
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -385,6 +468,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         login,
         updateProfile,
         refreshProfile,
+        uploadProfilePhoto,
         logout,
       }}
     >

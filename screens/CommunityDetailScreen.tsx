@@ -5,6 +5,7 @@ import {
   Image,
   Modal,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,7 +13,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import {
   ArrowLeft,
   CalendarDays,
@@ -31,6 +32,13 @@ import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "../context/AuthContext";
 import { useCommunityMembershipVersion } from "../context/NotificationsContext";
+import {
+  fetchCommunityMembership,
+  isCommunityAdminOrOwner,
+  isCommunityOwner,
+  normalizeCommunityMembership,
+  type CommunityMembershipSnapshot,
+} from "../utils/communityMembership";
 import Button from "../components/Button";
 import { SkeletonBox } from "../components/Skeleton";
 import type {
@@ -113,6 +121,55 @@ type Props = NativeStackScreenProps<CommunityStackParamList, "CommunityDetail">;
 
 const ICON_SIZE = 72;
 
+function CommunityDetailSkeleton() {
+  return (
+    <View style={styles.skeletonContainer}>
+      <SkeletonBox
+        width="100%"
+        height={160}
+        radius={0}
+        style={styles.skeletonBanner}
+      />
+      <View style={styles.infoSection}>
+        <View style={styles.skeletonIconBox}>
+          <SkeletonBox width={ICON_SIZE} height={ICON_SIZE} radius={16} />
+        </View>
+        <SkeletonBox width="60%" height={26} radius={8} />
+        <View style={styles.skeletonDescription}>
+          <SkeletonBox width="100%" height={14} radius={7} />
+          <SkeletonBox width="86%" height={14} radius={7} />
+        </View>
+        <View style={styles.skeletonMetaRow}>
+          <SkeletonBox width={90} height={16} radius={8} />
+          <SkeletonBox width={110} height={16} radius={8} />
+          <SkeletonBox width={72} height={16} radius={8} />
+        </View>
+        <View style={styles.skeletonActionsRow}>
+          {Array.from({ length: 4 }).map((_, index) => (
+            <SkeletonBox key={index} width={70} height={70} radius={35} />
+          ))}
+        </View>
+        <SkeletonBox width="100%" height={48} radius={12} />
+      </View>
+      <View style={styles.section}>
+        <SkeletonBox width="35%" height={20} radius={8} />
+        <View style={styles.skeletonDescription}>
+          <SkeletonBox width="100%" height={14} radius={7} />
+          <SkeletonBox width="94%" height={14} radius={7} />
+          <SkeletonBox width="80%" height={14} radius={7} />
+        </View>
+      </View>
+      <View style={styles.section}>
+        <SkeletonBox width="45%" height={20} radius={8} />
+        <View style={styles.skeletonDescription}>
+          <SkeletonBox width="100%" height={14} radius={7} />
+          <SkeletonBox width="70%" height={14} radius={7} />
+        </View>
+      </View>
+    </View>
+  );
+}
+
 type CommunityRouteSnapshot = CommunityData & {
   avatar_url?: string;
   member_count?: number;
@@ -127,6 +184,7 @@ export default function CommunityDetailScreen({ route }: Props) {
 
   const [community, setCommunity] = useState<CommunityData>(initialCommunity);
   const [fetching, setFetching] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [joinLoading, setJoinLoading] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -157,13 +215,15 @@ export default function CommunityDetailScreen({ route }: Props) {
         const json = await res.json();
         if (res.ok) {
           const raw = json.community ?? json;
+          const membership = normalizeCommunityMembership(raw);
           setCommunity((prev) => ({
             ...prev,
             ...raw,
-            // Map API fields → internal shape
-            user_role: raw.is_member ? (raw.my_role ?? "member") : undefined,
-            user_membership_status:
-              raw.membership_status ?? raw.user_membership_status,
+            ...membership,
+            // Detail endpoint returns `avatar_url`, but the renderer
+            // reads `icon`. Alias so partial nav stubs (e.g. from the
+            // inbox) get a real avatar after the fetch resolves.
+            icon: raw.icon ?? raw.avatar_url ?? prev.icon,
             // Preserve member count if the API doesn't return one
             members: raw.members ?? raw.member_count ?? prev.members,
           }));
@@ -177,8 +237,21 @@ export default function CommunityDetailScreen({ route }: Props) {
     [communityId, token],
   );
 
-  useEffect(() => {
-    void fetchCommunity();
+  const hasLoadedCommunityRef = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      void fetchCommunity({ silent: hasLoadedCommunityRef.current });
+      hasLoadedCommunityRef.current = true;
+    }, [fetchCommunity]),
+  );
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await fetchCommunity({ silent: true });
+    } finally {
+      setRefreshing(false);
+    }
   }, [fetchCommunity]);
 
   // Silently refetch when this community's membership version bumps
@@ -218,34 +291,6 @@ export default function CommunityDetailScreen({ route }: Props) {
 
   const isOwner = community.user_role === "owner";
 
-  const hasAutoOpenedMembersRef = useRef(false);
-  const openMembersFlag = route.params.openMembers;
-  const highlightMemberUserId = route.params.highlightMemberUserId;
-
-  useEffect(() => {
-    if (!openMembersFlag || fetching || hasAutoOpenedMembersRef.current) return;
-
-    hasAutoOpenedMembersRef.current = true;
-    navigation.setParams({
-      openMembers: undefined,
-      highlightMemberUserId: undefined,
-    });
-    navigation.navigate("CommunityMembers", {
-      communityId: community.id,
-      communityName: community.name,
-      isAdmin,
-      highlightUserId: highlightMemberUserId,
-    });
-  }, [
-    openMembersFlag,
-    fetching,
-    isAdmin,
-    community.id,
-    community.name,
-    highlightMemberUserId,
-    navigation,
-  ]);
-
   // After fetch, is_member/is_pending come directly from the API.
   // Before fetch resolves, fall back to the mapped user_role/user_membership_status
   // from the nav-param snapshot so there's no flash.
@@ -260,6 +305,122 @@ export default function CommunityDetailScreen({ route }: Props) {
       : community.user_membership_status === "pending" && !isMember;
   const canViewPrivateCommunityActions =
     community.is_public !== false || isMember;
+
+  const applyMembership = useCallback(
+    (membership: CommunityMembershipSnapshot) => {
+      setCommunity((prev) => ({
+        ...prev,
+        ...membership,
+      }));
+    },
+    [],
+  );
+
+  const refreshMembership = useCallback(async () => {
+    if (!token) return null;
+    try {
+      const membership = await fetchCommunityMembership(token, communityId);
+      applyMembership(membership);
+      return membership;
+    } catch {
+      return null;
+    }
+  }, [applyMembership, communityId, token]);
+
+  const ensureCommunityAccess = useCallback(
+    async (requirement: "member" | "admin" | "owner") => {
+      const membership = await refreshMembership();
+      const currentMembership = membership ?? {
+        is_member: isMember,
+        is_pending: isPendingMember,
+        my_role: community.user_role,
+        user_role: community.user_role,
+        membership_status: community.membership_status,
+        user_membership_status: community.user_membership_status,
+      };
+
+      const allowed =
+        requirement === "member"
+          ? currentMembership.is_member
+          : requirement === "owner"
+            ? isCommunityOwner(currentMembership)
+            : isCommunityAdminOrOwner(currentMembership);
+
+      if (!allowed) {
+        Alert.alert(
+          "Access changed",
+          requirement === "member"
+            ? "You are no longer a member of this community."
+            : "You no longer have permission to do that.",
+        );
+      }
+      return allowed;
+    },
+    [
+      community.membership_status,
+      community.user_membership_status,
+      community.user_role,
+      isMember,
+      isPendingMember,
+      refreshMembership,
+    ],
+  );
+
+  const handleOpenEditCommunity = useCallback(async () => {
+    if (await ensureCommunityAccess("admin")) {
+      navigation.navigate("EditCommunity", { community });
+    }
+  }, [community, ensureCommunityAccess, navigation]);
+
+  const handleOpenEvents = useCallback(async () => {
+    if (
+      community.is_public === false &&
+      !(await ensureCommunityAccess("member"))
+    ) {
+      return;
+    }
+    navigation.navigate("CommunityEvents", {
+      communityId: community.id,
+      communityName: community.name,
+      isAdmin,
+      communityIsPublic: community.is_public ?? true,
+      userCommunityRole: community.user_role,
+    });
+  }, [community, ensureCommunityAccess, isAdmin, navigation]);
+
+  const handleOpenMembers = useCallback(
+    async (highlightUserId?: string) => {
+      if (!(await ensureCommunityAccess("member"))) return;
+      navigation.navigate("CommunityMembers", {
+        communityId: community.id,
+        communityName: community.name,
+        isAdmin,
+        highlightUserId,
+      });
+    },
+    [community.id, community.name, ensureCommunityAccess, isAdmin, navigation],
+  );
+
+  const hasAutoOpenedMembersRef = useRef(false);
+  const openMembersFlag = route.params.openMembers;
+  const highlightMemberUserId = route.params.highlightMemberUserId;
+
+  useEffect(() => {
+    if (!openMembersFlag || fetching || hasAutoOpenedMembersRef.current) return;
+
+    hasAutoOpenedMembersRef.current = true;
+    navigation.setParams({
+      openMembers: undefined,
+      highlightMemberUserId: undefined,
+    });
+    void handleOpenMembers(highlightMemberUserId);
+  }, [
+    openMembersFlag,
+    fetching,
+    handleOpenMembers,
+    highlightMemberUserId,
+    navigation,
+  ]);
 
   async function handleJoin() {
     if (!token) return;
@@ -369,7 +530,7 @@ export default function CommunityDetailScreen({ route }: Props) {
   }
 
   async function handleDeleteCommunity() {
-    if (!token || !isOwner) return;
+    if (!token || !(await ensureCommunityAccess("owner"))) return;
     setDeleteLoading(true);
     try {
       const res = await fetch(
@@ -386,10 +547,16 @@ export default function CommunityDetailScreen({ route }: Props) {
       if (res.ok) {
         setShowDeleteModal(false);
         setDeleteLoading(false);
-        navigation.reset({
-          index: 0,
-          routes: [{ name: "CommunityList" }],
-        });
+        const parentRouteNames =
+          navigation.getParent()?.getState()?.routeNames ?? [];
+        if (parentRouteNames.includes("CommunityList")) {
+          navigation.reset({
+            index: 0,
+            routes: [{ name: "CommunityList" }],
+          });
+        } else {
+          navigation.goBack();
+        }
         return;
       }
 
@@ -421,16 +588,20 @@ export default function CommunityDetailScreen({ route }: Props) {
         <View style={styles.placeholder} />
       </View>
 
-      {fetching && (
-        <SkeletonBox
-          width="40%"
-          height={8}
-          radius={4}
-          style={styles.fetchingIndicator}
-        />
-      )}
+      {fetching && <CommunityDetailSkeleton />}
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={[styles.content, fetching && styles.hiddenContent]}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void handleRefresh()}
+            tintColor={Colors.primary}
+            colors={[Colors.primary]}
+          />
+        }
+      >
         {community.banner_url ? (
           <Image
             source={{ uri: community.banner_url }}
@@ -501,9 +672,7 @@ export default function CommunityDetailScreen({ route }: Props) {
               {isAdmin && (
                 <Pressable
                   style={styles.actionButton}
-                  onPress={() =>
-                    navigation.navigate("EditCommunity", { community })
-                  }
+                  onPress={() => void handleOpenEditCommunity()}
                 >
                   <Pencil size={20} color={Colors.dark} strokeWidth={2} />
                   <Text style={styles.actionLabel}>Edit</Text>
@@ -512,15 +681,7 @@ export default function CommunityDetailScreen({ route }: Props) {
               {canViewPrivateCommunityActions && (
                 <Pressable
                   style={styles.actionButton}
-                  onPress={() =>
-                    navigation.navigate("CommunityEvents", {
-                      communityId: community.id,
-                      communityName: community.name,
-                      isAdmin,
-                      communityIsPublic: community.is_public ?? true,
-                      userCommunityRole: community.user_role,
-                    })
-                  }
+                  onPress={() => void handleOpenEvents()}
                 >
                   <CalendarDays size={20} color={Colors.dark} strokeWidth={2} />
                   <Text style={styles.actionLabel}>Events</Text>
@@ -535,16 +696,10 @@ export default function CommunityDetailScreen({ route }: Props) {
                 <Info size={20} color={Colors.dark} strokeWidth={2} />
                 <Text style={styles.actionLabel}>Details</Text>
               </Pressable>
-              {canViewPrivateCommunityActions && (
+              {isMember && (
                 <Pressable
                   style={styles.actionButton}
-                  onPress={() =>
-                    navigation.navigate("CommunityMembers", {
-                      communityId: community.id,
-                      communityName: community.name,
-                      isAdmin,
-                    })
-                  }
+                  onPress={() => void handleOpenMembers()}
                 >
                   <Users size={20} color={Colors.dark} strokeWidth={2} />
                   <Text style={styles.actionLabel}>Members</Text>
@@ -557,7 +712,11 @@ export default function CommunityDetailScreen({ route }: Props) {
               {isOwner && (
                 <Pressable
                   style={styles.actionButton}
-                  onPress={() => setShowDeleteModal(true)}
+                  onPress={async () => {
+                    if (await ensureCommunityAccess("owner")) {
+                      setShowDeleteModal(true);
+                    }
+                  }}
                 >
                   <Trash2 size={20} color="#E53E3E" strokeWidth={2} />
                   <Text style={[styles.actionLabel, styles.destructiveLabel]}>
@@ -896,11 +1055,44 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
   },
-  fetchingIndicator: {
+  hiddenContent: {
+    display: "none",
+  },
+  skeletonContainer: {
+    flex: 1,
+  },
+  skeletonBanner: {
+    backgroundColor: "#E7E7E7",
+  },
+  skeletonIconBox: {
     position: "absolute",
-    top: 0,
-    right: 16,
+    top: -ICON_SIZE + 16,
+    left: 20,
+    width: ICON_SIZE,
+    height: ICON_SIZE,
+    borderRadius: 16,
+    overflow: "hidden",
     zIndex: 10,
+    borderWidth: 2,
+    borderColor: "#ffffff",
+    backgroundColor: "#E7E7E7",
+  },
+  skeletonDescription: {
+    marginTop: 10,
+    gap: 6,
+  },
+  skeletonMetaRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+    marginTop: 14,
+    marginBottom: 16,
+  },
+  skeletonActionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 6,
+    marginBottom: 20,
   },
   actionsContainer: {
     marginBottom: 16,

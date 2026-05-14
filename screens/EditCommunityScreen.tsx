@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import {
   Alert,
   Image,
@@ -12,7 +12,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type {
   NativeStackNavigationProp,
   NativeStackScreenProps,
@@ -30,6 +30,10 @@ import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "../context/AuthContext";
+import {
+  fetchCommunityMembership,
+  isCommunityAdminOrOwner,
+} from "../utils/communityMembership";
 import Button from "../components/Button";
 import Input from "../components/Input";
 import type {
@@ -102,6 +106,37 @@ export default function EditCommunityScreen({ route }: Props) {
   const [isPublic, setIsPublic] = useState(community.is_public ?? true);
   const [nameError, setNameError] = useState("");
 
+  const validateEditAccess = useCallback(
+    async (opts?: { alertOnDenied?: boolean }) => {
+      if (!token) return false;
+      try {
+        const membership = await fetchCommunityMembership(token, community.id);
+        if (!membership.is_member || !isCommunityAdminOrOwner(membership)) {
+          if (opts?.alertOnDenied) {
+            Alert.alert(
+              "Access changed",
+              membership.is_member
+                ? "You no longer have permission to edit this community."
+                : "You are no longer a member of this community.",
+            );
+          }
+          navigation.goBack();
+          return false;
+        }
+        return true;
+      } catch {
+        return true;
+      }
+    },
+    [community.id, navigation, token],
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      void validateEditAccess({ alertOnDenied: true });
+    }, [validateEditAccess]),
+  );
+
   // ── Save ─────────────────────────────────────────────────────────────────
 
   const handleSave = async () => {
@@ -109,7 +144,7 @@ export default function EditCommunityScreen({ route }: Props) {
       setNameError("Community name is required.");
       return;
     }
-    if (!token) return;
+    if (!token || !(await validateEditAccess({ alertOnDenied: true }))) return;
 
     setLoading(true);
     try {

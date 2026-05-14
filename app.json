@@ -33,7 +33,14 @@
     },
     "plugins": [
       "expo-font",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow $(PRODUCT_NAME) to choose your profile photo.",
+          "cameraPermission": "Allow $(PRODUCT_NAME) to take your profile photo."
+        }
+      ]
     ]
   }
 }

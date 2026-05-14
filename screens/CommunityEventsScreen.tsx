@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Animated,
   Pressable,
   RefreshControl,
@@ -11,7 +12,7 @@ import {
   type LayoutChangeEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type {
   NativeStackNavigationProp,
   NativeStackScreenProps,
@@ -28,6 +29,10 @@ import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "../context/AuthContext";
+import {
+  fetchCommunityMembership,
+  isCommunityAdminOrOwner,
+} from "../utils/communityMembership";
 import {
   SkeletonBox,
   SkeletonCard,
@@ -300,6 +305,9 @@ export default function CommunityEventsScreen({ route }: Props) {
     null,
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [canCreateEvents, setCanCreateEvents] = useState(isAdmin);
+  const [currentCommunityRole, setCurrentCommunityRole] =
+    useState(userCommunityRole);
 
   const fetchEvents = useCallback(
     async (isRefresh = false) => {
@@ -332,9 +340,81 @@ export default function CommunityEventsScreen({ route }: Props) {
     [communityId, filter, token],
   );
 
+  const validateCommunityAccess = useCallback(
+    async (opts?: { alertOnDenied?: boolean }) => {
+      if (!token) return true;
+      try {
+        const membership = await fetchCommunityMembership(token, communityId);
+        const nextCanCreate = isCommunityAdminOrOwner(membership);
+        setCanCreateEvents(nextCanCreate);
+        setCurrentCommunityRole(membership.my_role);
+
+        if (communityIsPublic === false && !membership.is_member) {
+          if (opts?.alertOnDenied) {
+            Alert.alert(
+              "Access changed",
+              "You are no longer a member of this community.",
+            );
+          }
+          navigation.goBack();
+          return false;
+        }
+        return true;
+      } catch {
+        return true;
+      }
+    },
+    [communityId, communityIsPublic, navigation, token],
+  );
+
   useEffect(() => {
     void fetchEvents();
   }, [fetchEvents]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void validateCommunityAccess({ alertOnDenied: true });
+    }, [validateCommunityAccess]),
+  );
+
+  const handleRefresh = useCallback(async () => {
+    if (await validateCommunityAccess({ alertOnDenied: true })) {
+      await fetchEvents(true);
+    }
+  }, [fetchEvents, validateCommunityAccess]);
+
+  const handleCreateEventPress = useCallback(async () => {
+    if (!token) return;
+    try {
+      const membership = await fetchCommunityMembership(token, communityId);
+      const nextCanCreate = isCommunityAdminOrOwner(membership);
+      setCanCreateEvents(nextCanCreate);
+      setCurrentCommunityRole(membership.my_role);
+
+      if (!membership.is_member) {
+        Alert.alert(
+          "Access changed",
+          "You are no longer a member of this community.",
+        );
+        navigation.goBack();
+        return;
+      }
+
+      if (!nextCanCreate) {
+        Alert.alert(
+          "Access changed",
+          "You no longer have permission to do that.",
+        );
+        return;
+      }
+
+      navigation.navigate("CreateEvent", { communityId, communityName });
+    } catch {
+      if (canCreateEvents) {
+        navigation.navigate("CreateEvent", { communityId, communityName });
+      }
+    }
+  }, [canCreateEvents, communityId, communityName, navigation, token]);
 
   function openEvent(event: CommunityEvent) {
     setSelectedEvent(event);
@@ -388,18 +468,16 @@ export default function CommunityEventsScreen({ route }: Props) {
           </Text>
         </View>
 
-        {isAdmin ? (
+        {canCreateEvents ? (
           <TouchableOpacity
             style={[styles.iconButton, styles.createButton]}
             activeOpacity={0.7}
-            onPress={() =>
-              navigation.navigate("CreateEvent", { communityId, communityName })
-            }
+            onPress={() => void handleCreateEventPress()}
           >
             <Plus size={20} color="#fff" strokeWidth={2.5} />
           </TouchableOpacity>
         ) : (
-          <View style={styles.iconButton} />
+          <View style={styles.headerRightPlaceholder} />
         )}
       </View>
 
@@ -431,7 +509,7 @@ export default function CommunityEventsScreen({ route }: Props) {
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => fetchEvents(true)}
+              onRefresh={() => void handleRefresh()}
               tintColor={Colors.primary}
               colors={[Colors.primary]}
             />
@@ -449,7 +527,7 @@ export default function CommunityEventsScreen({ route }: Props) {
               </Text>
               <Text style={styles.emptySubtitle}>
                 {filter === "upcoming"
-                  ? isAdmin
+                  ? canCreateEvents
                     ? "Tap + to schedule the first event for this community."
                     : "Nothing scheduled yet — check back soon."
                   : "This community hasn't held any events yet."}
@@ -475,7 +553,7 @@ export default function CommunityEventsScreen({ route }: Props) {
         communityId={communityId}
         token={token}
         communityIsPublic={communityIsPublic}
-        userCommunityRole={userCommunityRole}
+        userCommunityRole={currentCommunityRole}
         onAttendanceChange={handleAttendanceChange}
         canDeleteEvent={isAdmin}
         onEventDeleted={handleEventDeleted}
@@ -509,6 +587,13 @@ const styles = StyleSheet.create({
   },
   createButton: {
     backgroundColor: Colors.accent,
+  },
+  /** Same size as `iconButton` so the title stays centered; no fill for non-admins. */
+  headerRightPlaceholder: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "transparent",
   },
   headerCenter: {
     flex: 1,

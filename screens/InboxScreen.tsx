@@ -69,6 +69,12 @@ function formatNotificationTitle(notification: NotificationItem) {
       : "New community join request";
   }
 
+  if (notification.type === "accepted_to_community") {
+    return communityName
+      ? `You're now a member of ${communityName}`
+      : "You've been accepted into a community";
+  }
+
   if (actorName && communityName) {
     return `${actorName} in ${communityName}`;
   }
@@ -89,11 +95,15 @@ function formatNotificationBody(notification: NotificationItem) {
   }
 
   if (notification.type === "friend_request_accepted") {
-    return "You are now connected.";
+    return "Tap to view their profile.";
   }
 
   if (notification.type === "community_join_request") {
     return "Review this community membership request.";
+  }
+
+  if (notification.type === "accepted_to_community") {
+    return "Tap to open the community.";
   }
 
   return "You have a new update.";
@@ -101,6 +111,7 @@ function formatNotificationBody(notification: NotificationItem) {
 
 function formatNotificationTypeLabel(type?: string | null) {
   if (type === "community_join_request") return "Community request";
+  if (type === "accepted_to_community") return "Community";
   return "";
 }
 
@@ -159,25 +170,50 @@ export default function InboxScreen() {
     markAllNotificationsRead,
   } = useNotifications();
 
+  const buildCommunityStub = (notification: NotificationItem) => {
+    const communityId =
+      notification.community?.id ??
+      notification.community_id ??
+      (typeof notification.metadata?.community_id === "string"
+        ? notification.metadata.community_id
+        : undefined);
+    if (!communityId) return null;
+
+    return {
+      id: communityId,
+      name: notification.community?.name ?? "",
+      members: 0,
+      description: "",
+      color: Colors.primary,
+      memberAvatars: [] as string[],
+    };
+  };
+
   const openCommunityJoinRequest = (notification: NotificationItem) => {
-    const communityId = notification.community?.id;
-    if (!communityId) return;
+    const community = buildCommunityStub(notification);
+    if (!community) return;
 
     const actorId =
       notification.actor?.id ?? notification.actor_user_id ?? undefined;
 
     rootNavigation.navigate("CommunityDetail", {
-      community: {
-        id: communityId,
-        name: notification.community?.name ?? "",
-        members: 0,
-        description: "",
-        color: Colors.primary,
-        memberAvatars: [],
-      },
+      community,
       openMembers: true,
       highlightMemberUserId: actorId,
     });
+  };
+
+  const openCommunityDetail = (notification: NotificationItem) => {
+    const community = buildCommunityStub(notification);
+    if (!community) return;
+
+    rootNavigation.navigate("CommunityDetail", { community });
+  };
+
+  const openActorProfile = (notification: NotificationItem) => {
+    const userId = notification.actor?.id ?? notification.actor_user_id;
+    if (!userId) return;
+    rootNavigation.navigate("PublicProfile", { userId });
   };
 
   const handleNotificationPress = (notification: NotificationItem) => {
@@ -194,6 +230,10 @@ export default function InboxScreen() {
 
     if (notification.type === "community_join_request") {
       openCommunityJoinRequest(notification);
+    } else if (notification.type === "accepted_to_community") {
+      openCommunityDetail(notification);
+    } else if (notification.type === "friend_request_accepted") {
+      openActorProfile(notification);
     }
   };
   const friendRequests = notifications.filter(

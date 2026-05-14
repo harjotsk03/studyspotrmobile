@@ -280,6 +280,14 @@ function AppContent() {
         name="CommunityDetail"
         component={CommunityDetailScreen}
       />
+      <RootStack.Screen name="CommunityInfo" component={CommunityInfoScreen} />
+      <RootStack.Screen
+        name="CommunityEvents"
+        component={CommunityEventsScreen}
+      />
+      <RootStack.Screen name="EditCommunity" component={EditCommunityScreen} />
+      <RootStack.Screen name="CreateEvent" component={CreateEventScreen} />
+      <RootStack.Screen name="InviteEvent" component={InviteEventScreen} />
       <RootStack.Screen
         name="CommunityMembers"
         component={CommunityMembersScreen}

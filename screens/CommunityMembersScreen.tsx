@@ -18,7 +18,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type {
   NativeStackNavigationProp,
   NativeStackScreenProps,
@@ -39,6 +39,10 @@ import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "../context/AuthContext";
 import { SkeletonList, SkeletonRow } from "../components/Skeleton";
+import {
+  fetchCommunityMembership,
+  isCommunityAdminOrOwner,
+} from "../utils/communityMembership";
 import type { CommunityStackParamList } from "./CommunityDetailScreen";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import type { RootStackParamList } from "../types/navigation";
@@ -640,7 +644,12 @@ const modalStyles = StyleSheet.create({
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function CommunityMembersScreen({ route }: Props) {
-  const { communityId, communityName, isAdmin, highlightUserId } = route.params;
+  const {
+    communityId,
+    communityName,
+    isAdmin: initialIsAdmin,
+    highlightUserId,
+  } = route.params;
   const navigation =
     useNavigation<NativeStackNavigationProp<CommunityStackParamList>>();
   const insets = useSafeAreaInsets();
@@ -655,6 +664,7 @@ export default function CommunityMembersScreen({ route }: Props) {
   const [respondingId, setRespondingId] = useState<string | null>(null);
   const [actionMember, setActionMember] = useState<Member | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [canManageMembers, setCanManageMembers] = useState(initialIsAdmin);
 
   // Search bar focus animation
   const borderColor = useRef(new Animated.Value(0)).current;
@@ -714,12 +724,88 @@ export default function CommunityMembersScreen({ route }: Props) {
     [communityId, token],
   );
 
+  const validateCommunityAccess = useCallback(
+    async (opts?: { alertOnDenied?: boolean }) => {
+      if (!token) return false;
+      try {
+        const membership = await fetchCommunityMembership(token, communityId);
+        const nextCanManage = isCommunityAdminOrOwner(membership);
+        setCanManageMembers(nextCanManage);
+        if (!nextCanManage) setActionMember(null);
+
+        if (!membership.is_member) {
+          if (opts?.alertOnDenied) {
+            Alert.alert(
+              "Access changed",
+              "You are no longer a member of this community.",
+            );
+          }
+          navigation.goBack();
+          return false;
+        }
+        return true;
+      } catch {
+        return true;
+      }
+    },
+    [communityId, navigation, token],
+  );
+
   useEffect(() => {
     void fetchMembers();
   }, [fetchMembers]);
 
+  useFocusEffect(
+    useCallback(() => {
+      void validateCommunityAccess({ alertOnDenied: true });
+    }, [validateCommunityAccess]),
+  );
+
+  const handleRefresh = useCallback(async () => {
+    if (await validateCommunityAccess({ alertOnDenied: true })) {
+      await fetchMembers(true);
+    }
+  }, [fetchMembers, validateCommunityAccess]);
+
+  const ensureCanManageMembers = useCallback(async () => {
+    if (!token) return false;
+    try {
+      const membership = await fetchCommunityMembership(token, communityId);
+      const nextCanManage = isCommunityAdminOrOwner(membership);
+      setCanManageMembers(nextCanManage);
+
+      if (!membership.is_member) {
+        Alert.alert(
+          "Access changed",
+          "You are no longer a member of this community.",
+        );
+        navigation.goBack();
+        return false;
+      }
+
+      if (!nextCanManage) {
+        setActionMember(null);
+        Alert.alert("Access changed", "You no longer have permission to do that.");
+        return false;
+      }
+
+      return true;
+    } catch {
+      return canManageMembers;
+    }
+  }, [canManageMembers, communityId, navigation, token]);
+
+  const openMemberActions = useCallback(
+    async (member: Member) => {
+      if (await ensureCanManageMembers()) {
+        setActionMember(member);
+      }
+    },
+    [ensureCanManageMembers],
+  );
+
   async function handleRoleChange(userId: string, role: "admin" | "member") {
-    if (!token) return;
+    if (!token || !(await ensureCanManageMembers())) return;
     setActionLoading(true);
     try {
       const res = await fetch(
@@ -751,7 +837,7 @@ export default function CommunityMembersScreen({ route }: Props) {
   }
 
   async function handleRemoveMember(userId: string) {
-    if (!token) return;
+    if (!token || !(await ensureCanManageMembers())) return;
     setActionLoading(true);
     try {
       const res = await fetch(
@@ -795,7 +881,7 @@ export default function CommunityMembersScreen({ route }: Props) {
   }
 
   async function handleRespond(userId: string, decision: "accept" | "reject") {
-    if (!token) return;
+    if (!token || !(await ensureCanManageMembers())) return;
     setRespondingId(userId);
     try {
       const res = await fetch(
@@ -869,7 +955,7 @@ export default function CommunityMembersScreen({ route }: Props) {
   // Build sections for SectionList: pending (admin only) + accepted
   type SectionData = { title: string; data: Member[]; isPending: boolean };
   const sections: SectionData[] = [];
-  if (isAdmin && pending.length > 0) {
+  if (canManageMembers && pending.length > 0) {
     sections.push({
       title: "Pending Requests",
       data: pending,
@@ -956,13 +1042,13 @@ export default function CommunityMembersScreen({ route }: Props) {
           renderItem={({ item, section }) => (
             <MemberRow
               item={item}
-              isAdmin={isAdmin}
+              isAdmin={canManageMembers}
               isSelf={item.user.id === currentUserId}
               isHighlighted={
                 !!highlightUserId && item.user.id === highlightUserId
               }
               onRespond={section.isPending ? handleRespond : undefined}
-              onMore={section.isPending ? undefined : setActionMember}
+              onMore={section.isPending ? undefined : openMemberActions}
               respondingId={respondingId}
             />
           )}
@@ -986,13 +1072,13 @@ export default function CommunityMembersScreen({ route }: Props) {
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => fetchMembers(true)}
+              onRefresh={() => void handleRefresh()}
               tintColor={Colors.primary}
               colors={[Colors.primary]}
             />
           }
           ListEmptyComponent={
-            accepted.length === 0 && (!isAdmin || pending.length === 0) ? (
+            accepted.length === 0 && (!canManageMembers || pending.length === 0) ? (
               <View style={styles.centeredBox}>
                 <Users size={44} color="#CCC" strokeWidth={1.5} />
                 <Text style={styles.emptyTitle}>

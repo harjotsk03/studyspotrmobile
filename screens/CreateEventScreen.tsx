@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Animated,
@@ -19,7 +19,7 @@ import DateTimePicker, {
   type DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type {
   NativeStackNavigationProp,
   NativeStackScreenProps,
@@ -40,6 +40,10 @@ import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "../context/AuthContext";
+import {
+  fetchCommunityMembership,
+  isCommunityAdminOrOwner,
+} from "../utils/communityMembership";
 import Button from "../components/Button";
 import Input from "../components/Input";
 import type { CommunityStackParamList } from "./CommunityDetailScreen";
@@ -253,6 +257,41 @@ export default function CreateEventScreen({ route }: Props) {
     endTime,
   );
 
+  const validateCreateAccess = useCallback(
+    async (opts?: { alertOnDenied?: boolean }) => {
+      if (!token) return false;
+      try {
+        const membership = await fetchCommunityMembership(token, communityId);
+        const canCreate =
+          membership.is_member && isCommunityAdminOrOwner(membership);
+
+        if (!canCreate) {
+          if (opts?.alertOnDenied) {
+            Alert.alert(
+              "Access changed",
+              membership.is_member
+                ? "You no longer have permission to create events."
+                : "You are no longer a member of this community.",
+            );
+          }
+          navigation.goBack();
+          return false;
+        }
+
+        return true;
+      } catch {
+        return true;
+      }
+    },
+    [communityId, navigation, token],
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      void validateCreateAccess({ alertOnDenied: true });
+    }, [validateCreateAccess]),
+  );
+
   // ── Section toggles ──────────────────────────────────────────────────────
 
   const toggle = (setter: React.Dispatch<React.SetStateAction<boolean>>) => {
@@ -375,7 +414,8 @@ export default function CreateEventScreen({ route }: Props) {
   // ── Submit ───────────────────────────────────────────────────────────────
 
   const handleCreate = async () => {
-    if (!validate() || !token) return;
+    if (!token || !(await validateCreateAccess({ alertOnDenied: true }))) return;
+    if (!validate()) return;
 
     const startISO = toISO(startDate!, startTime!);
     const endISO = endDate && endTime ? toISO(endDate, endTime) : undefined;

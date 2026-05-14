@@ -1,5 +1,6 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Image,
   Pressable,
@@ -10,31 +11,34 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { useNavigation } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Colors } from '../constants/Colors';
-import { Fonts } from '../constants/Fonts';
-import { useAuth } from '../context/AuthContext';
-import ProfileSectionButton from '../components/ProfileSectionButton';
-import ProfileStat from '../components/ProfileStat';
-import type { ProfileSectionKey, ProfileStackParamList } from './ProfileSectionScreen';
-import { Share, UserPlus } from 'lucide-react-native';
+import * as ImagePicker from "expo-image-picker";
+import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { Colors } from "../constants/Colors";
+import { Fonts } from "../constants/Fonts";
+import { useAuth } from "../context/AuthContext";
+import ProfileSectionButton from "../components/ProfileSectionButton";
+import ProfileStat from "../components/ProfileStat";
+import type {
+  ProfileSectionKey,
+  ProfileStackParamList,
+} from "./ProfileSectionScreen";
+import { Camera, Share, UserPlus } from "lucide-react-native";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
-import type { RootStackParamList } from "../types/navigation";
 
 export default function ProfileScreen() {
-  const { profile, logout, refreshProfile } = useAuth();
-  const navigation = useNavigation<NativeStackNavigationProp<ProfileStackParamList>>();
-  const rootNavigation =
-    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const { profile, logout, refreshProfile, uploadProfilePhoto } = useAuth();
+  const navigation =
+    useNavigation<NativeStackNavigationProp<ProfileStackParamList>>();
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
 
   const user = profile?.userProfile;
   const profilePhotoUri =
-    typeof user?.profile_photo === 'string' && user.profile_photo.trim()
+    typeof user?.profile_photo === "string" && user.profile_photo.trim()
       ? encodeURI(user.profile_photo.trim())
-      : '';
+      : "";
 
   useEffect(() => {
     setAvatarLoadFailed(false);
@@ -44,9 +48,12 @@ export default function ProfileScreen() {
   const avatarColor = useMemo(() => getUserAvatarColor(user ?? {}), [user]);
 
   const stats = [
-    { label: 'Spots Created', value: String(user?.spots_created_count ?? 0) },
-    { label: 'Friends', value: String(user?.friends_count ?? 0) },
-    { label: 'Communities', value: String(user?.communities_joined_count ?? 0) },
+    { label: "Spots Created", value: String(user?.spots_created_count ?? 0) },
+    { label: "Friends", value: String(user?.friends_count ?? 0) },
+    {
+      label: "Communities",
+      value: String(user?.communities_joined_count ?? 0),
+    },
   ];
   const sectionButtons: Array<{
     key: ProfileSectionKey;
@@ -54,31 +61,31 @@ export default function ProfileScreen() {
     subtitle: string;
   }> = [
     {
-      key: 'personal',
-      title: 'Personal Details',
-      subtitle: 'First name, last name, email, and username',
+      key: "personal",
+      title: "Personal Details",
+      subtitle: "First name, last name, username, and bio",
     },
     {
-      key: 'school',
-      title: 'School',
-      subtitle: 'School and field of study',
+      key: "school",
+      title: "School",
+      subtitle: "School and field of study",
     },
     {
-      key: 'location',
-      title: 'Location',
-      subtitle: 'City and country',
+      key: "location",
+      title: "Location",
+      subtitle: "City and country",
     },
     {
-      key: 'settings',
-      title: 'Settings',
-      subtitle: 'Account actions and delete account',
+      key: "settings",
+      title: "Settings",
+      subtitle: "Account actions and delete account",
     },
   ];
 
   const handleLogout = () => {
-    Alert.alert('Log out', 'Are you sure you want to log out?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Log Out', style: 'destructive', onPress: logout },
+    Alert.alert("Log out", "Are you sure you want to log out?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Log Out", style: "destructive", onPress: logout },
     ]);
   };
 
@@ -87,6 +94,84 @@ export default function ProfileScreen() {
     await refreshProfile();
     setRefreshing(false);
   };
+
+  const captureImageUri = useCallback(
+    async (
+      source: "library" | "camera",
+    ): Promise<ImagePicker.ImagePickerAsset | null> => {
+    const options = {
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1] as [number, number],
+      quality: 0.85,
+    };
+
+    if (source === "library") {
+      const permission =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(
+          "Permission needed",
+          "Allow photo library access so you can choose a profile picture.",
+        );
+        return null;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync(options);
+      if (result.canceled || !result.assets?.[0]) return null;
+      return result.assets[0];
+    }
+
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert(
+        "Permission needed",
+        "Allow camera access to take your profile photo.",
+      );
+      return null;
+    }
+
+    const result = await ImagePicker.launchCameraAsync(options);
+    if (result.canceled || !result.assets?.[0]) return null;
+    return result.assets[0];
+  }, []);
+
+  const handleChangePhoto = useCallback(() => {
+    const confirmAndUpload = async (src: "library" | "camera") => {
+      try {
+        setPhotoBusy(true);
+        const asset = await captureImageUri(src);
+        if (!asset?.uri) return;
+        await uploadProfilePhoto(asset.uri, {
+          contentType: asset.mimeType ?? undefined,
+          fileName: asset.fileName ?? undefined,
+        });
+        setAvatarLoadFailed(false);
+        Alert.alert("Photo updated", "Your profile photo was saved.");
+      } catch (err) {
+        Alert.alert(
+          "Error",
+          err instanceof Error
+            ? err.message
+            : "Could not update your photo. Please try again.",
+        );
+      } finally {
+        setPhotoBusy(false);
+      }
+    };
+
+    Alert.alert("Profile photo", "How would you like to update your picture?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Choose from library",
+        onPress: () => void confirmAndUpload("library"),
+      },
+      {
+        text: "Take photo",
+        onPress: () => void confirmAndUpload("camera"),
+      },
+    ]);
+  }, [captureImageUri, uploadProfilePhoto]);
 
   return (
     <View style={styles.container}>
@@ -114,30 +199,53 @@ export default function ProfileScreen() {
           </Pressable>
         </View>
         <View style={styles.heroCard}>
-          <Pressable
-            disabled={!user?.id}
-            onPress={() =>
-              user?.id
-                ? rootNavigation.navigate("PublicProfile", { userId: user.id })
-                : undefined
-            }
-          >
-            {profilePhotoUri && !avatarLoadFailed ? (
-              <Image
-                key={profilePhotoUri}
-                source={{ uri: profilePhotoUri }}
-                style={styles.avatarImage}
-                resizeMode="cover"
-                onError={() => setAvatarLoadFailed(true)}
-              />
-            ) : (
-              <View
-                style={[styles.avatarFallback, { backgroundColor: avatarColor }]}
-              >
-                <Text style={styles.avatarInitials}>{initials}</Text>
-              </View>
-            )}
-          </Pressable>
+          <View style={styles.avatarBlock}>
+            <Pressable
+              accessibilityLabel="Change profile photo"
+              accessibilityRole="button"
+              disabled={photoBusy}
+              onPress={handleChangePhoto}
+              style={[styles.avatarPressable, photoBusy && styles.disabledTap]}
+            >
+              {photoBusy ? (
+                <View style={[styles.avatarFallback, styles.avatarLoading]}>
+                  <ActivityIndicator size="large" color={Colors.primary} />
+                </View>
+              ) : profilePhotoUri && !avatarLoadFailed ? (
+                <Image
+                  key={profilePhotoUri}
+                  source={{ uri: profilePhotoUri }}
+                  style={styles.avatarImage}
+                  resizeMode="cover"
+                  onError={() => setAvatarLoadFailed(true)}
+                />
+              ) : (
+                <View
+                  style={[
+                    styles.avatarFallback,
+                    { backgroundColor: avatarColor },
+                  ]}
+                >
+                  <Text style={styles.avatarInitials}>{initials}</Text>
+                </View>
+              )}
+            </Pressable>
+
+            <Pressable
+              accessibilityLabel="Change profile photo"
+              accessibilityRole="button"
+              importantForAccessibility="no"
+              style={[
+                styles.avatarEditButton,
+                photoBusy && styles.avatarEditDisabled,
+              ]}
+              disabled={photoBusy}
+              hitSlop={8}
+              onPress={handleChangePhoto}
+            >
+              <Camera size={16} color="#fff" strokeWidth={2.2} />
+            </Pressable>
+          </View>
 
           <View style={styles.nameContainer}>
             <Text style={styles.name}>
@@ -202,11 +310,45 @@ const styles = StyleSheet.create({
   heroCard: {
     alignItems: "center",
   },
+  avatarBlock: {
+    position: "relative",
+    width: 92,
+    height: 92,
+    marginBottom: 16,
+  },
+  avatarPressable: {
+    width: 92,
+    height: 92,
+    borderRadius: 46,
+    overflow: "hidden",
+  },
+  disabledTap: {
+    opacity: 0.7,
+  },
+  avatarLoading: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarEditButton: {
+    position: "absolute",
+    bottom: -2,
+    right: -2,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: Colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#fff",
+  },
+  avatarEditDisabled: {
+    opacity: 0.55,
+  },
   avatarImage: {
     width: 92,
     height: 92,
     borderRadius: 46,
-    marginBottom: 16,
   },
   avatarFallback: {
     width: 92,
@@ -214,7 +356,6 @@ const styles = StyleSheet.create({
     borderRadius: 46,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 16,
   },
   avatarInitials: {
     fontFamily: Fonts.gabarito.bold,

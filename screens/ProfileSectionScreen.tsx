@@ -37,6 +37,7 @@ type ProfileFormState = {
   field_of_study: string;
   city: string;
   country: string;
+  bio: string;
 };
 
 function normalizeValue(value: unknown) {
@@ -52,6 +53,7 @@ function createFormState(user?: UserProfileData): ProfileFormState {
     field_of_study: normalizeValue(user?.field_of_study),
     city: normalizeValue(user?.city),
     country: normalizeValue(user?.country),
+    bio: normalizeValue(user?.bio),
   };
 }
 
@@ -61,7 +63,9 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
   const { profile, token, updateProfile, logout } = useAuth();
   const user = profile?.userProfile;
 
-  const [form, setForm] = useState<ProfileFormState>(() => createFormState(user));
+  const [form, setForm] = useState<ProfileFormState>(() =>
+    createFormState(user),
+  );
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -72,29 +76,29 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
 
   const sectionConfig = useMemo(() => {
     switch (section) {
-      case 'personal':
+      case "personal":
         return {
-          title: 'Personal Details',
-          description: 'Manage the basics people see on your profile.',
-          buttonLabel: 'Save Personal Details',
+          title: "Personal Details",
+          description: "Manage the basics people see on your profile.",
+          buttonLabel: "Save Personal Details",
         };
-      case 'school':
+      case "school":
         return {
-          title: 'School',
-          description: 'Keep your academic info up to date.',
-          buttonLabel: 'Save School Details',
+          title: "School",
+          description: "Keep your academic info up to date.",
+          buttonLabel: "Save School Details",
         };
-      case 'location':
+      case "location":
         return {
-          title: 'Location',
-          description: 'Update where you are based.',
-          buttonLabel: 'Save Location',
+          title: "Location",
+          description: "Update where you are based.",
+          buttonLabel: "Save Location",
         };
-      case 'settings':
+      case "settings":
         return {
-          title: 'Settings',
-          description: 'Manage account actions and other sensitive changes.',
-          buttonLabel: '',
+          title: "Settings",
+          description: "Manage account actions and other sensitive changes.",
+          buttonLabel: "",
         };
     }
   }, [section]);
@@ -144,7 +148,7 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
   };
 
   const handleSave = async () => {
-    if (section === 'settings') {
+    if (section === "settings") {
       return;
     }
 
@@ -153,24 +157,40 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
       return;
     }
 
-    if (section === 'personal' && (!form.first_name.trim() || !form.last_name.trim())) {
-      Alert.alert('Missing info', 'First name and last name are required.');
+    if (
+      section === "personal" &&
+      (!form.first_name.trim() || !form.last_name.trim())
+    ) {
+      Alert.alert("Missing info", "First name and last name are required.");
       return;
     }
 
-    const nextValues = {
-      first_name: section === 'personal' ? form.first_name.trim() : normalizeValue(user.first_name).trim(),
-      last_name: section === 'personal' ? form.last_name.trim() : normalizeValue(user.last_name).trim(),
-      username: section === 'personal' ? form.username.trim() : normalizeValue(user.username).trim(),
-      school: section === 'school' ? form.school.trim() : normalizeValue(user.school).trim(),
-      field_of_study:
-        section === 'school'
-          ? form.field_of_study.trim()
-          : normalizeValue(user.field_of_study).trim(),
-      city: section === 'location' ? form.city.trim() : normalizeValue(user.city).trim(),
-      country: section === 'location' ? form.country.trim() : normalizeValue(user.country).trim(),
-      bio: normalizeValue(user.bio),
-    };
+    /** Only send fields from this section; server applies partial merge. Omit `user_id`. */
+    const bodyPayload = ((): Record<string, string | null> => {
+      if (section === "personal") {
+        return {
+          first_name: form.first_name.trim(),
+          last_name: form.last_name.trim(),
+          username: form.username.trim(),
+          bio: form.bio.trim().length === 0 ? null : form.bio.trim(),
+        };
+      }
+
+      if (section === "school") {
+        return {
+          school: form.school.trim().length === 0 ? null : form.school.trim(),
+          field_of_study:
+            form.field_of_study.trim().length === 0
+              ? null
+              : form.field_of_study.trim(),
+        };
+      }
+
+      return {
+        city: form.city.trim().length === 0 ? null : form.city.trim(),
+        country: form.country.trim().length === 0 ? null : form.country.trim(),
+      };
+    })();
 
     setSaving(true);
     try {
@@ -181,26 +201,46 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
             "Content-Type": "application/json",
             Authorization: `Bearer ${accessToken}`,
           },
-          body: JSON.stringify({
-            user_id: user.id,
-            ...nextValues,
-          }),
+          body: JSON.stringify(bodyPayload),
         }),
       );
 
       if (!response.ok) {
+        if (response.status === 409) {
+          throw new Error(
+            getErrorMessage(data) || "That username is already taken.",
+          );
+        }
         throw new Error(getErrorMessage(data) || "Failed to update profile.");
       }
 
-      await updateProfile(data.user ?? nextValues);
-      Alert.alert('Profile updated', 'Your changes were saved.');
+      const serverUserRaw =
+        data && typeof data === "object"
+          ? ((data as Record<string, unknown>).user ??
+            (data as Record<string, unknown>).profile)
+          : null;
+
+      if (
+        serverUserRaw &&
+        typeof serverUserRaw === "object" &&
+        serverUserRaw !== null
+      ) {
+        await updateProfile(serverUserRaw as Partial<UserProfileData>);
+      } else {
+        await updateProfile(bodyPayload as Partial<UserProfileData>);
+      }
+
+      Alert.alert("Profile updated", "Your changes were saved.");
       navigation.goBack();
     } catch (err: any) {
-      Alert.alert('Error', err.message ?? 'Something went wrong. Please try again.');
+      Alert.alert(
+        "Error",
+        err.message ?? "Something went wrong. Please try again.",
+      );
     } finally {
       setSaving(false);
     }
-  };
+  };;
 
   const handleDeleteAccount = async () => {
     setDeleting(true);
@@ -229,7 +269,7 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
   };
 
   const renderForm = () => {
-    if (section === 'settings') {
+    if (section === "settings") {
       return (
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Danger Zone</Text>
@@ -254,18 +294,22 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
         <Text style={styles.cardBody}>{sectionConfig.description}</Text>
 
         <View style={styles.form}>
-          {section === 'personal' ? (
+          {section === "personal" ? (
             <>
               <Input
                 label="First Name"
                 value={form.first_name}
-                onChangeText={(value) => setForm((current) => ({ ...current, first_name: value }))}
+                onChangeText={(value) =>
+                  setForm((current) => ({ ...current, first_name: value }))
+                }
               />
               <Input
                 label="Last Name"
                 containerStyle={styles.fieldGap}
                 value={form.last_name}
-                onChangeText={(value) => setForm((current) => ({ ...current, last_name: value }))}
+                onChangeText={(value) =>
+                  setForm((current) => ({ ...current, last_name: value }))
+                }
               />
               <Input
                 label="Email"
@@ -279,17 +323,33 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
                 value={form.username}
                 autoCapitalize="none"
                 autoCorrect={false}
-                onChangeText={(value) => setForm((current) => ({ ...current, username: value }))}
+                onChangeText={(value) =>
+                  setForm((current) => ({ ...current, username: value }))
+                }
+              />
+              <Input
+                label="Bio"
+                containerStyle={styles.fieldGap}
+                inputStyle={{ minHeight: 100 }}
+                value={form.bio}
+                multiline
+                textAlignVertical="top"
+                placeholder="Tell others a bit about you"
+                onChangeText={(value) =>
+                  setForm((current) => ({ ...current, bio: value }))
+                }
               />
             </>
           ) : null}
 
-          {section === 'school' ? (
+          {section === "school" ? (
             <>
               <Input
                 label="School"
                 value={form.school}
-                onChangeText={(value) => setForm((current) => ({ ...current, school: value }))}
+                onChangeText={(value) =>
+                  setForm((current) => ({ ...current, school: value }))
+                }
               />
               <Input
                 label="Field of Study"
@@ -302,18 +362,22 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
             </>
           ) : null}
 
-          {section === 'location' ? (
+          {section === "location" ? (
             <>
               <Input
                 label="City"
                 value={form.city}
-                onChangeText={(value) => setForm((current) => ({ ...current, city: value }))}
+                onChangeText={(value) =>
+                  setForm((current) => ({ ...current, city: value }))
+                }
               />
               <Input
                 label="Country"
                 containerStyle={styles.fieldGap}
                 value={form.country}
-                onChangeText={(value) => setForm((current) => ({ ...current, country: value }))}
+                onChangeText={(value) =>
+                  setForm((current) => ({ ...current, country: value }))
+                }
               />
             </>
           ) : null}
@@ -349,14 +413,16 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
 
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <ScrollView
           style={styles.flex}
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          keyboardDismissMode={
+            Platform.OS === "ios" ? "interactive" : "on-drag"
+          }
           automaticallyAdjustKeyboardInsets
         >
           {renderForm()}
