@@ -61,6 +61,7 @@ import SpotsScreen from "./screens/SpotsScreen";
 import SpotDetailScreen, {
   type SpotsStackParamList,
 } from "./screens/SpotDetailScreen";
+import SpotWizardScreen from "./screens/SpotWizardScreen";
 import ProfileScreen from "./screens/ProfileScreen";
 import LoginScreen from "./screens/LoginScreen";
 import RegisterScreen from "./screens/RegisterScreen";
@@ -146,6 +147,8 @@ function SpotsStackScreen() {
     >
       <SpotsStack.Screen name="SpotsHome" component={SpotsScreen} />
       <SpotsStack.Screen name="SpotDetail" component={SpotDetailScreen} />
+      <SpotsStack.Screen name="CreateSpot" component={SpotWizardScreen} />
+      <SpotsStack.Screen name="EditSpot" component={SpotWizardScreen} />
     </SpotsStack.Navigator>
   );
 }

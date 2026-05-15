@@ -7,8 +7,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "./AuthContext";
+import { fetchAllSpots } from "../utils/spotsApi";
 
 export type SpotsViewMode = "map" | "list";
 
@@ -33,45 +33,12 @@ export type StudySpot = {
   close_time?: string;
   rating?: number | string;
   rating_count?: number | string;
+  created_by_id?: string;
   created_by_name?: string;
   created_by_profile_photo?: string;
   image_url?: string;
   [key: string]: unknown;
 };
-
-async function fetchSpotsFromApi(accessToken: string): Promise<StudySpot[]> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/spots`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-
-  const data = await res.json().catch(() => null);
-
-  if (!res.ok) {
-    const message =
-      typeof data?.message === "string"
-        ? data.message
-        : typeof data?.error === "string"
-          ? data.error
-          : "Failed to load spots";
-    throw new Error(message);
-  }
-
-  if (Array.isArray(data)) {
-    return data as StudySpot[];
-  }
-
-  if (Array.isArray(data?.spots)) {
-    return data.spots as StudySpot[];
-  }
-
-  if (Array.isArray(data?.data)) {
-    return data.data as StudySpot[];
-  }
-
-  return [];
-}
 
 type SpotsContextValue = {
   spots: StudySpot[];
@@ -86,7 +53,7 @@ type SpotsContextValue = {
 const SpotsContext = createContext<SpotsContextValue | null>(null);
 
 export function SpotsProvider({ children }: { children: ReactNode }) {
-  const { token: accessToken, isLoading: authLoading } = useAuth();
+  const { isLoading: authLoading } = useAuth();
   const [viewMode, setViewMode] = useState<SpotsViewMode>("map");
   const [spots, setSpots] = useState<StudySpot[]>([]);
   const [spotsLoading, setSpotsLoading] = useState(false);
@@ -97,16 +64,10 @@ export function SpotsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refetchSpots = useCallback(async () => {
-    if (!accessToken) {
-      setSpots([]);
-      setSpotsError(null);
-      setSpotsLoading(false);
-      return;
-    }
     setSpotsLoading(true);
     setSpotsError(null);
     try {
-      const list = await fetchSpotsFromApi(accessToken);
+      const list = await fetchAllSpots();
       setSpots(list);
     } catch (e) {
       setSpots([]);
@@ -114,12 +75,12 @@ export function SpotsProvider({ children }: { children: ReactNode }) {
     } finally {
       setSpotsLoading(false);
     }
-  }, [accessToken]);
+  }, []);
 
   useEffect(() => {
     if (authLoading) return;
     void refetchSpots();
-  }, [authLoading, accessToken, refetchSpots]);
+  }, [authLoading, refetchSpots]);
 
   const value = useMemo(
     () => ({

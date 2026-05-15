@@ -5,6 +5,7 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as Location from "expo-location";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   FlatList,
   Platform,
   Pressable,
@@ -31,6 +32,7 @@ import {
 } from "../components/Skeleton";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
+import { useAuth } from "../context/AuthContext";
 import {
   type SpotsViewMode,
   type StudySpot,
@@ -113,6 +115,7 @@ export default function SpotsScreen() {
   const previousSearchValue = useRef("");
   const navigation =
     useNavigation<NativeStackNavigationProp<SpotsStackParamList>>();
+  const { profile } = useAuth();
 
   const {
     spots,
@@ -432,6 +435,23 @@ export default function SpotsScreen() {
           </View>
 
           <View style={styles.toolbarTrailing}>
+            <Pressable
+              onPress={() => {
+                if (!profile?.userProfile?.id) {
+                  Alert.alert(
+                    "Sign in",
+                    "Sign in or create an account to list a study spot.",
+                  );
+                  return;
+                }
+                navigation.navigate("CreateSpot");
+              }}
+              style={styles.iconActionButton}
+              accessibilityLabel="Add spot"
+            >
+              <Ionicons name="add-circle-outline" size={20} color={Colors.dark} />
+            </Pressable>
+
             <Pressable
               onPress={() => setFiltersOpen(true)}
               style={[
