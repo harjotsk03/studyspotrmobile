@@ -37,6 +37,25 @@ export type FeedPageResult = {
   next_cursor: string | null;
 };
 
+/** Cover image for profile grids; prefers video thumbnails when the first item is video. */
+export function feedPostGridCover(post: FeedPost): {
+  uri: string;
+  isVideo: boolean;
+} {
+  const first = post.media[0];
+  if (!first)
+    return { uri: "", isVideo: false };
+
+  const isVideo = first.type === "video";
+  const raw =
+    isVideo && first.thumbnail_url?.trim()
+      ? first.thumbnail_url.trim()
+      : first.url.trim();
+  const uri = raw ? encodeURI(raw) : "";
+
+  return { uri, isVideo };
+}
+
 function authHeaders(token: string): HeadersInit {
   return {
     Accept: "application/json",

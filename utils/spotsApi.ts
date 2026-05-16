@@ -71,6 +71,17 @@ export function spotReviewPrimaryId(review: SpotReview): string | undefined {
   return undefined;
 }
 
+/** Title for a review row; prefers API spot_title / spot_name over generic placeholders. */
+export function spotReviewSpotLabel(review: SpotReview): string {
+  const t =
+    typeof review.spot_title === "string" ? review.spot_title.trim() : "";
+  if (t) return t;
+  const n =
+    typeof review.spot_name === "string" ? review.spot_name.trim() : "";
+  if (n) return n;
+  return "Untitled Spot";
+}
+
 function apiError(json: unknown, fallback: string): string {
   if (!json || typeof json !== "object") return fallback;
   const o = json as Record<string, unknown>;

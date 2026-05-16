@@ -11,8 +11,8 @@ export default function ProfileStat({
 }) {
   return (
     <View style={styles.statItem}>
-      <Text style={styles.statLabel}>{label}</Text>
       <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
 }
@@ -25,12 +25,13 @@ const styles = StyleSheet.create({
   },
   statLabel: {
     fontFamily: Fonts.instrument.medium,
-    fontSize: 14,
+    fontSize: 13,
     color: '#555',
+    marginTop: 2,
   },
   statValue: {
     fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 18,
+    fontSize: 17,
     color: Colors.dark,
   },
 });

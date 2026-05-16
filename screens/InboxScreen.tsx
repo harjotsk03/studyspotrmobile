@@ -11,8 +11,8 @@ import {
 import { useEffect } from "react";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { ChevronRight } from "lucide-react-native";
 import TopNav from "../components/TopNav";
+import Button from "../components/Button";
 import { SkeletonList, SkeletonRow } from "../components/Skeleton";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
@@ -21,13 +21,11 @@ import {
   type NotificationActor,
   type NotificationItem,
 } from "../context/NotificationsContext";
-import type { RootStackParamList } from "../types/navigation";
+import type {
+  InboxStackParamList,
+  RootStackParamList,
+} from "../types/navigation";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
-
-export type InboxStackParamList = {
-  InboxHome: undefined;
-  FriendRequests: undefined;
-};
 
 function formatActorName(actor?: NotificationActor | null) {
   if (!actor) return "";
@@ -290,126 +288,156 @@ export default function InboxScreen() {
         )}
       </View>
 
-      <Pressable
-        style={styles.requestShortcut}
-        onPress={() => navigation.navigate("FriendRequests")}
-      >
-        <View>
-          <Text style={styles.requestShortcutTitle}>Follow requests</Text>
-          <Text style={styles.requestShortcutText}>
-            {formatFollowRequestSummary(friendRequests)}
-          </Text>
+      <View style={styles.notificationsPane}>
+        <View style={styles.ctaRow}>
+          <View style={styles.ctaCopy}>
+            <Text style={styles.ctaTitle}>Follow requests</Text>
+            <Text style={styles.ctaSubtitle}>
+              {formatFollowRequestSummary(friendRequests)}
+            </Text>
+          </View>
+          <Button
+            label="Review"
+            variant="accent"
+            size="sm"
+            onPress={() => navigation.navigate("FriendRequests")}
+          />
         </View>
-        <ChevronRight size={22} color={Colors.primary} strokeWidth={2.4} />
-      </Pressable>
 
-      {loading && (
-        <SkeletonList
-          count={4}
-          style={styles.listContent}
-          row={<SkeletonRow avatarSize={42} lines={3} />}
-        />
-      )}
-
-      {!loading && !!error && (
-        <View style={styles.stateCard}>
-          <Text style={styles.emptyTitle}>Could not load inbox</Text>
-          <Text style={styles.emptyText}>{error}</Text>
+        <View style={styles.ctaRow}>
+          <View style={styles.ctaCopy}>
+            <Text style={styles.ctaTitle}>Messages</Text>
+            <Text style={styles.ctaSubtitle}>
+              Jump to your direct messages inbox.
+            </Text>
+          </View>
+          <Button
+            label="Open"
+            variant="default"
+            size="sm"
+            onPress={() => navigation.navigate("Messages")}
+          />
         </View>
-      )}
 
-      {!loading && !error && (
-        <FlatList
-          data={visibleNotifications}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContent}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => void refreshNotifications()}
-              tintColor={Colors.primary}
+        <View style={styles.notificationsSection}>
+          <Text style={styles.notificationsSectionTitle}>Notifications</Text>
+
+          {loading && (
+            <SkeletonList
+              count={4}
+              style={styles.listContent}
+              row={<SkeletonRow avatarSize={42} lines={3} />}
             />
-          }
-          ListEmptyComponent={
-            <View style={styles.stateCard}>
-              <Text style={styles.emptyTitle}>No notifications yet</Text>
-              <Text style={styles.emptyText}>
-                Community invites, requests, and updates will show up here.
-              </Text>
-            </View>
-          }
-          renderItem={({ item }) => {
-            const unread = !item.read_at;
-            const actorName = formatActorName(item.actor);
-            const typeLabel = formatNotificationTypeLabel(item.type);
-            const actorAvatarUri =
-              typeof item.actor?.profile_photo === "string" &&
-              item.actor.profile_photo.trim().length > 0
-                ? encodeURI(item.actor.profile_photo.trim())
-                : "";
-            const avatarUser = {
-              id: item.actor?.id ?? item.community?.id,
-              first_name: item.actor?.first_name ?? undefined,
-              last_name: item.actor?.last_name ?? undefined,
-              username: item.actor?.username ?? undefined,
-              name: actorName || item.community?.name || "",
-            };
+          )}
 
-            return (
-              <Pressable
-                style={[
-                  styles.notificationCard,
-                  unread && styles.unreadNotificationCard,
-                ]}
-                onPress={() => handleNotificationPress(item)}
-              >
-                <Pressable
-                  disabled={!item.actor?.id}
-                  onPress={() =>
-                    item.actor?.id
-                      ? rootNavigation.navigate("PublicProfile", {
-                          userId: item.actor.id,
-                        })
-                      : undefined
-                  }
-                  style={[
-                    styles.avatar,
-                    { backgroundColor: getUserAvatarColor(avatarUser) },
-                  ]}
-                >
-                  {actorAvatarUri ? (
-                    <Image
-                      source={{ uri: actorAvatarUri }}
-                      style={styles.avatarImage}
-                    />
-                  ) : (
-                    <Text style={styles.avatarText}>
-                      {getUserInitials(avatarUser)}
-                    </Text>
-                  )}
-                </Pressable>
-                <View style={styles.notificationBody}>
-                  {!!typeLabel && (
-                    <Text style={styles.typeLabel}>{typeLabel}</Text>
-                  )}
-                  <View style={styles.notificationHeader}>
-                    <Text style={styles.notificationTitle} numberOfLines={1}>
-                      {formatNotificationTitle(item)}
-                    </Text>
-                    {unread && <View style={styles.unreadDot} />}
-                  </View>
-                  <Text style={styles.notificationMessage} numberOfLines={2}>
-                    {formatNotificationBody(item)}
-                  </Text>
-                  <Text style={styles.notificationTime}>
-                    {formatNotificationTime(item.created_at)}
+          {!loading && !!error && (
+            <View style={styles.stateCard}>
+              <Text style={styles.emptyTitle}>Could not load inbox</Text>
+              <Text style={styles.emptyText}>{error}</Text>
+            </View>
+          )}
+
+          {!loading && !error && (
+            <FlatList
+              style={styles.notificationsList}
+              data={visibleNotifications}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={styles.listContent}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={() => void refreshNotifications()}
+                  tintColor={Colors.primary}
+                />
+              }
+              ListEmptyComponent={
+                <View style={styles.stateCard}>
+                  <Text style={styles.emptyTitle}>No notifications yet</Text>
+                  <Text style={styles.emptyText}>
+                    Community invites, requests, and updates will show up here.
                   </Text>
                 </View>
-              </Pressable>
-            );
-          }}
-        />
-      )}
+              }
+              renderItem={({ item }) => {
+                const unread = !item.read_at;
+                const actorName = formatActorName(item.actor);
+                const typeLabel = formatNotificationTypeLabel(item.type);
+                const actorAvatarUri =
+                  typeof item.actor?.profile_photo === "string" &&
+                  item.actor.profile_photo.trim().length > 0
+                    ? encodeURI(item.actor.profile_photo.trim())
+                    : "";
+                const avatarUser = {
+                  id: item.actor?.id ?? item.community?.id,
+                  first_name: item.actor?.first_name ?? undefined,
+                  last_name: item.actor?.last_name ?? undefined,
+                  username: item.actor?.username ?? undefined,
+                  name: actorName || item.community?.name || "",
+                };
+
+                return (
+                  <Pressable
+                    style={[
+                      styles.notificationCard,
+                      unread && styles.unreadNotificationCard,
+                    ]}
+                    onPress={() => handleNotificationPress(item)}
+                  >
+                    <Pressable
+                      disabled={!item.actor?.id}
+                      onPress={() =>
+                        item.actor?.id
+                          ? rootNavigation.navigate("PublicProfile", {
+                              userId: item.actor.id,
+                            })
+                          : undefined
+                      }
+                      style={[
+                        styles.avatar,
+                        { backgroundColor: getUserAvatarColor(avatarUser) },
+                      ]}
+                    >
+                      {actorAvatarUri ? (
+                        <Image
+                          source={{ uri: actorAvatarUri }}
+                          style={styles.avatarImage}
+                        />
+                      ) : (
+                        <Text style={styles.avatarText}>
+                          {getUserInitials(avatarUser)}
+                        </Text>
+                      )}
+                    </Pressable>
+                    <View style={styles.notificationBody}>
+                      {!!typeLabel && (
+                        <Text style={styles.typeLabel}>{typeLabel}</Text>
+                      )}
+                      <View style={styles.notificationHeader}>
+                        <Text
+                          style={styles.notificationTitle}
+                          numberOfLines={1}
+                        >
+                          {formatNotificationTitle(item)}
+                        </Text>
+                        {unread && <View style={styles.unreadDot} />}
+                      </View>
+                      <Text
+                        style={styles.notificationMessage}
+                        numberOfLines={2}
+                      >
+                        {formatNotificationBody(item)}
+                      </Text>
+                      <Text style={styles.notificationTime}>
+                        {formatNotificationTime(item.created_at)}
+                      </Text>
+                    </View>
+                  </Pressable>
+                );
+              }}
+            />
+          )}
+        </View>
+      </View>
     </View>
   );
 }
@@ -444,40 +472,61 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     marginBottom: 16,
   },
-  requestShortcut: {
-    alignItems: "center",
-    backgroundColor: "#fff",
-    borderRadius: 18,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginHorizontal: 20,
-    marginBottom: 14,
-    paddingHorizontal: 18,
-    paddingVertical: 16,
+  notificationsPane: {
+    flex: 1,
   },
-  requestShortcutTitle: {
+  notificationsSection: {
+    flex: 1,
+    paddingHorizontal: 12,
+  },
+  notificationsSectionTitle: {
     color: Colors.dark,
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 18,
-  },
-  requestShortcutText: {
-    color: "#666",
-    fontFamily: Fonts.instrument.regular,
+    fontFamily: Fonts.instrument.semiBold,
     fontSize: 14,
+    letterSpacing: 0.2,
+    marginBottom: 6,
+    marginTop: 10,
+  },
+  ctaRow: {
     marginTop: 4,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: "#ffffff",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  ctaCopy: {
+    flex: 1,
+  },
+  ctaTitle: {
+    fontSize: 18,
+    fontFamily: Fonts.gabarito.medium,
+    color: Colors.dark,
+    marginBottom: 2,
+  },
+  ctaSubtitle: {
+    fontSize: 12,
+    fontFamily: Fonts.instrument.regular,
+    color: Colors.dark,
+    lineHeight: 16,
+  },
+  notificationsList: {
+    flex: 1,
   },
   loader: {
     marginTop: 28,
   },
   listContent: {
-    paddingHorizontal: 20,
     paddingBottom: 28,
     gap: 12,
   },
   stateCard: {
-    borderRadius: 18,
-    marginHorizontal: 20,
+    backgroundColor: "#fff",
+    borderRadius: 12,
     marginTop: 12,
+    padding: 16,
   },
   emptyTitle: {
     fontFamily: Fonts.gabarito.semiBold,
@@ -493,7 +542,7 @@ const styles = StyleSheet.create({
   },
   notificationCard: {
     backgroundColor: "#fff",
-    borderRadius: 18,
+    borderRadius: 12,
     padding: 14,
     flexDirection: "row",
     gap: 12,

@@ -46,7 +46,7 @@ import { getSpotScore } from "../utils/getSpotScore";
 import { getSpotSearchText } from "../utils/getSpotSearchText";
 import { getSpotTitle } from "../utils/getSpotTitle";
 import { toNumber } from "../utils/toNumber";
-import type { SpotsStackParamList } from "./SpotDetailScreen";
+import type { SpotsStackParamList } from "../types/navigation";
 
 const CAROUSEL_GAP = 12;
 const DEFAULT_USER_REGION_DELTA = 0.012;

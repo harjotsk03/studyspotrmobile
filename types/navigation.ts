@@ -1,9 +1,40 @@
+import type { NavigatorScreenParams } from "@react-navigation/native";
 import type { CommunityStackParamList } from "../screens/CommunityDetailScreen";
+import type { StudySpot } from "../context/SpotsContext";
+import type { FeedPost } from "../utils/feedApi";
+import type { ChatOtherUser } from "../utils/chatApi";
+
+export type SpotsStackParamList = {
+  SpotsHome: undefined;
+  SpotDetail: { spot: StudySpot };
+  CreateSpot: undefined;
+  EditSpot: { spot: StudySpot };
+};
+
+export type InboxStackParamList = {
+  InboxHome: undefined;
+  FriendRequests: undefined;
+  Messages: undefined;
+  ChatThread: {
+    conversationId: string;
+    peer?: ChatOtherUser;
+  };
+};
+
+export type MainTabsParamList = {
+  Feed: undefined;
+  Community: undefined;
+  Spots: NavigatorScreenParams<SpotsStackParamList>;
+  Inbox: NavigatorScreenParams<InboxStackParamList>;
+  Profile: undefined;
+};
 
 /** Community screens mounted on RootStack must match `CommunityStackParamList`. */
 export type RootStackParamList = {
-  MainTabs: undefined;
+  MainTabs: NavigatorScreenParams<MainTabsParamList> | undefined;
   PublicProfile: { userId: string };
+  FeedPostDetail: { post: FeedPost };
+  SpotViewer: { spot: StudySpot };
 } & Pick<
   CommunityStackParamList,
   | "CommunityDetail"

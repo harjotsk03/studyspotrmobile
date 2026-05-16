@@ -9,6 +9,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { API_BASE_URL } from "../constants/Api";
 import { postProfilePhotoMultipart } from "../utils/profilePhotoUpload";
+import { disconnectChatSocket } from "../utils/chatSocket";
 
 export interface UserProfileData {
   id: string;
@@ -198,6 +199,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = async () => {
+    disconnectChatSocket();
     await clearStoredAuth();
     setProfile(null);
     setToken(null);

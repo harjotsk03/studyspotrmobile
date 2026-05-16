@@ -19,12 +19,14 @@ import { type UserProfileData, useAuth } from '../context/AuthContext';
 import Button from '../components/Button';
 import DeleteAccountModal from '../components/DeleteAccountModal';
 import Input from '../components/Input';
+import type { FeedPost } from '../utils/feedApi';
 
 export type ProfileSectionKey = 'personal' | 'school' | 'location' | 'settings';
 
 export type ProfileStackParamList = {
   ProfileHome: undefined;
   ProfileSection: { section: ProfileSectionKey };
+  FeedPostDetail: { post: FeedPost };
 };
 
 type Props = NativeStackScreenProps<ProfileStackParamList, 'ProfileSection'>;

@@ -54,20 +54,25 @@ import CommunityMembersScreen from "./screens/CommunityMembersScreen";
 import ProfileSectionScreen, {
   type ProfileStackParamList,
 } from "./screens/ProfileSectionScreen";
-import InboxScreen, { type InboxStackParamList } from "./screens/InboxScreen";
+import FeedPostDetailScreen from "./screens/FeedPostDetailScreen";
+import InboxScreen from "./screens/InboxScreen";
 import FriendRequestsScreen from "./screens/FriendRequestsScreen";
+import MessagesScreen from "./screens/MessagesScreen";
+import ChatThreadScreen from "./screens/ChatThreadScreen";
 import PublicProfileScreen from "./screens/PublicProfileScreen";
 import SpotsScreen from "./screens/SpotsScreen";
-import SpotDetailScreen, {
-  type SpotsStackParamList,
-} from "./screens/SpotDetailScreen";
+import SpotDetailScreen from "./screens/SpotDetailScreen";
 import SpotWizardScreen from "./screens/SpotWizardScreen";
 import ProfileScreen from "./screens/ProfileScreen";
 import LoginScreen from "./screens/LoginScreen";
 import RegisterScreen from "./screens/RegisterScreen";
 import ForgotPasswordScreen from "./screens/ForgotPasswordScreen";
 import { Fonts } from "./constants/Fonts";
-import type { RootStackParamList } from "./types/navigation";
+import type {
+  InboxStackParamList,
+  RootStackParamList,
+  SpotsStackParamList,
+} from "./types/navigation";
 import { SkeletonBox } from "./components/Skeleton";
 
 const Tab = createBottomTabNavigator();
@@ -132,6 +137,10 @@ function ProfileStackScreen() {
         name="ProfileSection"
         component={ProfileSectionScreen}
       />
+      <ProfileStack.Screen
+        name="FeedPostDetail"
+        component={FeedPostDetailScreen}
+      />
     </ProfileStack.Navigator>
   );
 }
@@ -163,6 +172,8 @@ function InboxStackScreen() {
         name="FriendRequests"
         component={FriendRequestsScreen}
       />
+      <InboxStack.Screen name="Messages" component={MessagesScreen} />
+      <InboxStack.Screen name="ChatThread" component={ChatThreadScreen} />
     </InboxStack.Navigator>
   );
 }
@@ -279,6 +290,15 @@ function AppContent() {
     >
       <RootStack.Screen name="MainTabs" children={() => tabs} />
       <RootStack.Screen name="PublicProfile" component={PublicProfileScreen} />
+      <RootStack.Screen
+        name="SpotViewer"
+        component={SpotDetailScreen}
+        options={{ gestureEnabled: true }}
+      />
+      <RootStack.Screen
+        name="FeedPostDetail"
+        component={FeedPostDetailScreen}
+      />
       <RootStack.Screen
         name="CommunityDetail"
         component={CommunityDetailScreen}

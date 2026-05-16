@@ -65,16 +65,11 @@ import {
 import { getSpotDescription } from "../utils/getSpotDescription";
 import { getSpotTitle } from "../utils/getSpotTitle";
 import { toNumber } from "../utils/toNumber";
-import type { RootStackParamList } from "../types/navigation";
+import type { RootStackParamList, SpotsStackParamList } from "../types/navigation";
 
-export type SpotsStackParamList = {
-  SpotsHome: undefined;
-  SpotDetail: { spot: StudySpot };
-  CreateSpot: undefined;
-  EditSpot: { spot: StudySpot };
-};
-
-type Props = NativeStackScreenProps<SpotsStackParamList, "SpotDetail">;
+type Props =
+  | NativeStackScreenProps<SpotsStackParamList, "SpotDetail">
+  | NativeStackScreenProps<RootStackParamList, "SpotViewer">;
 
 function formatRating(value: unknown) {
   const parsed = toNumber(value);
@@ -268,9 +263,7 @@ function buildSpotGalleryItems(
   return out;
 }
 
-export default function SpotDetailScreen({ route }: Props) {
-  const navigation =
-    useNavigation<NativeStackNavigationProp<SpotsStackParamList>>();
+export default function SpotDetailScreen({ route, navigation }: Props) {
   const rootNavigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
@@ -459,7 +452,19 @@ export default function SpotDetailScreen({ route }: Props) {
     Alert.alert(title, undefined, [
       {
         text: "Edit spot",
-        onPress: () => navigation.navigate("EditSpot", { spot }),
+        onPress: () => {
+          if (route.name === "SpotViewer") {
+            rootNavigation.navigate("MainTabs", {
+              screen: "Spots",
+              params: { screen: "EditSpot", params: { spot } },
+            });
+            navigation.goBack();
+            return;
+          }
+          (
+            navigation as NativeStackNavigationProp<SpotsStackParamList>
+          ).navigate("EditSpot", { spot });
+        },
       },
       {
         text: "Delete spot",

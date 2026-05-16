@@ -1,26 +1,25 @@
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import type { StudySpot } from "../context/SpotsContext";
+import type { RootStackParamList } from "../types/navigation";
 
-/** Navigate to Spots → Spot Detail from Profile stack under Main Tabs. */
-export function openSpotFromNestedTabNavigator(
-  navigation: { getParent: () => unknown },
+/** Full-screen spot detail on the root stack (smooth push; avoids tab switching). */
+export function openSpotViewerFromRoot(
+  rootNavigation: NativeStackNavigationProp<RootStackParamList>,
   spot: StudySpot,
 ): void {
-  const parent = navigation.getParent() as
-    | { navigate?: (name: string, params?: Record<string, unknown>) => void }
-    | undefined;
-  parent?.navigate?.("Spots", {
-    screen: "SpotDetail",
-    params: { spot },
-  });
+  rootNavigation.navigate("SpotViewer", { spot });
 }
 
-/** From Root stack (e.g. Public Profile). */
-export function openSpotFromRootStack(
-  navigation: { navigate?: (name: string, params?: Record<string, unknown>) => void },
+/** From Profile tab (nested under MainTabs): resolve root navigator then push SpotViewer. */
+export function openSpotViewerFromProfileTab(
+  profileStackNavigation: { getParent: () => unknown },
   spot: StudySpot,
 ): void {
-  navigation.navigate?.("MainTabs", {
-    screen: "Spots",
-    params: { screen: "SpotDetail", params: { spot } },
-  });
+  const tabNav = profileStackNavigation.getParent() as
+    | { getParent?: () => unknown }
+    | undefined;
+  const rootNav = tabNav?.getParent?.() as
+    | NativeStackNavigationProp<RootStackParamList>
+    | undefined;
+  rootNav?.navigate("SpotViewer", { spot });
 }

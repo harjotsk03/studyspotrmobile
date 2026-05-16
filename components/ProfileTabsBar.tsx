@@ -1,176 +1,172 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  Heart,
+  LayoutGrid,
+  MapPin,
+  Settings,
+  Star,
+} from "lucide-react-native";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 
 export type OwnProfileMainTabKey =
   | "posts"
-  | "spots"
   | "reviews"
-  | "settings";
-export type PublicProfileMainTabKey = "posts" | "spots" | "reviews";
-export type PostSubTabKey = "published" | "liked";
+  | "liked"
+  | "settings"
+  | "spots";
+export type PublicProfileMainTabKey =
+  | "posts"
+  | "reviews"
+  | "liked"
+  | "spots";
 
-type BaseProps = {
-  postSub?: PostSubTabKey;
-  onChangePostSub?: (sub: PostSubTabKey) => void;
+type OwnProps = {
+  variant: "own";
+  mainTab: OwnProfileMainTabKey;
+  onChangeMain: (tab: OwnProfileMainTabKey) => void;
 };
 
-type Props =
-  | (BaseProps & {
-      variant: "own";
-      mainTab: OwnProfileMainTabKey;
-      onChangeMain: (tab: OwnProfileMainTabKey) => void;
-    })
-  | (BaseProps & {
-      variant: "public";
-      mainTab: PublicProfileMainTabKey;
-      onChangeMain: (tab: PublicProfileMainTabKey) => void;
-    });
+type PublicProps = {
+  variant: "public";
+  mainTab: PublicProfileMainTabKey;
+  onChangeMain: (tab: PublicProfileMainTabKey) => void;
+};
 
-const OWN_TABS: { key: OwnProfileMainTabKey; label: string }[] = [
-  { key: "posts", label: "Posts" },
-  { key: "spots", label: "Spots" },
-  { key: "reviews", label: "Reviews" },
-  { key: "settings", label: "Settings" },
+type Props = OwnProps | PublicProps;
+
+const OWN_ORDER: OwnProfileMainTabKey[] = [
+  "posts",
+  "reviews",
+  "liked",
+  "settings",
+  "spots",
 ];
 
-const PUBLIC_TABS: { key: PublicProfileMainTabKey; label: string }[] = [
-  { key: "posts", label: "Posts" },
-  { key: "spots", label: "Spots" },
-  { key: "reviews", label: "Reviews" },
+const PUBLIC_ORDER: PublicProfileMainTabKey[] = [
+  "posts",
+  "reviews",
+  "liked",
+  "spots",
 ];
 
-const POST_SUB: { key: PostSubTabKey; label: string }[] = [
-  { key: "published", label: "Published" },
-  { key: "liked", label: "Liked" },
-];
+function TabIcon({
+  tab,
+  selected,
+}: {
+  tab: OwnProfileMainTabKey | PublicProfileMainTabKey;
+  selected: boolean;
+}) {
+  const color = selected ? Colors.dark : "#9a9a9a";
+  const stroke = 2.2;
+  switch (tab) {
+    case "posts":
+      return <LayoutGrid size={22} color={color} strokeWidth={stroke} />;
+    case "reviews":
+      return <Star size={22} color={color} strokeWidth={stroke} />;
+    case "liked":
+      return <Heart size={22} color={color} strokeWidth={stroke} />;
+    case "settings":
+      return <Settings size={22} color={color} strokeWidth={stroke} />;
+    case "spots":
+      return <MapPin size={22} color={color} strokeWidth={stroke} />;
+    default:
+      return null;
+  }
+}
 
 export default function ProfileTabsBar(props: Props) {
-  const { variant, mainTab, onChangeMain, postSub = "published", onChangePostSub } =
-    props;
+  const { variant, mainTab, onChangeMain } = props;
+  const keys =
+    variant === "own"
+      ? (OWN_ORDER as (OwnProfileMainTabKey | PublicProfileMainTabKey)[])
+      : (PUBLIC_ORDER as (OwnProfileMainTabKey | PublicProfileMainTabKey)[]);
 
   return (
     <View style={styles.wrapper}>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.mainScroll}
-      >
-        {variant === "own"
-          ? OWN_TABS.map((t) => {
-              const selected = mainTab === t.key;
-              return (
-                <Pressable
-                  key={t.key}
-                  onPress={() => onChangeMain(t.key)}
-                  style={[styles.tab, selected && styles.tabSelected]}
-                >
-                  <Text
-                    style={[styles.tabText, selected && styles.tabTextSelected]}
-                  >
-                    {t.label}
-                  </Text>
-                </Pressable>
-              );
-            })
-          : PUBLIC_TABS.map((t) => {
-              const selected = mainTab === t.key;
-              return (
-                <Pressable
-                  key={t.key}
-                  onPress={() => onChangeMain(t.key)}
-                  style={[styles.tab, selected && styles.tabSelected]}
-                >
-                  <Text
-                    style={[styles.tabText, selected && styles.tabTextSelected]}
-                  >
-                    {t.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-      </ScrollView>
-
-      {mainTab === "posts" && onChangePostSub ? (
-        <View style={styles.subRow}>
-          {POST_SUB.map((s) => {
-            const selected = postSub === s.key;
-            return (
-              <Pressable
-                key={s.key}
-                onPress={() => onChangePostSub(s.key)}
-                style={[styles.subTab, selected && styles.subTabSelected]}
+      <View style={styles.dividerTop} />
+      <View style={styles.row}>
+        {keys.map((key) => {
+          const selected = mainTab === key;
+          return (
+            <Pressable
+              key={key}
+              accessibilityRole="button"
+              onPress={() =>
+                variant === "own"
+                  ? (onChangeMain as (t: OwnProfileMainTabKey) => void)(
+                      key as OwnProfileMainTabKey,
+                    )
+                  : (onChangeMain as (t: PublicProfileMainTabKey) => void)(
+                      key as PublicProfileMainTabKey,
+                    )
+              }
+              style={[styles.cell, selected && styles.cellSelected]}
+            >
+              <TabIcon tab={key} selected={selected} />
+              <Text
+                style={[styles.label, selected && styles.labelSelected]}
+                numberOfLines={1}
               >
-                <Text
-                  style={[
-                    styles.subTabText,
-                    selected && styles.subTabTextSelected,
-                  ]}
-                >
-                  {s.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      ) : null}
+                {key === "posts"
+                  ? "Posts"
+                  : key === "reviews"
+                    ? "Reviews"
+                    : key === "liked"
+                      ? "Liked"
+                      : key === "settings"
+                        ? "Settings"
+                        : "Spots"}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <View style={styles.dividerBottom} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   wrapper: {
-    marginTop: 20,
-    gap: 12,
     alignSelf: "stretch",
+    marginTop: 14,
   },
-  mainScroll: {
-    flexGrow: 1,
-    gap: 8,
-    paddingVertical: 2,
+  dividerTop: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "#e2e2e2",
   },
-  tab: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#ebebeb",
-    marginRight: 8,
-  },
-  tabSelected: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
-  },
-  tabText: {
-    fontFamily: Fonts.instrument.semiBold,
-    fontSize: 14,
-    color: Colors.dark,
-  },
-  tabTextSelected: {
-    color: "#fff",
-  },
-  subRow: {
+  row: {
     flexDirection: "row",
-    gap: 8,
-    justifyContent: "center",
-  },
-  subTab: {
-    paddingHorizontal: 14,
+    alignItems: "stretch",
+    justifyContent: "space-between",
     paddingVertical: 8,
-    borderRadius: 12,
-    backgroundColor: "#f3f3f3",
+    gap: 4,
   },
-  subTabSelected: {
-    backgroundColor: "#e8f0ff",
+  cell: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingVertical: 6,
+    borderBottomWidth: 2,
+    borderBottomColor: "transparent",
+    minWidth: 0,
   },
-  subTabText: {
+  cellSelected: {
+    borderBottomColor: Colors.dark,
+  },
+  label: {
     fontFamily: Fonts.instrument.medium,
-    fontSize: 13,
-    color: "#666",
+    fontSize: 10,
+    color: "#9a9a9a",
   },
-  subTabTextSelected: {
-    color: Colors.primary,
+  labelSelected: {
+    color: Colors.dark,
     fontFamily: Fonts.instrument.semiBold,
+  },
+  dividerBottom: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "#e2e2e2",
   },
 });

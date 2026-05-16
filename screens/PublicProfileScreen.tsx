@@ -16,11 +16,10 @@ import {
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { ArrowLeft, Lock, MapPin, Star } from "lucide-react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import FeedPostCard from "../components/FeedPostCard";
+import { SafeAreaView } from "react-native-safe-area-context";
+import ProfilePostGridTile from "../components/ProfilePostGridTile";
 import ProfileStat from "../components/ProfileStat";
 import ProfileTabsBar, {
-  type PostSubTabKey,
   type PublicProfileMainTabKey,
 } from "../components/ProfileTabsBar";
 import { SkeletonBox, SkeletonCard } from "../components/Skeleton";
@@ -37,14 +36,17 @@ import {
   fetchFeedLikedPostsByUser,
   type FeedPost,
 } from "../utils/feedApi";
-import { openSpotFromRootStack } from "../utils/openSpotFromAnyTab";
+import { getSpotTitle } from "../utils/getSpotTitle";
+import { openSpotViewerFromRoot } from "../utils/openSpotFromAnyTab";
 import {
   fetchReviewsByUserId,
   fetchSpotById,
   spotReviewPhotoUrls,
   spotReviewPrimaryId,
+  spotReviewSpotLabel,
   type SpotReview,
 } from "../utils/spotsApi";
+import { createDirectConversation } from "../utils/chatApi";
 
 type ProfileListRow = FeedPost | StudySpot | SpotReview;
 
@@ -111,26 +113,9 @@ function getResponseMessage(data: unknown, fallback: string) {
   return fallback;
 }
 
-function tabHintText(
-  mainTab: PublicProfileMainTabKey,
-  postSub: PostSubTabKey,
-): string {
-  if (mainTab === "posts") {
-    return postSub === "published"
-      ? "Posts they've shared."
-      : "Posts they've liked.";
-  }
-  if (mainTab === "spots") return "Study spots they've added.";
-  return "Reviews they've written.";
-}
-
-function tabEmptyLabel(
-  mainTab: PublicProfileMainTabKey,
-  postSub: PostSubTabKey,
-): string {
-  if (mainTab === "posts") {
-    return postSub === "published" ? "No posts yet." : "No liked posts yet.";
-  }
+function tabEmptyLabel(mainTab: PublicProfileMainTabKey): string {
+  if (mainTab === "posts") return "No posts yet.";
+  if (mainTab === "liked") return "No liked posts yet.";
   if (mainTab === "spots") return "No spots listed yet.";
   return "No reviews yet.";
 }
@@ -139,7 +124,6 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
   const rootNavigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { token } = useAuth();
-  const insets = useSafeAreaInsets();
   const { userId } = route.params;
   const { spots } = useSpots();
 
@@ -148,11 +132,11 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [messageLoading, setMessageLoading] = useState(false);
   const [error, setError] = useState("");
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
 
   const [mainTab, setMainTab] = useState<PublicProfileMainTabKey>("posts");
-  const [postSub, setPostSub] = useState<PostSubTabKey>("published");
 
   const [publishedPosts, setPublishedPosts] = useState<FeedPost[]>([]);
   const [publishedCursor, setPublishedCursor] = useState<string | null>(null);
@@ -338,10 +322,52 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
     }
   }
 
+  async function openDirectChat() {
+    if (!token) {
+      Alert.alert("Sign in", "Sign in to send messages.");
+      return;
+    }
+    if (relationship === "self") return;
+
+    setMessageLoading(true);
+    try {
+      const result = await createDirectConversation(token, userId);
+      const peer =
+        result.other_user ??
+        (user
+          ? {
+              id: user.id,
+              username: user.username ?? null,
+              first_name: user.first_name ?? null,
+              last_name: user.last_name ?? null,
+              profile_photo: user.profile_photo ?? null,
+            }
+          : undefined);
+
+      rootNavigation.navigate("MainTabs", {
+        screen: "Inbox",
+        params: {
+          screen: "ChatThread",
+          params: {
+            conversationId: result.conversation.id,
+            peer,
+          },
+        },
+      });
+    } catch (e) {
+      Alert.alert(
+        "Message",
+        e instanceof Error ? e.message : "Could not open chat.",
+      );
+    } finally {
+      setMessageLoading(false);
+    }
+  }
+
   const loadMorePosts = useCallback(async () => {
     if (!unlocked || !token || loadingMoreRef.current) return;
 
-    if (postSub === "published") {
+    if (mainTab === "posts") {
       if (!publishedCursor) return;
       loadingMoreRef.current = true;
       setPostsTailLoading(true);
@@ -361,7 +387,7 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
         loadingMoreRef.current = false;
         setPostsTailLoading(false);
       }
-    } else {
+    } else if (mainTab === "liked") {
       if (!likedCursor) return;
       loadingMoreRef.current = true;
       setPostsTailLoading(true);
@@ -386,7 +412,7 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
     unlocked,
     token,
     userId,
-    postSub,
+    mainTab,
     publishedCursor,
     likedCursor,
     enrichPost,
@@ -401,49 +427,24 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
     let cancelled = false;
 
     async function load() {
-      setPublishedPosts([]);
-      setPublishedCursor(null);
-      setLikedPosts([]);
-      setLikedCursor(null);
-
-      if (postSub === "published") {
-        setPublishedLoading(true);
-        setPublishedError(null);
-        try {
-          const page = await fetchFeedPostsByUser(authToken, userId, {
-            limit: 20,
-          });
-          if (cancelled) return;
-          setPublishedPosts(
-            page.posts.map((p) => enrichPost(p)!).filter(Boolean),
+      setPublishedLoading(true);
+      setPublishedError(null);
+      try {
+        const page = await fetchFeedPostsByUser(authToken, userId, {
+          limit: 20,
+        });
+        if (cancelled) return;
+        setPublishedPosts(
+          page.posts.map((p) => enrichPost(p)!).filter(Boolean),
+        );
+        setPublishedCursor(page.next_cursor);
+      } catch (e) {
+        if (!cancelled)
+          setPublishedError(
+            e instanceof Error ? e.message : "Could not load posts.",
           );
-          setPublishedCursor(page.next_cursor);
-        } catch (e) {
-          if (!cancelled)
-            setPublishedError(
-              e instanceof Error ? e.message : "Could not load posts.",
-            );
-        } finally {
-          if (!cancelled) setPublishedLoading(false);
-        }
-      } else {
-        setLikedLoading(true);
-        setLikedError(null);
-        try {
-          const page = await fetchFeedLikedPostsByUser(authToken, userId, {
-            limit: 20,
-          });
-          if (cancelled) return;
-          setLikedPosts(page.posts.map((p) => enrichPost(p)!).filter(Boolean));
-          setLikedCursor(page.next_cursor);
-        } catch (e) {
-          if (!cancelled)
-            setLikedError(
-              e instanceof Error ? e.message : "Could not load liked posts.",
-            );
-        } finally {
-          if (!cancelled) setLikedLoading(false);
-        }
+      } finally {
+        if (!cancelled) setPublishedLoading(false);
       }
     }
 
@@ -452,16 +453,42 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [
-    mainTab,
-    postSub,
-    unlocked,
-    token,
-    userId,
-    user?.id,
-    loading,
-    enrichPost,
-  ]);
+  }, [mainTab, unlocked, token, userId, user?.id, loading, enrichPost]);
+
+  useEffect(() => {
+    if (mainTab !== "liked" || !unlocked || !token || !user?.id || loading)
+      return;
+
+    const authToken = token;
+
+    let cancelled = false;
+
+    async function load() {
+      setLikedLoading(true);
+      setLikedError(null);
+      try {
+        const page = await fetchFeedLikedPostsByUser(authToken, userId, {
+          limit: 20,
+        });
+        if (cancelled) return;
+        setLikedPosts(page.posts.map((p) => enrichPost(p)!).filter(Boolean));
+        setLikedCursor(page.next_cursor);
+      } catch (e) {
+        if (!cancelled)
+          setLikedError(
+            e instanceof Error ? e.message : "Could not load liked posts.",
+          );
+      } finally {
+        if (!cancelled) setLikedLoading(false);
+      }
+    }
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mainTab, unlocked, token, userId, user?.id, loading, enrichPost]);
 
   useEffect(() => {
     if (!unlocked || !userId || mainTab !== "reviews" || loading) return;
@@ -489,16 +516,14 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
 
   const listData = useMemo(() => {
     if (!unlocked) return [];
-    if (mainTab === "posts") {
-      return postSub === "published" ? publishedPosts : likedPosts;
-    }
+    if (mainTab === "posts") return publishedPosts;
+    if (mainTab === "liked") return likedPosts;
     if (mainTab === "spots") return userSpots;
     if (mainTab === "reviews") return reviewsList;
     return [];
   }, [
     unlocked,
     mainTab,
-    postSub,
     publishedPosts,
     likedPosts,
     userSpots,
@@ -507,21 +532,21 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
 
   const listLoading =
     mainTab === "posts"
-      ? postSub === "published"
-        ? publishedLoading
-        : likedLoading
-      : mainTab === "reviews"
-        ? reviewsLoading
-        : false;
+      ? publishedLoading
+      : mainTab === "liked"
+        ? likedLoading
+        : mainTab === "reviews"
+          ? reviewsLoading
+          : false;
 
   const listError =
     mainTab === "posts"
-      ? postSub === "published"
-        ? publishedError
-        : likedError
-      : mainTab === "reviews"
-        ? reviewsError
-        : null;
+      ? publishedError
+      : mainTab === "liked"
+        ? likedError
+        : mainTab === "reviews"
+          ? reviewsError
+          : null;
 
   const primaryAction =
     relationship === "friends"
@@ -544,23 +569,21 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
 
     try {
       if (mainTab === "posts") {
-        if (postSub === "published") {
-          setPublishedLoading(true);
-          const page = await fetchFeedPostsByUser(authTok, userId, {
-            limit: 20,
-          });
-          setPublishedPosts(
-            page.posts.map((p) => enrichPost(p)!).filter(Boolean),
-          );
-          setPublishedCursor(page.next_cursor);
-        } else {
-          setLikedLoading(true);
-          const page = await fetchFeedLikedPostsByUser(authTok, userId, {
-            limit: 20,
-          });
-          setLikedPosts(page.posts.map((p) => enrichPost(p)!).filter(Boolean));
-          setLikedCursor(page.next_cursor);
-        }
+        setPublishedLoading(true);
+        const page = await fetchFeedPostsByUser(authTok, userId, {
+          limit: 20,
+        });
+        setPublishedPosts(
+          page.posts.map((p) => enrichPost(p)!).filter(Boolean),
+        );
+        setPublishedCursor(page.next_cursor);
+      } else if (mainTab === "liked") {
+        setLikedLoading(true);
+        const page = await fetchFeedLikedPostsByUser(authTok, userId, {
+          limit: 20,
+        });
+        setLikedPosts(page.posts.map((p) => enrichPost(p)!).filter(Boolean));
+        setLikedCursor(page.next_cursor);
       } else if (mainTab === "reviews") {
         setReviewsLoading(true);
         const r = await fetchReviewsByUserId(userId, { token });
@@ -575,15 +598,9 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
     }
   }
 
-  function spotTitle(s: StudySpot): string {
-    const title = typeof s.title === "string" ? s.title.trim() : "";
-    const name = typeof s.name === "string" ? s.name.trim() : "";
-    return title || name || "Untitled spot";
-  }
-
   const openSpot = useCallback(
     (spot: StudySpot) => {
-      openSpotFromRootStack(rootNavigation, spot);
+      openSpotViewerFromRoot(rootNavigation, spot);
     },
     [rootNavigation],
   );
@@ -604,7 +621,7 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
 
       try {
         const fetched = await fetchSpotById(sid);
-        if (fetched) openSpotFromRootStack(rootNavigation, fetched);
+        if (fetched) openSpotViewerFromRoot(rootNavigation, fetched);
         else Alert.alert("Unavailable", "Could not load that spot.");
       } catch (e) {
         Alert.alert(
@@ -634,7 +651,7 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
       )}
       <View style={styles.spotBody}>
         <Text style={styles.spotTitle} numberOfLines={2}>
-          {spotTitle(item)}
+          {getSpotTitle(item)}
         </Text>
         {typeof item.address === "string" && !!item.address.trim() ? (
           <Text style={styles.spotSub} numberOfLines={2}>
@@ -646,11 +663,7 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
   );
 
   const renderReviewRow = ({ item }: { item: SpotReview }) => {
-    const rawTitle = (item as { spot_title?: unknown }).spot_title;
-    const spotLabel =
-      typeof rawTitle === "string" && rawTitle.trim()
-        ? rawTitle.trim()
-        : "Study spot";
+    const spotLabel = spotReviewSpotLabel(item);
 
     const photos = spotReviewPhotoUrls(item);
     const rating =
@@ -697,8 +710,18 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
     );
   };
 
+  const openPostDetail = useCallback(
+    (post: FeedPost) => {
+      rootNavigation.navigate("FeedPostDetail", { post });
+    },
+    [rootNavigation],
+  );
+
+  const isGridTab = unlocked && (mainTab === "posts" || mainTab === "liked");
+
   function keyExtractor(item: ProfileListRow, index: number): string {
-    if (mainTab === "posts") return (item as FeedPost).id;
+    if (mainTab === "posts" || mainTab === "liked")
+      return (item as FeedPost).id;
     if (mainTab === "spots") return (item as StudySpot).id ?? `spot-${index}`;
     const r = item as SpotReview;
     const rid = spotReviewPrimaryId(r) ?? `rev-${index}`;
@@ -708,12 +731,11 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
   function renderItem({ item }: { item: FeedPost | StudySpot | SpotReview }) {
     if (!unlocked) return null;
 
-    if (mainTab === "posts") {
+    if (mainTab === "posts" || mainTab === "liked") {
       return (
-        <FeedPostCard
+        <ProfilePostGridTile
           post={item as FeedPost}
-          token={token}
-          currentUserId={undefined}
+          onPress={() => openPostDetail(item as FeedPost)}
         />
       );
     }
@@ -724,7 +746,7 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
   const listHeaderEl =
     loading || !user ? null : (
       <>
-        <View style={styles.heroCard}>
+        <View style={styles.heroRow}>
           {avatarUri && !avatarLoadFailed ? (
             <Image
               source={{ uri: avatarUri }}
@@ -745,57 +767,71 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
             </View>
           )}
 
-          <Text style={styles.name}>{displayName}</Text>
-          {!!user.username && (
-            <Text style={styles.username}>@{user.username}</Text>
-          )}
-
-          {!!primaryAction && (
-            <TouchableOpacity
-              activeOpacity={0.8}
-              disabled={actionLoading}
-              onPress={() => void sendProfileAction(primaryAction.next)}
-              style={[
-                styles.followButton,
-                primaryAction.muted && styles.followButtonMuted,
-                actionLoading && styles.disabledButton,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.followButtonText,
-                  primaryAction.muted && styles.followButtonMutedText,
-                ]}
-              >
-                {primaryAction.label}
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        <View style={styles.statsContainer}>
-          {stats.map((stat) => (
-            <ProfileStat
-              key={stat.label}
-              label={stat.label}
-              value={stat.value}
-            />
-          ))}
+          <View style={styles.heroMain}>
+            <Text style={styles.name} numberOfLines={2}>
+              {displayName}
+            </Text>
+            {!!user.username && (
+              <Text style={styles.username}>@{user.username}</Text>
+            )}
+            <View style={styles.statsRow}>
+              {stats.map((stat) => (
+                <View key={stat.label} style={styles.statCell}>
+                  <ProfileStat label={stat.label} value={stat.value} />
+                </View>
+              ))}
+            </View>
+          </View>
         </View>
 
         {!!user.bio && <Text style={styles.bio}>{user.bio}</Text>}
 
-        <View style={styles.infoCard}>
-          {!!user.school && (
-            <Text style={styles.infoText}>School: {user.school}</Text>
+        <View style={styles.actionButtonsRow}>
+          {!!primaryAction ? (
+            <TouchableOpacity
+              activeOpacity={0.85}
+              disabled={actionLoading}
+              onPress={() => void sendProfileAction(primaryAction.next)}
+              style={[
+                styles.actionBtn,
+                primaryAction.muted
+                  ? styles.actionBtnMuted
+                  : styles.actionBtnPrimary,
+                actionLoading && styles.disabledButton,
+              ]}
+            >
+              <Text
+                style={
+                  primaryAction.muted
+                    ? styles.actionBtnTextMuted
+                    : styles.actionBtnTextPrimary
+                }
+              >
+                {primaryAction.label}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.actionBtnSpacer} />
           )}
-          {!!user.field_of_study && (
-            <Text style={styles.infoText}>Field: {user.field_of_study}</Text>
-          )}
-          {!!(user.city || user.country) && (
-            <Text style={styles.infoText}>
-              Location: {[user.city, user.country].filter(Boolean).join(", ")}
-            </Text>
+          {relationship !== "self" ? (
+            <TouchableOpacity
+              activeOpacity={0.85}
+              disabled={messageLoading}
+              style={[
+                styles.actionBtn,
+                styles.actionBtnMuted,
+                messageLoading && styles.disabledButton,
+              ]}
+              onPress={() => void openDirectChat()}
+            >
+              {messageLoading ? (
+                <ActivityIndicator color={Colors.dark} size="small" />
+              ) : (
+                <Text style={styles.actionBtnTextMuted}>Message</Text>
+              )}
+            </TouchableOpacity>
+          ) : (
+            <View style={[styles.actionBtn, styles.actionBtnSpacer]} />
           )}
         </View>
 
@@ -803,10 +839,7 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
           variant="public"
           mainTab={mainTab}
           onChangeMain={setMainTab}
-          postSub={postSub}
-          onChangePostSub={setPostSub}
         />
-        <Text style={styles.tabHint}>{tabHintText(mainTab, postSub)}</Text>
         {!unlocked ? (
           <View style={styles.lockBanner}>
             <Lock size={20} color="#666" />
@@ -820,137 +853,178 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
     );
 
   return (
-    <View style={styles.container}>
-      <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-        <TouchableOpacity
-          activeOpacity={0.7}
-          onPress={() => navigation.goBack()}
-          style={styles.iconButton}
-        >
-          <ArrowLeft size={22} color={Colors.dark} strokeWidth={2.2} />
-        </TouchableOpacity>
+    <SafeAreaView style={styles.safeArea} edges={["top"]}>
+      <View style={styles.container}>
+        <View style={[styles.topBar, { paddingTop: 8 }]}>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => navigation.goBack()}
+            style={styles.iconButton}
+          >
+            <ArrowLeft size={22} color={Colors.dark} strokeWidth={2.2} />
+          </TouchableOpacity>
+          {!loading && user ? (
+            <Text style={styles.topBarTitle} numberOfLines={1}>
+              {user.username?.trim() ? `@${user.username.trim()}` : displayName}
+            </Text>
+          ) : (
+            <Text style={styles.topBarTitle} numberOfLines={1}>
+              {" "}
+            </Text>
+          )}
+          <View style={[styles.iconButton, styles.iconButtonPlaceholder]} />
+        </View>
+
+        {loading && (
+          <View style={styles.scroll}>
+            <View style={styles.heroCard}>
+              <SkeletonBox width={96} height={96} radius={48} />
+              <SkeletonBox
+                width={170}
+                height={24}
+                radius={12}
+                style={{ marginTop: 16 }}
+              />
+              <SkeletonBox
+                width={110}
+                height={14}
+                radius={7}
+                style={{ marginTop: 8 }}
+              />
+              <SkeletonBox
+                width={128}
+                height={41}
+                radius={14}
+                style={{ marginTop: 18 }}
+              />
+            </View>
+            <View style={styles.statsContainer}>
+              {[0, 1, 2].map((item) => (
+                <View key={item} style={styles.statSkeleton}>
+                  <SkeletonBox width={42} height={20} radius={10} />
+                  <SkeletonBox
+                    width={70}
+                    height={12}
+                    radius={6}
+                    style={{ marginTop: 8 }}
+                  />
+                </View>
+              ))}
+            </View>
+            <SkeletonBox
+              width="88%"
+              height={15}
+              radius={8}
+              style={{ alignSelf: "center", marginTop: 24 }}
+            />
+            <SkeletonCard style={styles.infoCard}>
+              <SkeletonBox width="65%" height={14} radius={7} />
+              <SkeletonBox width="56%" height={14} radius={7} />
+              <SkeletonBox width="72%" height={14} radius={7} />
+            </SkeletonCard>
+            <SkeletonBox
+              width="100%"
+              height={44}
+              radius={22}
+              style={{ marginTop: 24 }}
+            />
+          </View>
+        )}
+
+        {!loading && !!error && (
+          <View style={styles.stateCard}>
+            <Text style={styles.emptyTitle}>Could not load profile</Text>
+            <Text style={styles.emptyText}>{error}</Text>
+          </View>
+        )}
+
+        {!loading && !error && user && (
+          <FlatList<ProfileListRow>
+            style={styles.profileList}
+            key={isGridTab ? "pub-grid" : "pub-list"}
+            numColumns={isGridTab ? 3 : 1}
+            data={(unlocked ? listData : []) as ProfileListRow[]}
+            keyExtractor={(item, index) => keyExtractor(item, index)}
+            renderItem={(args) => renderItem(args as never)}
+            columnWrapperStyle={isGridTab ? styles.gridColumnWrap : undefined}
+            ListHeaderComponent={
+              <>
+                <View style={styles.headerBottomPad}>{listHeaderEl}</View>
+              </>
+            }
+            ListFooterComponent={
+              unlocked &&
+              (mainTab === "posts" || mainTab === "liked") &&
+              postsTailLoading ? (
+                <ActivityIndicator style={styles.footerSpinner} />
+              ) : null
+            }
+            ItemSeparatorComponent={
+              isGridTab ? undefined : () => <View style={styles.sep} />
+            }
+            onEndReachedThreshold={0.35}
+            onEndReached={() => void loadMorePosts()}
+            contentContainerStyle={styles.flatContent}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={async () => {
+                  await fetchProfile(true);
+                  await reloadTabDataWhileRefreshingProfile();
+                }}
+                tintColor={Colors.primary}
+              />
+            }
+            ListEmptyComponent={
+              !unlocked ? null : listLoading ? (
+                <ActivityIndicator style={styles.emptySpinner} />
+              ) : listError ? (
+                <Text style={styles.inlineError}>{listError}</Text>
+              ) : (
+                <Text style={styles.listEmptyMuted}>
+                  {tabEmptyLabel(mainTab)}
+                </Text>
+              )
+            }
+          />
+        )}
       </View>
-
-      {loading && (
-        <View style={styles.scroll}>
-          <View style={styles.heroCard}>
-            <SkeletonBox width={96} height={96} radius={48} />
-            <SkeletonBox
-              width={170}
-              height={24}
-              radius={12}
-              style={{ marginTop: 16 }}
-            />
-            <SkeletonBox
-              width={110}
-              height={14}
-              radius={7}
-              style={{ marginTop: 8 }}
-            />
-            <SkeletonBox
-              width={128}
-              height={41}
-              radius={14}
-              style={{ marginTop: 18 }}
-            />
-          </View>
-          <View style={styles.statsContainer}>
-            {[0, 1, 2].map((item) => (
-              <View key={item} style={styles.statSkeleton}>
-                <SkeletonBox width={42} height={20} radius={10} />
-                <SkeletonBox
-                  width={70}
-                  height={12}
-                  radius={6}
-                  style={{ marginTop: 8 }}
-                />
-              </View>
-            ))}
-          </View>
-          <SkeletonBox
-            width="88%"
-            height={15}
-            radius={8}
-            style={{ alignSelf: "center", marginTop: 24 }}
-          />
-          <SkeletonCard style={styles.infoCard}>
-            <SkeletonBox width="65%" height={14} radius={7} />
-            <SkeletonBox width="56%" height={14} radius={7} />
-            <SkeletonBox width="72%" height={14} radius={7} />
-          </SkeletonCard>
-          <SkeletonBox
-            width="100%"
-            height={44}
-            radius={22}
-            style={{ marginTop: 24 }}
-          />
-        </View>
-      )}
-
-      {!loading && !!error && (
-        <View style={styles.stateCard}>
-          <Text style={styles.emptyTitle}>Could not load profile</Text>
-          <Text style={styles.emptyText}>{error}</Text>
-        </View>
-      )}
-
-      {!loading && !error && user && (
-        <FlatList<ProfileListRow>
-          data={(unlocked ? listData : []) as ProfileListRow[]}
-          keyExtractor={(item, index) => keyExtractor(item, index)}
-          renderItem={(args) => renderItem(args as never)}
-          ListHeaderComponent={
-            <>
-              <View style={styles.headerBottomPad}>{listHeaderEl}</View>
-            </>
-          }
-          ListFooterComponent={
-            unlocked && mainTab === "posts" && postsTailLoading ? (
-              <ActivityIndicator style={styles.footerSpinner} />
-            ) : null
-          }
-          ItemSeparatorComponent={() => <View style={styles.sep} />}
-          onEndReachedThreshold={0.35}
-          onEndReached={() => void loadMorePosts()}
-          contentContainerStyle={styles.flatContent}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={async () => {
-                await fetchProfile(true);
-                await reloadTabDataWhileRefreshingProfile();
-              }}
-              tintColor={Colors.primary}
-            />
-          }
-          ListEmptyComponent={
-            !unlocked ? null : listLoading ? (
-              <ActivityIndicator style={styles.emptySpinner} />
-            ) : listError ? (
-              <Text style={styles.inlineError}>{listError}</Text>
-            ) : (
-              <Text style={styles.listEmptyMuted}>
-                {tabEmptyLabel(mainTab, postSub)}
-              </Text>
-            )
-          }
-        />
-      )}
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: Colors.light,
+  },
   container: {
     flex: 1,
     backgroundColor: Colors.light,
   },
+  profileList: {
+    flex: 1,
+  },
   topBar: {
-    paddingHorizontal: 20,
-    paddingBottom: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingBottom: 8,
     zIndex: 2,
     position: "relative",
+  },
+  topBarTitle: {
+    flex: 1,
+    textAlign: "center",
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 16,
+    color: Colors.dark,
+    marginHorizontal: 8,
+  },
+  iconButtonPlaceholder: {
+    opacity: 0,
   },
   iconButton: {
     alignItems: "center",
@@ -965,66 +1039,98 @@ const styles = StyleSheet.create({
     paddingTop: 4,
   },
   scroll: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingBottom: 40,
   },
   heroCard: {
     alignItems: "center",
     paddingTop: 8,
   },
+  heroRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 16,
+  },
+  heroMain: {
+    flex: 1,
+    minWidth: 0,
+    paddingTop: 4,
+  },
   avatarImage: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    marginBottom: 16,
+    width: 92,
+    height: 92,
+    borderRadius: 46,
   },
   avatarFallback: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
+    width: 92,
+    height: 92,
+    borderRadius: 46,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 16,
   },
   avatarInitials: {
     color: "#fff",
     fontFamily: Fonts.gabarito.bold,
-    fontSize: 31,
+    fontSize: 30,
   },
   name: {
     color: Colors.dark,
     fontFamily: Fonts.gabarito.bold,
-    fontSize: 25,
-    textAlign: "center",
+    fontSize: 22,
+    textAlign: "left",
   },
   username: {
     color: Colors.primary,
     fontFamily: Fonts.instrument.medium,
     fontSize: 14,
     marginTop: 4,
+    textAlign: "left",
   },
-  followButton: {
-    backgroundColor: Colors.primary,
-    borderRadius: 14,
-    marginTop: 18,
-    minWidth: 128,
-    paddingHorizontal: 22,
-    paddingVertical: 11,
+  statsRow: {
+    flexDirection: "row",
+    marginTop: 12,
+    width: "100%",
+    justifyContent: "space-between",
+    gap: 6,
   },
-  followButtonMuted: {
-    backgroundColor: "#fff",
+  statCell: {
+    flex: 1,
+    minWidth: 0,
   },
   disabledButton: {
     opacity: 0.6,
   },
-  followButtonText: {
-    color: "#fff",
-    fontFamily: Fonts.instrument.semiBold,
-    fontSize: 15,
-    textAlign: "center",
+  actionButtonsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 14,
+    marginBottom: 4,
   },
-  followButtonMutedText: {
+  actionBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionBtnMuted: {
+    backgroundColor: "#ececec",
+  },
+  actionBtnPrimary: {
+    backgroundColor: Colors.primary,
+  },
+  actionBtnTextMuted: {
+    fontFamily: Fonts.instrument.semiBold,
+    fontSize: 14,
     color: Colors.dark,
+  },
+  actionBtnTextPrimary: {
+    fontFamily: Fonts.instrument.semiBold,
+    fontSize: 14,
+    color: "#fff",
+  },
+  actionBtnSpacer: {
+    flex: 1,
   },
   statsContainer: {
     flexDirection: "row",
@@ -1038,17 +1144,10 @@ const styles = StyleSheet.create({
   bio: {
     color: "#555",
     fontFamily: Fonts.instrument.regular,
-    fontSize: 15,
-    lineHeight: 21,
-    marginTop: 22,
-    textAlign: "center",
-  },
-  tabHint: {
-    marginTop: 6,
-    textAlign: "center",
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 13,
-    color: "#888",
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 14,
+    textAlign: "left",
   },
   lockBanner: {
     marginTop: 16,
@@ -1102,9 +1201,13 @@ const styles = StyleSheet.create({
   },
   flatContent: {
     flexGrow: 1,
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingBottom: 44,
     gap: 10,
+  },
+  gridColumnWrap: {
+    gap: 2,
+    marginBottom: 2,
   },
   sep: { height: 4 },
   spotCard: {

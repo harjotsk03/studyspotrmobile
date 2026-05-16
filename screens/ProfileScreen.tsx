@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -15,12 +15,11 @@ import {
 import * as ImagePicker from "expo-image-picker";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import FeedPostCard from "../components/FeedPostCard";
+import ProfilePostGridTile from "../components/ProfilePostGridTile";
 import ProfileSectionButton from "../components/ProfileSectionButton";
 import ProfileStat from "../components/ProfileStat";
 import ProfileTabsBar, {
   type OwnProfileMainTabKey,
-  type PostSubTabKey,
 } from "../components/ProfileTabsBar";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
@@ -32,25 +31,30 @@ import type {
   ProfileStackParamList,
 } from "./ProfileSectionScreen";
 import { Camera, MapPin, Share, Star, UserPlus } from "lucide-react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import {
   fetchFeedLikedPostsByUser,
   fetchFeedPostsByUser,
   type FeedPost,
 } from "../utils/feedApi";
-import { openSpotFromNestedTabNavigator } from "../utils/openSpotFromAnyTab";
+import { getSpotTitle } from "../utils/getSpotTitle";
+import { openSpotViewerFromProfileTab } from "../utils/openSpotFromAnyTab";
 import {
   fetchReviewsByUserId,
   fetchSpotById,
   spotReviewPhotoUrls,
   spotReviewPrimaryId,
+  spotReviewSpotLabel,
   type SpotReview,
 } from "../utils/spotsApi";
 
 type ProfileListRow = FeedPost | StudySpot | SpotReview;
 export default function ProfileScreen() {
-  const { profile, token, logout, refreshProfile, uploadProfilePhoto } = useAuth();
-  const navigation = useNavigation<NativeStackNavigationProp<ProfileStackParamList>>();
+  const { profile, token, logout, refreshProfile, uploadProfilePhoto } =
+    useAuth();
+  const navigation =
+    useNavigation<NativeStackNavigationProp<ProfileStackParamList>>();
   const { spots } = useSpots();
 
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
@@ -58,7 +62,6 @@ export default function ProfileScreen() {
   const [photoBusy, setPhotoBusy] = useState(false);
 
   const [mainTab, setMainTab] = useState<OwnProfileMainTabKey>("posts");
-  const [postSub, setPostSub] = useState<PostSubTabKey>("published");
 
   const [publishedPosts, setPublishedPosts] = useState<FeedPost[]>([]);
   const [publishedCursor, setPublishedCursor] = useState<string | null>(null);
@@ -119,7 +122,7 @@ export default function ProfileScreen() {
   );
 
   const stats = [
-    { label: "Spots Created", value: String(user?.spots_created_count ?? 0) },
+    { label: "Spots", value: String(user?.spots_created_count ?? 0) },
     { label: "Friends", value: String(user?.friends_count ?? 0) },
     {
       label: "Communities",
@@ -179,7 +182,9 @@ export default function ProfileScreen() {
     } catch (e) {
       setPublishedPosts([]);
       setPublishedCursor(null);
-      setPublishedError(e instanceof Error ? e.message : "Could not load posts.");
+      setPublishedError(
+        e instanceof Error ? e.message : "Could not load posts.",
+      );
     } finally {
       setPublishedRefreshing(false);
     }
@@ -190,23 +195,32 @@ export default function ProfileScreen() {
     setLikedRefreshing(true);
     setLikedError(null);
     try {
-      const page = await fetchFeedLikedPostsByUser(token, userId, { limit: 20 });
+      const page = await fetchFeedLikedPostsByUser(token, userId, {
+        limit: 20,
+      });
       setLikedPosts(page.posts.map((p) => enrichPost(p)!).filter(Boolean));
       setLikedCursor(page.next_cursor);
     } catch (e) {
       setLikedPosts([]);
       setLikedCursor(null);
-      setLikedError(e instanceof Error ? e.message : "Could not load liked posts.");
+      setLikedError(
+        e instanceof Error ? e.message : "Could not load liked posts.",
+      );
     } finally {
       setLikedRefreshing(false);
     }
   }, [token, userId, enrichPost]);
 
   const loadMorePosts = useCallback(async () => {
-    if (mainTab !== "posts" || !token || !userId || loadingMoreRef.current) {
+    if (
+      (mainTab !== "posts" && mainTab !== "liked") ||
+      !token ||
+      !userId ||
+      loadingMoreRef.current
+    ) {
       return;
     }
-    if (postSub === "published") {
+    if (mainTab === "posts") {
       if (!publishedCursor || publishedRefreshing) return;
       loadingMoreRef.current = true;
       setPostsTailLoading(true);
@@ -251,7 +265,6 @@ export default function ProfileScreen() {
     mainTab,
     token,
     userId,
-    postSub,
     publishedCursor,
     likedCursor,
     publishedRefreshing,
@@ -261,46 +274,49 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     if (!token || !userId || mainTab !== "posts") return;
-    if (postSub === "published") {
-      setPublishedPosts([]);
-      setPublishedCursor(null);
-      void (async () => {
-        setPublishedLoading(true);
-        setPublishedError(null);
-        try {
-          const page = await fetchFeedPostsByUser(token, userId, { limit: 20 });
-          setPublishedPosts(page.posts.map((p) => enrichPost(p)!).filter(Boolean));
-          setPublishedCursor(page.next_cursor);
-        } catch (e) {
-          setPublishedError(
-            e instanceof Error ? e.message : "Could not load posts.",
-          );
-        } finally {
-          setPublishedLoading(false);
-        }
-      })();
-    } else {
-      setLikedPosts([]);
-      setLikedCursor(null);
-      void (async () => {
-        setLikedLoading(true);
-        setLikedError(null);
-        try {
-          const page = await fetchFeedLikedPostsByUser(token, userId, {
-            limit: 20,
-          });
-          setLikedPosts(page.posts.map((p) => enrichPost(p)!).filter(Boolean));
-          setLikedCursor(page.next_cursor);
-        } catch (e) {
-          setLikedError(
-            e instanceof Error ? e.message : "Could not load liked posts.",
-          );
-        } finally {
-          setLikedLoading(false);
-        }
-      })();
-    }
-  }, [mainTab, postSub, token, userId, enrichPost]);
+    setPublishedPosts([]);
+    setPublishedCursor(null);
+    void (async () => {
+      setPublishedLoading(true);
+      setPublishedError(null);
+      try {
+        const page = await fetchFeedPostsByUser(token, userId, { limit: 20 });
+        setPublishedPosts(
+          page.posts.map((p) => enrichPost(p)!).filter(Boolean),
+        );
+        setPublishedCursor(page.next_cursor);
+      } catch (e) {
+        setPublishedError(
+          e instanceof Error ? e.message : "Could not load posts.",
+        );
+      } finally {
+        setPublishedLoading(false);
+      }
+    })();
+  }, [mainTab, token, userId, enrichPost]);
+
+  useEffect(() => {
+    if (!token || !userId || mainTab !== "liked") return;
+    setLikedPosts([]);
+    setLikedCursor(null);
+    void (async () => {
+      setLikedLoading(true);
+      setLikedError(null);
+      try {
+        const page = await fetchFeedLikedPostsByUser(token, userId, {
+          limit: 20,
+        });
+        setLikedPosts(page.posts.map((p) => enrichPost(p)!).filter(Boolean));
+        setLikedCursor(page.next_cursor);
+      } catch (e) {
+        setLikedError(
+          e instanceof Error ? e.message : "Could not load liked posts.",
+        );
+      } finally {
+        setLikedLoading(false);
+      }
+    })();
+  }, [mainTab, token, userId, enrichPost]);
 
   useEffect(() => {
     if (!userId || mainTab !== "reviews") return;
@@ -326,15 +342,13 @@ export default function ProfileScreen() {
   }, [mainTab, userId, token]);
 
   const listData = useMemo(() => {
-    if (mainTab === "posts") {
-      return postSub === "published" ? publishedPosts : likedPosts;
-    }
+    if (mainTab === "posts") return publishedPosts;
+    if (mainTab === "liked") return likedPosts;
     if (mainTab === "spots") return userSpots;
     if (mainTab === "reviews") return reviewsList;
     return [];
   }, [
     mainTab,
-    postSub,
     publishedPosts,
     likedPosts,
     userSpots,
@@ -343,21 +357,21 @@ export default function ProfileScreen() {
 
   const listLoading =
     mainTab === "posts"
-      ? postSub === "published"
-        ? publishedLoading || publishedRefreshing
-        : likedLoading || likedRefreshing
-      : mainTab === "reviews"
-        ? reviewsLoading
-        : false;
+      ? publishedLoading || publishedRefreshing
+      : mainTab === "liked"
+        ? likedLoading || likedRefreshing
+        : mainTab === "reviews"
+          ? reviewsLoading
+          : false;
 
   const listError =
     mainTab === "posts"
-      ? postSub === "published"
-        ? publishedError
-        : likedError
-      : mainTab === "reviews"
-        ? reviewsError
-        : null;
+      ? publishedError
+      : mainTab === "liked"
+        ? likedError
+        : mainTab === "reviews"
+          ? reviewsError
+          : null;
 
   const captureImageUri = useCallback(
     async (
@@ -443,8 +457,9 @@ export default function ProfileScreen() {
     setRefreshing(true);
     await refreshProfile();
     if (mainTab === "posts") {
-      if (postSub === "published") await refreshPublished();
-      else await refreshLiked();
+      await refreshPublished();
+    } else if (mainTab === "liked") {
+      await refreshLiked();
     } else if (mainTab === "reviews" && userId) {
       try {
         setReviewsLoading(true);
@@ -459,15 +474,18 @@ export default function ProfileScreen() {
     setRefreshing(false);
   };
 
-  function spotTitle(s: StudySpot): string {
-    const title = typeof s.title === "string" ? s.title.trim() : "";
-    const name = typeof s.name === "string" ? s.name.trim() : "";
-    return title || name || "Untitled spot";
-  }
+  const isGridTab = mainTab === "posts" || mainTab === "liked";
+
+  const openPostDetail = useCallback(
+    (post: FeedPost) => {
+      navigation.navigate("FeedPostDetail", { post });
+    },
+    [navigation],
+  );
 
   const openSpot = useCallback(
     (spot: StudySpot) => {
-      openSpotFromNestedTabNavigator(navigation, spot);
+      openSpotViewerFromProfileTab(navigation, spot);
     },
     [navigation],
   );
@@ -488,7 +506,7 @@ export default function ProfileScreen() {
 
       try {
         const fetched = await fetchSpotById(sid);
-        if (fetched) openSpotFromNestedTabNavigator(navigation, fetched);
+        if (fetched) openSpotViewerFromProfileTab(navigation, fetched);
         else Alert.alert("Unavailable", "Could not load that spot.");
       } catch (e) {
         Alert.alert(
@@ -518,7 +536,7 @@ export default function ProfileScreen() {
       )}
       <View style={styles.spotBody}>
         <Text style={styles.spotTitle} numberOfLines={2}>
-          {spotTitle(item)}
+          {getSpotTitle(item)}
         </Text>
         {typeof item.address === "string" && !!item.address.trim() ? (
           <Text style={styles.spotSub} numberOfLines={2}>
@@ -530,11 +548,7 @@ export default function ProfileScreen() {
   );
 
   const renderReviewRow = ({ item }: { item: SpotReview }) => {
-    const rawTitle = (item as { spot_title?: unknown }).spot_title;
-    const spotLabel =
-      typeof rawTitle === "string" && rawTitle.trim()
-        ? rawTitle.trim()
-        : "Study spot";
+    const spotLabel = spotReviewSpotLabel(item);
 
     const photos = spotReviewPhotoUrls(item);
     const rating =
@@ -583,7 +597,7 @@ export default function ProfileScreen() {
 
   const listHeaderEl = (
     <>
-      <View style={styles.header}>
+      <View style={styles.topActions}>
         <Pressable style={styles.headerButton}>
           <UserPlus size={20} color={Colors.dark} />
         </Pressable>
@@ -591,7 +605,8 @@ export default function ProfileScreen() {
           <Share size={20} color={Colors.dark} />
         </Pressable>
       </View>
-      <View style={styles.heroCard}>
+
+      <View style={styles.heroRow}>
         <View style={styles.avatarBlock}>
           <Pressable
             accessibilityLabel="Change profile photo"
@@ -640,51 +655,58 @@ export default function ProfileScreen() {
           </Pressable>
         </View>
 
-        <View style={styles.nameContainer}>
-          <Text style={styles.name}>
+        <View style={styles.heroMain}>
+          <Text style={styles.name} numberOfLines={2}>
             {user?.first_name || "First"} {user?.last_name || "Last"}
           </Text>
+          <Text style={user?.username ? styles.username : styles.noUsername}>
+            {user?.username ? `@${user.username}` : "No username set"}
+          </Text>
+          <View style={styles.statsRow}>
+            {stats.map((stat) => (
+              <View key={stat.label} style={styles.statCell}>
+                <ProfileStat label={stat.label} value={stat.value} />
+              </View>
+            ))}
+          </View>
         </View>
-        <Text style={user?.username ? styles.username : styles.noUsername}>
-          {user?.username ? `@${user.username}` : "No username set"}
-        </Text>
       </View>
 
-      <View style={styles.bioContainer}>
-        <View style={styles.statsContainer}>
-          {stats.map((stat, index) => (
-            <Fragment key={stat.label}>
-              {index > 0 ? <View style={styles.statsDivider} /> : null}
-              <ProfileStat label={stat.label} value={stat.value} />
-            </Fragment>
-          ))}
-        </View>
-        <Text style={styles.bio}>{user?.bio || "No bio set"}</Text>
+      <Text style={styles.bio}>{user?.bio || "No bio set"}</Text>
+
+      <View style={styles.actionButtonsRow}>
+        <TouchableOpacity
+          style={[styles.actionBtn, styles.actionBtnMuted]}
+          activeOpacity={0.85}
+          onPress={() =>
+            navigation.navigate("ProfileSection", { section: "personal" })
+          }
+        >
+          <Text style={styles.actionBtnTextMuted}>Edit profile</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.actionBtn, styles.actionBtnMuted]}
+          activeOpacity={0.85}
+          onPress={() => {}}
+        >
+          <Text style={styles.actionBtnTextMuted}>Message</Text>
+        </TouchableOpacity>
       </View>
 
       <ProfileTabsBar
         variant="own"
         mainTab={mainTab}
         onChangeMain={setMainTab}
-        postSub={postSub}
-        onChangePostSub={setPostSub}
       />
-      <Text style={styles.tabHint}>{tabHintText(mainTab, postSub)}</Text>
     </>
   );
 
   function renderItem({ item }: { item: ProfileListRow }) {
-    if (mainTab === "posts") {
+    if (mainTab === "posts" || mainTab === "liked") {
       return (
-        <FeedPostCard
+        <ProfilePostGridTile
           post={item as FeedPost}
-          token={token}
-          currentUserId={userId || null}
-          onDeleted={(pid) =>
-            postSub === "published"
-              ? setPublishedPosts((prev) => prev.filter((x) => x.id !== pid))
-              : setLikedPosts((prev) => prev.filter((x) => x.id !== pid))
-          }
+          onPress={() => openPostDetail(item as FeedPost)}
         />
       );
     }
@@ -696,72 +718,73 @@ export default function ProfileScreen() {
     return null;
   }
 
-  function keyExtractor(
-    item: ProfileListRow,
-    index: number,
-  ): string {
-    if (mainTab === "posts") return (item as FeedPost).id;
-    if (mainTab === "spots")
-      return (item as StudySpot).id ?? `spot-${index}`;
+  function keyExtractor(item: ProfileListRow, index: number): string {
+    if (mainTab === "posts" || mainTab === "liked")
+      return (item as FeedPost).id;
+    if (mainTab === "spots") return (item as StudySpot).id ?? `spot-${index}`;
     const r = item as SpotReview;
     const rid = spotReviewPrimaryId(r) ?? `rev-${index}`;
     return `${rid}_${index}`;
   }
 
   return (
-    <View style={styles.container}>
-      <FlatList<ProfileListRow>
-        data={(mainTab === "settings" ? [] : listData) as ProfileListRow[]}
-        keyExtractor={(item, index) => keyExtractor(item, index)}
-        ListHeaderComponent={listHeaderEl}
-        stickyHeaderIndices={[]}
-        renderItem={(args) =>
-          mainTab === "settings" ? null : renderItem(args as never)
-        }
-        ListFooterComponent={
-          mainTab === "posts" && postsTailLoading ? (
-            <ActivityIndicator style={styles.listFooterSpinner} />
-          ) : null
-        }
-        onEndReachedThreshold={0.35}
-        onEndReached={() => void loadMorePosts()}
-        contentContainerStyle={
-          mainTab === "settings"
-            ? [styles.flatScroll, styles.settingsScroll]
-            : styles.flatScroll
-        }
-        ItemSeparatorComponent={() => <View style={styles.sep} />}
-        refreshControl={
-          <RefreshControl
-            refreshing={
-              refreshing || publishedRefreshing || likedRefreshing
-            }
-            onRefresh={() => void handleRefresh()}
-            tintColor={Colors.primary}
-            colors={[Colors.primary]}
-          />
-        }
-        ListEmptyComponent={
-          mainTab === "settings" ? (
-            <SettingsBody
-              sectionButtons={sectionButtons}
-              onNavigateSection={(section) =>
-                navigation.navigate("ProfileSection", { section })
-              }
-              onLogout={handleLogout}
+    <SafeAreaView style={styles.safeArea} edges={["top"]}>
+      <View style={styles.container}>
+        <FlatList<ProfileListRow>
+          style={styles.profileList}
+          key={isGridTab ? "profile-grid" : "profile-list"}
+          numColumns={isGridTab ? 3 : 1}
+          data={(mainTab === "settings" ? [] : listData) as ProfileListRow[]}
+          keyExtractor={(item, index) => keyExtractor(item, index)}
+          ListHeaderComponent={listHeaderEl}
+          stickyHeaderIndices={[]}
+          renderItem={(args) =>
+            mainTab === "settings" ? null : renderItem(args as never)
+          }
+          columnWrapperStyle={isGridTab ? styles.gridColumnWrap : undefined}
+          ListFooterComponent={
+            (mainTab === "posts" || mainTab === "liked") && postsTailLoading ? (
+              <ActivityIndicator style={styles.listFooterSpinner} />
+            ) : null
+          }
+          onEndReachedThreshold={0.35}
+          onEndReached={() => void loadMorePosts()}
+          contentContainerStyle={
+            mainTab === "settings"
+              ? [styles.flatScroll, styles.settingsScroll]
+              : styles.flatScroll
+          }
+          ItemSeparatorComponent={
+            isGridTab ? undefined : () => <View style={styles.sep} />
+          }
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing || publishedRefreshing || likedRefreshing}
+              onRefresh={() => void handleRefresh()}
+              tintColor={Colors.primary}
+              colors={[Colors.primary]}
             />
-          ) : (
-            listLoading ? (
+          }
+          ListEmptyComponent={
+            mainTab === "settings" ? (
+              <SettingsBody
+                sectionButtons={sectionButtons}
+                onNavigateSection={(section) =>
+                  navigation.navigate("ProfileSection", { section })
+                }
+                onLogout={handleLogout}
+              />
+            ) : listLoading ? (
               <ActivityIndicator style={styles.emptySpinner} />
             ) : listError ? (
               <Text style={styles.inlineError}>{listError}</Text>
             ) : (
-              <Text style={styles.emptyText}>{tabEmptyLabel(mainTab, postSub)}</Text>
+              <Text style={styles.emptyText}>{tabEmptyLabel(mainTab)}</Text>
             )
-          )
-        }
-      />
-    </View>
+          }
+        />
+      </View>
+    </SafeAreaView>
   );
 }
 
@@ -770,7 +793,11 @@ function SettingsBody({
   onNavigateSection,
   onLogout,
 }: {
-  sectionButtons: Array<{ key: ProfileSectionKey; title: string; subtitle: string }>;
+  sectionButtons: Array<{
+    key: ProfileSectionKey;
+    title: string;
+    subtitle: string;
+  }>;
   onNavigateSection: (section: ProfileSectionKey) => void;
   onLogout: () => void;
 }) {
@@ -802,55 +829,63 @@ function SettingsBody({
   );
 }
 
-function tabHintText(mainTab: OwnProfileMainTabKey, postSub: PostSubTabKey) {
-  if (mainTab === "posts") {
-    return postSub === "published"
-      ? "Posts you've shared with friends."
-      : "Posts you've liked.";
-  }
-  if (mainTab === "spots") return "Study spots you've added.";
-  if (mainTab === "reviews") return "Reviews you've written.";
-  return "Manage profile details and your account.";
-}
-
-function tabEmptyLabel(
-  mainTab: OwnProfileMainTabKey,
-  postSub: PostSubTabKey,
-): string {
-  if (mainTab === "posts") {
-    return postSub === "published"
-      ? "No posts yet."
-      : "No liked posts yet.";
-  }
+function tabEmptyLabel(mainTab: OwnProfileMainTabKey): string {
+  if (mainTab === "posts") return "No posts yet.";
+  if (mainTab === "liked") return "No liked posts yet.";
   if (mainTab === "spots") return "No spots listed yet.";
   if (mainTab === "reviews") return "No reviews yet.";
   return "";
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: Colors.light,
+  },
   container: {
     flex: 1,
     backgroundColor: Colors.light,
   },
+  profileList: {
+    flex: 1,
+  },
   flatScroll: {
-    paddingTop: 60,
-    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingHorizontal: 16,
     paddingBottom: 44,
     flexGrow: 1,
     gap: 12,
+  },
+  gridColumnWrap: {
+    gap: 2,
+    marginBottom: 2,
   },
   settingsScroll: {
     flexGrow: 1,
     paddingBottom: 60,
   },
-  heroCard: {
+  topActions: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
+    marginBottom: 8,
+    paddingTop: 8,
+    paddingHorizontal: 4,
+  },
+  heroRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 16,
+  },
+  heroMain: {
+    flex: 1,
+    minWidth: 0,
+    paddingTop: 2,
   },
   avatarBlock: {
     position: "relative",
     width: 92,
     height: 92,
-    marginBottom: 16,
   },
   avatarPressable: {
     width: 92,
@@ -898,60 +933,68 @@ const styles = StyleSheet.create({
     fontSize: 30,
     color: "#fff",
   },
-  nameContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
   name: {
     fontFamily: Fonts.gabarito.bold,
-    fontSize: 24,
+    fontSize: 22,
     color: Colors.dark,
-    textAlign: "center",
+    textAlign: "left",
   },
   username: {
     marginTop: 4,
     fontFamily: Fonts.instrument.medium,
     fontSize: 14,
     color: Colors.primary,
+    textAlign: "left",
   },
   noUsername: {
     marginTop: 4,
     fontFamily: Fonts.instrument.medium,
     fontSize: 14,
     color: Colors.accent,
+    textAlign: "left",
   },
-  header: {
-    flex: 1,
+  statsRow: {
     flexDirection: "row",
+    marginTop: 12,
+    width: "100%",
     justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
+    gap: 6,
+  },
+  statCell: {
+    flex: 1,
+    minWidth: 0,
   },
   headerButton: {
     padding: 8,
   },
-  bioContainer: {
-    marginTop: 16,
-    gap: 4,
-    alignItems: "center",
-  },
-  statsContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 20,
-  },
-  statsDivider: {
-    width: StyleSheet.hairlineWidth,
-    height: 28,
-    backgroundColor: "#e5e5e5",
-  },
   bio: {
+    marginTop: 14,
     fontFamily: Fonts.instrument.regular,
     fontSize: 14,
-    color: "#777",
-    marginTop: 8,
-    textAlign: "center",
+    color: "#555",
+    lineHeight: 20,
+    textAlign: "left",
+  },
+  actionButtonsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 14,
+    marginBottom: 2,
+  },
+  actionBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionBtnMuted: {
+    backgroundColor: "#ececec",
+  },
+  actionBtnTextMuted: {
+    fontFamily: Fonts.instrument.semiBold,
+    fontSize: 14,
+    color: Colors.dark,
   },
   logoutButton: {
     marginTop: 18,
@@ -967,13 +1010,6 @@ const styles = StyleSheet.create({
   },
   sep: {
     height: 4,
-  },
-  tabHint: {
-    marginTop: 6,
-    textAlign: "center",
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 13,
-    color: "#888",
   },
   spotCard: {
     flexDirection: "row",

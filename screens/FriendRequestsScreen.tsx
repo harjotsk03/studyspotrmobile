@@ -20,7 +20,7 @@ import {
   type NotificationActor,
   type NotificationItem,
 } from "../context/NotificationsContext";
-import type { InboxStackParamList } from "./InboxScreen";
+import type { InboxStackParamList } from "../types/navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import type { RootStackParamList } from "../types/navigation";

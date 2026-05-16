@@ -23,7 +23,7 @@ import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { useAuth } from "../context/AuthContext";
 import { type StudySpot, useSpots } from "../context/SpotsContext";
-import type { SpotsStackParamList } from "./SpotDetailScreen";
+import type { SpotsStackParamList } from "../types/navigation";
 import { createSpotMultipart, updateSpotMultipart } from "../utils/spotsApi";
 import { getSpotCoordinates } from "../utils/getSpotCoordinates";
 import { getSpotTitle } from "../utils/getSpotTitle";
