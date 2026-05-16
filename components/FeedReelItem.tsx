@@ -33,11 +33,16 @@ import {
 } from "../utils/feedApi";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 
+/** Space reserved at bottom-right for the action rail (icons + labels) */
+const RAIL_RESERVED_X = 66;
+
 type Props = {
   post: FeedPost;
   /** False when another tab or a root-stack screen covers the feed */
   screenFocused: boolean;
   isActive: boolean;
+  /** User began paging scroll — fade caption/rail/chrome */
+  overlaysSubdued?: boolean;
   viewportHeight: number;
   viewportWidth: number;
   token: string | null;
@@ -52,6 +57,7 @@ export default function FeedReelItem({
   post,
   screenFocused,
   isActive,
+  overlaysSubdued = false,
   viewportHeight,
   viewportWidth,
   token,
@@ -68,7 +74,10 @@ export default function FeedReelItem({
   const [muted, setMuted] = useState(true);
   const burstScale = useRef(new Animated.Value(0)).current;
   const burstOpacity = useRef(new Animated.Value(0)).current;
+  const heartRailScale = useRef(new Animated.Value(1)).current;
   const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevPostIdRef = useRef(post.id);
+  const prevViewerLikedRef = useRef(post.viewer_has_liked);
   const videoRef = useRef<Video | null>(null);
 
   const media = post.media[0];
@@ -105,6 +114,35 @@ export default function FeedReelItem({
       setPlaying(true);
     }
   }, [isActive]);
+
+  useEffect(() => {
+    if (post.id !== prevPostIdRef.current) {
+      prevPostIdRef.current = post.id;
+      prevViewerLikedRef.current = post.viewer_has_liked;
+      heartRailScale.setValue(1);
+      return;
+    }
+
+    const liked = post.viewer_has_liked;
+    if (liked && !prevViewerLikedRef.current) {
+      heartRailScale.setValue(1);
+      Animated.sequence([
+        Animated.spring(heartRailScale, {
+          toValue: 1.22,
+          friction: 5,
+          tension: 300,
+          useNativeDriver: true,
+        }),
+        Animated.spring(heartRailScale, {
+          toValue: 1,
+          friction: 8,
+          tension: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+    prevViewerLikedRef.current = liked;
+  }, [post.id, post.viewer_has_liked, heartRailScale]);
 
   const showBurst = useCallback(() => {
     burstScale.setValue(0.6);
@@ -189,12 +227,9 @@ export default function FeedReelItem({
   const onShare = useCallback(async () => {
     try {
       const line =
-        post.caption?.trim() ||
-        "Shared from StudySpotr friends feed.";
+        post.caption?.trim() || "Shared from StudySpotr friends feed.";
       const url =
-        media?.type === "video" || media?.type === "image"
-          ? media.url
-          : "";
+        media?.type === "video" || media?.type === "image" ? media.url : "";
       await Share.share({
         message: url ? `${line}\n${url}` : line,
       });
@@ -228,15 +263,21 @@ export default function FeedReelItem({
   }, [token, isOwner, post.id, onDeleted]);
 
   const bottomPad = Math.max(insets.bottom, 12) + 8;
+  const chromeOpacity = overlaysSubdued ? 0.38 : 1;
 
   return (
-    <View style={[styles.wrap, { height: viewportHeight, width: viewportWidth }]}>
+    <View
+      style={[styles.wrap, { height: viewportHeight, width: viewportWidth }]}
+    >
       <Pressable style={styles.mediaTap} onPress={onMediaPress}>
         {media ? (
           media.type === "video" ? (
             <Video
               ref={videoRef}
-              style={[styles.mediaFill, { width: viewportWidth, height: viewportHeight }]}
+              style={[
+                styles.mediaFill,
+                { width: viewportWidth, height: viewportHeight },
+              ]}
               source={{ uri: media.url }}
               resizeMode={ResizeMode.COVER}
               isLooping
@@ -247,13 +288,19 @@ export default function FeedReelItem({
           ) : (
             <Image
               source={{ uri: media.url }}
-              style={[styles.mediaFill, { width: viewportWidth, height: viewportHeight }]}
+              style={[
+                styles.mediaFill,
+                { width: viewportWidth, height: viewportHeight },
+              ]}
               resizeMode="cover"
             />
           )
         ) : (
           <View
-            style={[styles.mediaFallback, { width: viewportWidth, height: viewportHeight }]}
+            style={[
+              styles.mediaFallback,
+              { width: viewportWidth, height: viewportHeight },
+            ]}
           >
             <Text style={styles.mediaFallbackText}>No media</Text>
           </View>
@@ -273,72 +320,90 @@ export default function FeedReelItem({
         </Animated.View>
       </Pressable>
 
-      {isOwner ? (
-        <Pressable
-          style={[styles.menuBtn, { top: insets.top + 8 }]}
-          hitSlop={8}
-          onPress={openMenu}
-        >
-          <MoreHorizontal size={26} color="#fff" strokeWidth={2.2} />
-        </Pressable>
-      ) : null}
-
-      {media?.type === "video" && playbackAllowed ? (
-        <Pressable
-          style={[styles.muteBtn, { bottom: 220 + bottomPad }]}
-          onPress={() => setMuted((m) => !m)}
-          hitSlop={12}
-        >
-          {muted ? (
-            <VolumeX size={28} color="#fff" strokeWidth={2.2} />
-          ) : (
-            <Volume2 size={28} color="#fff" strokeWidth={2.2} />
-          )}
-        </Pressable>
-      ) : null}
-
-      <View style={[styles.rightRail, { bottom: 110 + bottomPad }]}>
-        <Pressable
-          style={styles.railBtn}
-          onPress={() => void runLike(true)}
-          hitSlop={8}
-        >
-          <Heart
-            size={34}
-            color="#fff"
-            fill={post.viewer_has_liked ? "#ff2d55" : "transparent"}
-            strokeWidth={2.2}
-          />
-          <Text style={styles.railCount}>{formatCount(post.like_count)}</Text>
-        </Pressable>
-
-        <Pressable style={styles.railBtn} onPress={onOpenComments} hitSlop={8}>
-          <MessageCircle size={32} color="#fff" strokeWidth={2.2} />
-          <Text style={styles.railCount}>{formatCount(post.comments_count)}</Text>
-        </Pressable>
-
-        <Pressable style={styles.railBtn} onPress={() => void onShare()} hitSlop={8}>
-          <ShareIcon size={30} color="#fff" strokeWidth={2.2} />
-          <Text style={styles.railLabel}>Share</Text>
-        </Pressable>
-      </View>
-
-      <View style={[styles.bottomInfo, { paddingBottom: bottomPad }]}>
-        <Pressable style={styles.authorRow} onPress={openProfile}>
-          {photo ? (
-            <Image source={{ uri: photo }} style={styles.avatar} />
-          ) : (
-            <View style={[styles.avatarFb, { backgroundColor: avatarColor }]}>
-              <Text style={styles.avatarTx}>{initials}</Text>
-            </View>
-          )}
-          <Text style={styles.authorName} numberOfLines={1}>
-            {displayName}
-          </Text>
-        </Pressable>
-        {post.caption ? (
-          <Text style={styles.caption}>{post.caption}</Text>
+      <View
+        pointerEvents="box-none"
+        style={[styles.chromeLayer, { opacity: chromeOpacity }]}
+      >
+        {media?.type === "video" && playbackAllowed ? (
+          <Pressable
+            style={[styles.muteBtnTop, { top: insets.top + 52 }]}
+            onPress={() => setMuted((m) => !m)}
+            hitSlop={12}
+          >
+            {muted ? (
+              <VolumeX size={28} color="#fff" strokeWidth={2.2} />
+            ) : (
+              <Volume2 size={28} color="#fff" strokeWidth={2.2} />
+            )}
+          </Pressable>
         ) : null}
+
+        <View style={[styles.rightRail, { bottom: bottomPad }]}>
+          <Pressable
+            style={styles.railBtn}
+            onPress={() => void runLike(true)}
+            hitSlop={8}
+          >
+            <Animated.View style={{ transform: [{ scale: heartRailScale }] }}>
+              <Heart
+                size={34}
+                color={post.viewer_has_liked ? Colors.accent : "#fff"}
+                fill={post.viewer_has_liked ? Colors.accent : "transparent"}
+                strokeWidth={2.2}
+              />
+            </Animated.View>
+            <Text style={styles.railCount}>{formatCount(post.like_count)}</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.railBtn}
+            onPress={onOpenComments}
+            hitSlop={8}
+          >
+            <MessageCircle size={32} color="#fff" strokeWidth={2.2} />
+            <Text style={styles.railCount}>
+              {formatCount(post.comments_count)}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.railBtn}
+            onPress={() => void onShare()}
+            hitSlop={8}
+          >
+            <ShareIcon size={30} color="#fff" strokeWidth={2.2} />
+            <Text style={styles.railLabel}>Share</Text>
+          </Pressable>
+
+          <Pressable
+            style={[styles.railBtn, !isOwner && styles.railMenuHidden]}
+            onPress={openMenu}
+            hitSlop={8}
+            pointerEvents={isOwner ? "auto" : "none"}
+            accessibilityElementsHidden={!isOwner}
+            importantForAccessibility={isOwner ? "yes" : "no-hide-descendants"}
+          >
+            <MoreHorizontal size={30} color="#fff" strokeWidth={2.2} />
+          </Pressable>
+        </View>
+
+        <View style={[styles.bottomInfo, { paddingBottom: bottomPad }]}>
+          <Pressable style={styles.authorRow} onPress={openProfile}>
+            {photo ? (
+              <Image source={{ uri: photo }} style={styles.avatar} />
+            ) : (
+              <View style={[styles.avatarFb, { backgroundColor: avatarColor }]}>
+                <Text style={styles.avatarTx}>{initials}</Text>
+              </View>
+            )}
+            <Text style={styles.authorName} numberOfLines={1}>
+              {displayName}
+            </Text>
+          </Pressable>
+          {post.caption ? (
+            <Text style={styles.caption}>{post.caption}</Text>
+          ) : null}
+        </View>
       </View>
     </View>
   );
@@ -376,32 +441,34 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     top: "38%",
   },
-  menuBtn: {
+  chromeLayer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 10,
+    pointerEvents: "box-none",
+  },
+  muteBtnTop: {
     position: "absolute",
     right: 14,
-    zIndex: 10,
-    padding: 8,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    borderRadius: 22,
-  },
-  muteBtn: {
-    position: "absolute",
-    right: 18,
-    zIndex: 10,
+    zIndex: 11,
     padding: 8,
     backgroundColor: "rgba(0,0,0,0.35)",
     borderRadius: 22,
   },
   rightRail: {
     position: "absolute",
-    right: 12,
+    right: 10,
     alignItems: "center",
-    gap: 20,
+    gap: 14,
     zIndex: 10,
   },
   railBtn: {
     alignItems: "center",
     gap: 6,
+    minHeight: 52,
+    justifyContent: "flex-end",
+  },
+  railMenuHidden: {
+    opacity: 0,
   },
   railCount: {
     fontFamily: Fonts.gabarito.semiBold,
@@ -422,10 +489,10 @@ const styles = StyleSheet.create({
   bottomInfo: {
     position: "absolute",
     left: 0,
-    right: 72,
+    right: RAIL_RESERVED_X,
     bottom: 0,
     paddingHorizontal: 16,
-    paddingTop: 16,
+    paddingTop: 12,
     zIndex: 10,
   },
   authorRow: {

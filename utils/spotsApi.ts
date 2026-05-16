@@ -128,6 +128,31 @@ export async function fetchReviewsBySpot(spotId: string): Promise<SpotReview[]> 
   return Array.isArray(reviews) ? (reviews as SpotReview[]) : [];
 }
 
+/**
+ * Reviews left by a user (all spots). Expected API:
+ * `GET /api/v1/spots/getReviewsByUser?user_id=...` with optional `Authorization` for private fields.
+ * Confirm with backend; adjust path or response shape if your server differs.
+ */
+export async function fetchReviewsByUserId(
+  userId: string,
+  opts?: { token?: string | null },
+): Promise<SpotReview[]> {
+  const url = `${SPOTS_API_BASE}/getReviewsByUser?user_id=${encodeURIComponent(userId)}`;
+  const headers: Record<string, string> = { Accept: "application/json" };
+  const t = opts?.token?.trim();
+  if (t) headers.Authorization = `Bearer ${t}`;
+
+  const res = await fetch(url, { headers });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(apiError(data, `Failed to load user reviews (${res.status})`));
+  }
+  if (!data || typeof data !== "object") return [];
+  const o = data as Record<string, unknown>;
+  const reviews = o.reviews;
+  return Array.isArray(reviews) ? (reviews as SpotReview[]) : [];
+}
+
 /** Multipart POST createSpot: `spotData` JSON string + 1–5 `images`. */
 export async function createSpotMultipart(
   spotData: Record<string, unknown>,

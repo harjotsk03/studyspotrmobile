@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -6,7 +6,7 @@ import {
   Dimensions,
   Easing,
   FlatList,
-  KeyboardAvoidingView,
+  Keyboard,
   Modal,
   Platform,
   Pressable,
@@ -18,6 +18,8 @@ import {
   View,
   Image,
 } from "react-native";
+import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   ArrowUp,
@@ -26,11 +28,11 @@ import {
   Image as ImageIcon,
   ListFilter,
   Smile,
-  ThumbsDown,
   X,
 } from "lucide-react-native";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
+import type { RootStackParamList } from "../types/navigation";
 import { useAuth } from "../context/AuthContext";
 import {
   MAX_FEED_COMMENT_LENGTH,
@@ -38,6 +40,8 @@ import {
   deleteFeedComment,
   feedAuthorDisplayName,
   fetchFeedPostComments,
+  likeFeedComment,
+  unlikeFeedComment,
   type FeedComment,
 } from "../utils/feedApi";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
@@ -90,13 +94,52 @@ function formatCommentAge(iso: string): string {
   return `${Math.floor(sec / 604800)}w`;
 }
 
-function commentAuthorLabel(c: FeedComment): string {
-  const u = c.user;
-  if (!u) return "Member";
-  if (typeof u.username === "string" && u.username.trim()) {
-    return `@${u.username.trim()}`;
+function commentAuthorDisplayLabel(c: FeedComment): string {
+  return feedAuthorDisplayName(c.user);
+}
+
+type CommentThreadRow = {
+  comment: FeedComment;
+  depth: number;
+};
+
+/** Roots newest-first; replies under parent oldest-first (conversation flow). */
+function flattenCommentThreads(comments: FeedComment[]): CommentThreadRow[] {
+  const byId = new Map(comments.map((c) => [c.id, c]));
+  const children = new Map<string | null, FeedComment[]>();
+
+  for (const c of comments) {
+    let pid: string | null = c.parent_comment_id;
+    if (pid && !byId.has(pid)) pid = null;
+    if (!children.has(pid)) children.set(pid, []);
+    children.get(pid)!.push(c);
   }
-  return feedAuthorDisplayName(u);
+
+  const ascCreated = (a: FeedComment, b: FeedComment) =>
+    new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+  const descCreated = (a: FeedComment, b: FeedComment) =>
+    new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+
+  for (const [pid, arr] of children) {
+    arr.sort(pid === null ? descCreated : ascCreated);
+  }
+
+  const rows: CommentThreadRow[] = [];
+  function walk(parentId: string | null, depth: number) {
+    const list = children.get(parentId) ?? [];
+    for (const c of list) {
+      rows.push({ comment: c, depth });
+      walk(c.id, depth + 1);
+    }
+  }
+  walk(null, 0);
+  return rows;
+}
+
+function formatCommentLikeCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+  return String(n);
 }
 
 export default function FeedCommentsModal({
@@ -109,6 +152,8 @@ export default function FeedCommentsModal({
   onCommentsDelta,
 }: Props) {
   const insets = useSafeAreaInsets();
+  const navigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { profile } = useAuth();
   const me = profile?.userProfile;
 
@@ -118,6 +163,8 @@ export default function FeedCommentsModal({
   const [loadingMore, setLoadingMore] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [draft, setDraft] = useState("");
+  const [replyTo, setReplyTo] = useState<FeedComment | null>(null);
+  const [keyboardInset, setKeyboardInset] = useState(0);
   const loadingRef = useRef(false);
   const closingRef = useRef(false);
 
@@ -128,10 +175,35 @@ export default function FeedCommentsModal({
     setComments([]);
     setCursor(null);
     setDraft("");
+    setReplyTo(null);
     setLoading(false);
     setLoadingMore(false);
     loadingRef.current = false;
   }, []);
+
+  useEffect(() => {
+    if (!visible) {
+      setKeyboardInset(0);
+      return;
+    }
+
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const onShow = (e: { endCoordinates: { height: number } }) => {
+      setKeyboardInset(e.endCoordinates.height);
+    };
+    const onHide = () => setKeyboardInset(0);
+
+    const subShow = Keyboard.addListener(showEvent, onShow);
+    const subHide = Keyboard.addListener(hideEvent, onHide);
+    return () => {
+      subShow.remove();
+      subHide.remove();
+    };
+  }, [visible]);
 
   useEffect(() => {
     if (!visible || !postId || !token) return;
@@ -190,6 +262,63 @@ export default function FeedCommentsModal({
     }
   }, [token, postId, cursor, loadingMore]);
 
+  const threadRows = useMemo(
+    () => flattenCommentThreads(comments),
+    [comments],
+  );
+
+  const toggleCommentLike = useCallback(
+    async (c: FeedComment) => {
+      if (!token) return;
+      const was = c.viewer_has_liked;
+      const nextLiked = !was;
+      const d = nextLiked ? 1 : -1;
+      setComments((prev) =>
+        prev.map((x) =>
+          x.id === c.id
+            ? {
+                ...x,
+                viewer_has_liked: nextLiked,
+                like_count: Math.max(0, x.like_count + d),
+              }
+            : x,
+        ),
+      );
+      try {
+        const updated = nextLiked
+          ? await likeFeedComment(token, c.id)
+          : await unlikeFeedComment(token, c.id);
+        if (updated) {
+          setComments((prev) =>
+            prev.map((x) =>
+              x.id === c.id
+                ? {
+                    ...x,
+                    like_count: updated.like_count,
+                    viewer_has_liked: updated.viewer_has_liked,
+                  }
+                : x,
+            ),
+          );
+        }
+      } catch {
+        setComments((prev) =>
+          prev.map((x) =>
+            x.id === c.id
+              ? {
+                  ...x,
+                  viewer_has_liked: was,
+                  like_count: c.like_count,
+                }
+              : x,
+          ),
+        );
+        Alert.alert("Couldn’t update like", "Try again.");
+      }
+    },
+    [token],
+  );
+
   const submit = useCallback(async () => {
     if (!token || !postId) return;
     const t = draft.trim();
@@ -204,13 +333,17 @@ export default function FeedCommentsModal({
 
     setSubmitting(true);
     try {
-      const created = await createFeedComment(token, postId, t);
+      const parentId = replyTo?.id ?? null;
+      const created = await createFeedComment(token, postId, t, {
+        parentCommentId: parentId,
+      });
       if (created) {
         setComments((prev) => {
-          if (prev.some((c) => c.id === created.id)) return prev;
+          if (prev.some((x) => x.id === created.id)) return prev;
           return [created, ...prev];
         });
         setDraft("");
+        setReplyTo(null);
         onCommentsDelta(1);
       }
     } catch (e) {
@@ -221,7 +354,7 @@ export default function FeedCommentsModal({
     } finally {
       setSubmitting(false);
     }
-  }, [token, postId, draft, onCommentsDelta]);
+  }, [token, postId, draft, replyTo, onCommentsDelta]);
 
   const confirmDelete = useCallback(
     (comment: FeedComment) => {
@@ -255,6 +388,15 @@ export default function FeedCommentsModal({
     Alert.alert("Comments", "Showing newest first.");
   }, []);
 
+  const openCommentAuthorProfile = useCallback(
+    (userId: string | undefined) => {
+      const id = userId?.trim();
+      if (!id) return;
+      navigation.navigate("PublicProfile", { userId: id });
+    },
+    [navigation],
+  );
+
   const mePhoto =
     typeof me?.profile_photo === "string" && me.profile_photo.trim()
       ? me.profile_photo.trim()
@@ -278,6 +420,7 @@ export default function FeedCommentsModal({
 
   const sheetBottomPad = Math.max(insets.bottom, 8);
   const slidePx = SHEET_HEIGHT + sheetBottomPad;
+  const sheetPadBottom = keyboardInset > 0 ? keyboardInset : sheetBottomPad;
 
   useEffect(() => {
     if (!(visible && postId)) return;
@@ -351,198 +494,279 @@ export default function FeedCommentsModal({
             { transform: [{ translateY: sheetTranslateY }] },
           ]}
         >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-            keyboardVerticalOffset={0}
-            style={[
-              styles.kavSheet,
-              {
-                height: slidePx,
-                paddingBottom: sheetBottomPad,
-              },
-            ]}
-          >
-          <View style={styles.sheetInner}>
-            <View style={styles.sheetGrabberWrap} pointerEvents="none">
-              <View style={styles.sheetGrabber} />
-            </View>
-
-            <View style={styles.header}>
-              <View style={styles.headerSide} />
-              <View style={styles.headerCenter}>
-                <Text style={styles.headerTitle} numberOfLines={1}>
-                  {countLabel}
-                </Text>
-                <TouchableOpacity
-                  onPress={onSortPress}
-                  hitSlop={10}
-                  accessibilityLabel="Comment sort"
-                >
-                  <ListFilter size={20} color="#333" strokeWidth={2} />
-                </TouchableOpacity>
+          <View style={[styles.sheetOuter, { height: slidePx }]}>
+            <View
+              style={[styles.sheetInner, { paddingBottom: sheetPadBottom }]}
+            >
+              <View style={styles.sheetGrabberWrap} pointerEvents="none">
+                <View style={styles.sheetGrabber} />
               </View>
-              <TouchableOpacity
-                style={styles.headerSide}
-                onPress={handleDismiss}
-                hitSlop={12}
-                accessibilityLabel="Close comments"
-              >
-                <X size={24} color="#111" strokeWidth={2.2} />
-              </TouchableOpacity>
-            </View>
 
-            {loading ? (
-              <View style={styles.loadingBox}>
-                <ActivityIndicator color={TIKTOK_SEND} />
-              </View>
-            ) : (
-              <FlatList
-                data={comments}
-                keyExtractor={(item) => item.id}
-                style={styles.list}
-                contentContainerStyle={styles.listContent}
-                keyboardShouldPersistTaps="handled"
-                renderItem={({ item }) => {
-                  const uid = commentAuthorId(item);
-                  const mine = uid && currentUserId && uid === currentUserId;
-                  const label = commentAuthorLabel(item);
-                  const photo =
-                    typeof item.user?.profile_photo === "string" &&
-                    item.user.profile_photo.trim()
-                      ? item.user.profile_photo.trim()
-                      : "";
-                  const avatarUser = item.user
-                    ? {
-                        id: item.user.id,
-                        first_name: item.user.first_name ?? undefined,
-                        last_name: item.user.last_name ?? undefined,
-                        username: item.user.username ?? undefined,
-                        name: label,
-                      }
-                    : { id: uid ?? "", name: label };
-                  const initials = getUserInitials(avatarUser);
-                  const bg = getUserAvatarColor(avatarUser);
-                  const age = formatCommentAge(item.created_at);
-
-                  return (
-                    <Pressable
-                      style={styles.commentRow}
-                      onLongPress={() => {
-                        if (mine) confirmDelete(item);
-                      }}
-                      delayLongPress={450}
-                    >
-                      {photo ? (
-                        <Image source={{ uri: photo }} style={styles.cAvatar} />
-                      ) : (
-                        <View style={[styles.cAvatarFb, { backgroundColor: bg }]}>
-                          <Text style={styles.cAvatarTx}>{initials}</Text>
-                        </View>
-                      )}
-                      <View style={styles.cMiddle}>
-                        <Text style={styles.cName}>{label}</Text>
-                        <Text style={styles.cText}>{item.content}</Text>
-                        <View style={styles.cMetaRow}>
-                          {age ? (
-                            <Text style={styles.cMetaTime}>{age}</Text>
-                          ) : null}
-                          <TouchableOpacity hitSlop={8} activeOpacity={0.6}>
-                            <Text style={styles.cReply}>Reply</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                      <View style={styles.cActions}>
-                        <TouchableOpacity style={styles.cActionBtn} hitSlop={8} activeOpacity={0.6}>
-                          <Heart
-                            size={20}
-                            color="#8a8a8a"
-                            strokeWidth={2}
-                            fill="transparent"
-                          />
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.cActionBtn} hitSlop={8} activeOpacity={0.6}>
-                          <ThumbsDown size={19} color="#8a8a8a" strokeWidth={2} />
-                        </TouchableOpacity>
-                      </View>
-                    </Pressable>
-                  );
-                }}
-                ListEmptyComponent={
-                  <Text style={styles.empty}>No comments yet.</Text>
-                }
-                onEndReached={() => void loadMore()}
-                onEndReachedThreshold={0.35}
-                ListFooterComponent={
-                  loadingMore ? (
-                    <ActivityIndicator style={{ paddingVertical: 14 }} />
-                  ) : null
-                }
-              />
-            )}
-
-            <View style={styles.composeSection}>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={styles.emojiStrip}
-              >
-                {QUICK_EMOJIS.map((e) => (
+              <View style={styles.header}>
+                <View style={styles.headerSide} />
+                <View style={styles.headerCenter}>
+                  <Text style={styles.headerTitle} numberOfLines={1}>
+                    {countLabel}
+                  </Text>
                   <TouchableOpacity
-                    key={e}
-                    style={styles.emojiChip}
-                    onPress={() => setDraft((d) => d + e)}
+                    onPress={onSortPress}
+                    hitSlop={10}
+                    accessibilityLabel="Comment sort"
                   >
-                    <Text style={styles.emojiChipText}>{e}</Text>
+                    <ListFilter size={20} color="#333" strokeWidth={2} />
                   </TouchableOpacity>
-                ))}
-              </ScrollView>
-
-              <View style={styles.composeRow}>
-                {mePhoto ? (
-                  <Image source={{ uri: mePhoto }} style={styles.meAvatar} />
-                ) : (
-                  <View style={[styles.meAvatarFb, { backgroundColor: meBg }]}>
-                    <Text style={styles.meAvatarTx}>{meInitials}</Text>
-                  </View>
-                )}
-
-                <View style={styles.inputShell}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Add comment..."
-                    placeholderTextColor="#9aa0a6"
-                    value={draft}
-                    onChangeText={setDraft}
-                    multiline
-                    maxLength={MAX_FEED_COMMENT_LENGTH}
-                    editable={!submitting && !!token}
-                  />
-                  <View style={styles.inputIcons}>
-                    <TouchableOpacity hitSlop={8} activeOpacity={0.6}>
-                      <ImageIcon size={22} color="#8e8e93" strokeWidth={2} />
-                    </TouchableOpacity>
-                    <TouchableOpacity hitSlop={8} activeOpacity={0.6}>
-                      <Smile size={22} color="#8e8e93" strokeWidth={2} />
-                    </TouchableOpacity>
-                    <TouchableOpacity hitSlop={8} activeOpacity={0.6}>
-                      <AtSign size={22} color="#8e8e93" strokeWidth={2} />
-                    </TouchableOpacity>
-                  </View>
                 </View>
-
                 <TouchableOpacity
-                  style={[styles.sendCircle, !canSend && styles.sendCircleOff]}
-                  disabled={!canSend}
-                  onPress={() => void submit()}
-                  accessibilityLabel="Send comment"
+                  style={styles.headerSide}
+                  onPress={handleDismiss}
+                  hitSlop={12}
+                  accessibilityLabel="Close comments"
                 >
-                  <ArrowUp size={22} color="#fff" strokeWidth={2.6} />
+                  <X size={24} color="#111" strokeWidth={2.2} />
                 </TouchableOpacity>
+              </View>
+
+              {loading ? (
+                <View style={styles.loadingBox}>
+                  <ActivityIndicator color={TIKTOK_SEND} />
+                </View>
+              ) : (
+                <FlatList
+                  data={threadRows}
+                  keyExtractor={(row) => row.comment.id}
+                  style={styles.list}
+                  contentContainerStyle={styles.listContent}
+                  keyboardShouldPersistTaps="handled"
+                  renderItem={({ item: row }) => {
+                    const item = row.comment;
+                    const depth = row.depth;
+                    const uid = commentAuthorId(item);
+                    const mine = uid && currentUserId && uid === currentUserId;
+                    const displayName = commentAuthorDisplayLabel(item);
+                    const photo =
+                      typeof item.user?.profile_photo === "string" &&
+                      item.user.profile_photo.trim()
+                        ? item.user.profile_photo.trim()
+                        : "";
+                    const avatarUser = item.user
+                      ? {
+                          id: item.user.id,
+                          first_name: item.user.first_name ?? undefined,
+                          last_name: item.user.last_name ?? undefined,
+                          username: item.user.username ?? undefined,
+                          name: displayName,
+                        }
+                      : { id: uid ?? "", name: displayName };
+                    const initials = getUserInitials(avatarUser);
+                    const bg = getUserAvatarColor(avatarUser);
+                    const age = formatCommentAge(item.created_at);
+                    const canOpenProfile = Boolean(uid);
+
+                    return (
+                      <View
+                        style={[
+                          styles.threadRowWrap,
+                          depth > 0 && [
+                            styles.threadReplyBranch,
+                            { marginLeft: Math.min(depth * 12, 60) },
+                          ],
+                        ]}
+                      >
+                        <Pressable
+                          style={styles.commentRow}
+                          onLongPress={() => {
+                            if (mine) confirmDelete(item);
+                          }}
+                          delayLongPress={450}
+                        >
+                          <Pressable
+                            onPress={() => openCommentAuthorProfile(uid)}
+                            disabled={!canOpenProfile}
+                            hitSlop={6}
+                            accessibilityRole="button"
+                            accessibilityLabel={`${displayName} profile`}
+                          >
+                            {photo ? (
+                              <Image
+                                source={{ uri: photo }}
+                                style={styles.cAvatar}
+                              />
+                            ) : (
+                              <View
+                                style={[
+                                  styles.cAvatarFb,
+                                  { backgroundColor: bg },
+                                ]}
+                              >
+                                <Text style={styles.cAvatarTx}>{initials}</Text>
+                              </View>
+                            )}
+                          </Pressable>
+                          <View style={styles.cMiddle}>
+                            <Pressable
+                              onPress={() => openCommentAuthorProfile(uid)}
+                              disabled={!canOpenProfile}
+                              hitSlop={{ bottom: 4 }}
+                            >
+                              <Text style={styles.cName}>{displayName}</Text>
+                            </Pressable>
+                            <Text style={styles.cText}>{item.content}</Text>
+                            <View style={styles.cMetaRow}>
+                              {age ? (
+                                <Text style={styles.cMetaTime}>{age}</Text>
+                              ) : null}
+                              <TouchableOpacity
+                                hitSlop={8}
+                                activeOpacity={0.6}
+                                onPress={() => setReplyTo(item)}
+                              >
+                                <Text style={styles.cReply}>Reply</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                          <View style={styles.cLikeRail}>
+                            <TouchableOpacity
+                              style={styles.cLikeBtn}
+                              hitSlop={8}
+                              activeOpacity={0.7}
+                              onPress={() => void toggleCommentLike(item)}
+                            >
+                              <Heart
+                                size={20}
+                                color={
+                                  item.viewer_has_liked
+                                    ? Colors.accent
+                                    : "#8a8a8a"
+                                }
+                                strokeWidth={2.2}
+                                fill={
+                                  item.viewer_has_liked
+                                    ? Colors.accent
+                                    : "transparent"
+                                }
+                              />
+                              {item.like_count > 0 ? (
+                                <Text
+                                  style={[
+                                    styles.cLikeCount,
+                                    item.viewer_has_liked &&
+                                      styles.cLikeCountActive,
+                                  ]}
+                                >
+                                  {formatCommentLikeCount(item.like_count)}
+                                </Text>
+                              ) : null}
+                            </TouchableOpacity>
+                          </View>
+                        </Pressable>
+                      </View>
+                    );
+                  }}
+                  ListEmptyComponent={
+                    <Text style={styles.empty}>No comments yet.</Text>
+                  }
+                  onEndReached={() => void loadMore()}
+                  onEndReachedThreshold={0.35}
+                  ListFooterComponent={
+                    loadingMore ? (
+                      <ActivityIndicator style={{ paddingVertical: 14 }} />
+                    ) : threadRows.length > 0 && !cursor ? (
+                      <Text style={styles.endOfReplies}>End of comments</Text>
+                    ) : null
+                  }
+                />
+              )}
+
+              <View style={styles.composeSection}>
+                {replyTo ? (
+                  <View style={styles.replyBanner}>
+                    <Text style={styles.replyBannerLabel} numberOfLines={1}>
+                      Replying to{" "}
+                      <Text style={styles.replyBannerName}>
+                        {commentAuthorDisplayLabel(replyTo)}
+                      </Text>
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => setReplyTo(null)}
+                      hitSlop={10}
+                      accessibilityLabel="Cancel reply"
+                    >
+                      <Text style={styles.replyBannerCancel}>Cancel</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                  contentContainerStyle={styles.emojiStrip}
+                >
+                  {QUICK_EMOJIS.map((e) => (
+                    <TouchableOpacity
+                      key={e}
+                      style={styles.emojiChip}
+                      onPress={() => setDraft((d) => d + e)}
+                    >
+                      <Text style={styles.emojiChipText}>{e}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+
+                <View style={styles.composeRow}>
+                  {mePhoto ? (
+                    <Image source={{ uri: mePhoto }} style={styles.meAvatar} />
+                  ) : (
+                    <View
+                      style={[styles.meAvatarFb, { backgroundColor: meBg }]}
+                    >
+                      <Text style={styles.meAvatarTx}>{meInitials}</Text>
+                    </View>
+                  )}
+
+                  <View style={styles.inputShell}>
+                    <TextInput
+                      style={styles.input}
+                      placeholder={
+                        replyTo
+                          ? "Write a reply…"
+                          : "Add comment..."
+                      }
+                      placeholderTextColor="#9aa0a6"
+                      value={draft}
+                      onChangeText={setDraft}
+                      multiline
+                      maxLength={MAX_FEED_COMMENT_LENGTH}
+                      editable={!submitting && !!token}
+                    />
+                    <View style={styles.inputIcons}>
+                      <TouchableOpacity hitSlop={8} activeOpacity={0.6}>
+                        <ImageIcon size={22} color="#8e8e93" strokeWidth={2} />
+                      </TouchableOpacity>
+                      <TouchableOpacity hitSlop={8} activeOpacity={0.6}>
+                        <Smile size={22} color="#8e8e93" strokeWidth={2} />
+                      </TouchableOpacity>
+                      <TouchableOpacity hitSlop={8} activeOpacity={0.6}>
+                        <AtSign size={22} color="#8e8e93" strokeWidth={2} />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.sendCircle,
+                      !canSend && styles.sendCircleOff,
+                    ]}
+                    disabled={!canSend}
+                    onPress={() => void submit()}
+                    accessibilityLabel="Send comment"
+                  >
+                    <ArrowUp size={22} color="#fff" strokeWidth={2.6} />
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
           </View>
-        </KeyboardAvoidingView>
         </Animated.View>
       </View>
     </Modal>
@@ -561,7 +785,7 @@ const styles = StyleSheet.create({
   sheetAnimatedWrap: {
     width: "100%",
   },
-  kavSheet: {
+  sheetOuter: {
     width: "100%",
   },
   sheetInner: {
@@ -622,6 +846,12 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     flexGrow: 1,
   },
+  threadRowWrap: {},
+  threadReplyBranch: {
+    paddingLeft: 10,
+    borderLeftWidth: 2,
+    borderLeftColor: "#ebebeb",
+  },
   commentRow: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -680,14 +910,29 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#8e8e93",
   },
-  cActions: {
+  cLikeRail: {
     alignItems: "center",
-    gap: 14,
     paddingTop: 2,
-    paddingLeft: 2,
+    minWidth: 40,
   },
-  cActionBtn: {
-    paddingVertical: 2,
+  cLikeBtn: {
+    alignItems: "center",
+    gap: 2,
+  },
+  cLikeCount: {
+    fontSize: 11,
+    fontFamily: Fonts.gabarito.medium,
+    color: "#8e8e93",
+  },
+  cLikeCountActive: {
+    color: Colors.accent,
+  },
+  endOfReplies: {
+    textAlign: "center",
+    paddingVertical: 16,
+    fontSize: 13,
+    color: "#aaa",
+    fontFamily: Fonts.instrument.regular,
   },
   empty: {
     textAlign: "center",
@@ -701,8 +946,34 @@ const styles = StyleSheet.create({
     borderTopColor: "#ebebeb",
     backgroundColor: "#fff",
     paddingTop: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 20,
+  },
+  replyBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 10,
     paddingHorizontal: 12,
-    paddingBottom: 4,
+    marginBottom: 8,
+    backgroundColor: "#f3f3f5",
+    borderRadius: 12,
+  },
+  replyBannerLabel: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: Fonts.instrument.regular,
+    color: "#666",
+  },
+  replyBannerName: {
+    fontFamily: Fonts.gabarito.semiBold,
+    color: "#111",
+  },
+  replyBannerCancel: {
+    fontSize: 14,
+    fontFamily: Fonts.gabarito.semiBold,
+    color: Colors.primary,
+    marginLeft: 10,
   },
   emojiStrip: {
     paddingBottom: 10,

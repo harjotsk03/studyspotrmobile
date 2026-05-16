@@ -240,7 +240,7 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
     } finally {
       setSaving(false);
     }
-  };;
+  };
 
   const handleDeleteAccount = async () => {
     setDeleting(true);

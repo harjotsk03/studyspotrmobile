@@ -186,6 +186,54 @@ export async function fetchFeedFriends(
   return parseFeedPage(json);
 }
 
+/**
+ * Posts authored by a user. Expected API: `GET /api/v1/feed/users/:userId/posts`
+ * (cursor + limit in query). Confirm with backend; adjust path if your server differs.
+ */
+export async function fetchFeedPostsByUser(
+  token: string,
+  userId: string,
+  opts?: { limit?: number; cursor?: string | null },
+): Promise<FeedPageResult> {
+  const limit = Math.min(Math.max(opts?.limit ?? 20, 1), 50);
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (opts?.cursor) params.set("cursor", opts.cursor);
+
+  const res = await fetch(
+    `${FEED_API_BASE}/users/${encodeURIComponent(userId)}/posts?${params}`,
+    { headers: authHeaders(token) },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(apiError(json, `Could not load posts (${res.status})`));
+  }
+  return parseFeedPage(json);
+}
+
+/**
+ * Posts this user has liked. Expected API: `GET /api/v1/feed/users/:userId/liked-posts`
+ * (cursor + limit in query). Confirm with backend; adjust path if your server differs.
+ */
+export async function fetchFeedLikedPostsByUser(
+  token: string,
+  userId: string,
+  opts?: { limit?: number; cursor?: string | null },
+): Promise<FeedPageResult> {
+  const limit = Math.min(Math.max(opts?.limit ?? 20, 1), 50);
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (opts?.cursor) params.set("cursor", opts.cursor);
+
+  const res = await fetch(
+    `${FEED_API_BASE}/users/${encodeURIComponent(userId)}/liked-posts?${params}`,
+    { headers: authHeaders(token) },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(apiError(json, `Could not load liked posts (${res.status})`));
+  }
+  return parseFeedPage(json);
+}
+
 export async function fetchFeedPostById(
   token: string,
   postId: string,
@@ -370,9 +418,12 @@ export type FeedComment = {
   id: string;
   content: string;
   created_at: string;
+  parent_comment_id: string | null;
   author_id?: string;
   user_id?: string;
   user: FeedAuthor | null;
+  like_count: number;
+  viewer_has_liked: boolean;
 };
 
 export type FeedCommentsPage = {
@@ -393,14 +444,23 @@ function parseFeedComment(raw: unknown): FeedComment | null {
       : typeof o.user_id === "string"
         ? o.user_id.trim()
         : "";
+  const rawParent = o.parent_comment_id;
+  const parent_comment_id =
+    typeof rawParent === "string" && rawParent.trim() ? rawParent.trim() : null;
+
   return {
     id,
     content,
     created_at:
-      typeof o.created_at === "string" ? o.created_at : new Date().toISOString(),
+      typeof o.created_at === "string"
+        ? o.created_at
+        : new Date().toISOString(),
+    parent_comment_id,
     author_id: aid || undefined,
     user_id: typeof o.user_id === "string" ? o.user_id.trim() : undefined,
     user: parseAuthor(o.user),
+    like_count: parseCount(o.like_count),
+    viewer_has_liked: parseBool(o.viewer_has_liked),
   };
 }
 
@@ -450,12 +510,22 @@ export async function createFeedComment(
   token: string,
   postId: string,
   content: string,
+  opts?: { parentCommentId?: string | null },
 ): Promise<FeedComment | null> {
   const trimmed = content.trim();
   if (!trimmed) throw new Error("Write something first.");
   if (trimmed.length > MAX_FEED_COMMENT_LENGTH) {
-    throw new Error(`Comment must be at most ${MAX_FEED_COMMENT_LENGTH} characters.`);
+    throw new Error(
+      `Comment must be at most ${MAX_FEED_COMMENT_LENGTH} characters.`,
+    );
   }
+
+  const parentId =
+    typeof opts?.parentCommentId === "string" && opts.parentCommentId.trim()
+      ? opts.parentCommentId.trim()
+      : null;
+  const body: Record<string, unknown> = { content: trimmed };
+  if (parentId) body.parent_comment_id = parentId;
 
   const res = await fetch(
     `${FEED_API_BASE}/posts/${encodeURIComponent(postId)}/comments`,
@@ -465,7 +535,7 @@ export async function createFeedComment(
         ...authHeaders(token),
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ content: trimmed }),
+      body: JSON.stringify(body),
     },
   );
   const json = await res.json().catch(() => null);
@@ -489,6 +559,44 @@ export async function deleteFeedComment(
   if (!res.ok) {
     throw new Error(apiError(json, `Could not delete comment (${res.status})`));
   }
+}
+
+export async function likeFeedComment(
+  token: string,
+  commentId: string,
+): Promise<FeedComment | null> {
+  const res = await fetch(
+    `${FEED_API_BASE}/comments/${encodeURIComponent(commentId)}/like`,
+    { method: "POST", headers: authHeaders(token) },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(apiError(json, `Could not like comment (${res.status})`));
+  }
+  if (!json || typeof json !== "object") return null;
+  return (
+    parseFeedComment(json) ??
+    parseFeedComment((json as Record<string, unknown>).comment)
+  );
+}
+
+export async function unlikeFeedComment(
+  token: string,
+  commentId: string,
+): Promise<FeedComment | null> {
+  const res = await fetch(
+    `${FEED_API_BASE}/comments/${encodeURIComponent(commentId)}/like`,
+    { method: "DELETE", headers: authHeaders(token) },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(apiError(json, `Could not unlike comment (${res.status})`));
+  }
+  if (!json || typeof json !== "object") return null;
+  return (
+    parseFeedComment(json) ??
+    parseFeedComment((json as Record<string, unknown>).comment)
+  );
 }
 
 export async function deleteFeedPost(

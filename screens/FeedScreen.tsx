@@ -70,6 +70,7 @@ export default function FeedScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [feedError, setFeedError] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [overlaysSubdued, setOverlaysSubdued] = useState(false);
 
   const loadingMoreRef = useRef(false);
 
@@ -150,6 +151,7 @@ export default function FeedScreen() {
       setFeedError(e instanceof Error ? e.message : "Could not refresh.");
     } finally {
       setRefreshing(false);
+      setOverlaysSubdued(false);
     }
   }, [token, fetchPage]);
 
@@ -258,6 +260,8 @@ export default function FeedScreen() {
             snapToAlignment="start"
             decelerationRate="fast"
             disableIntervalMomentum
+            onScrollBeginDrag={() => setOverlaysSubdued(true)}
+            onMomentumScrollEnd={() => setOverlaysSubdued(false)}
             showsVerticalScrollIndicator={false}
             removeClippedSubviews
             windowSize={5}
@@ -275,6 +279,7 @@ export default function FeedScreen() {
                 post={item}
                 screenFocused={isFocused}
                 isActive={item.id === activePostId}
+                overlaysSubdued={overlaysSubdued}
                 viewportHeight={reelH}
                 viewportWidth={reelW}
                 token={token}
@@ -320,7 +325,13 @@ export default function FeedScreen() {
 
           <View
             pointerEvents="box-none"
-            style={[styles.topOverlay, { paddingTop: insets.top + 8 }]}
+            style={[
+              styles.topOverlay,
+              {
+                paddingTop: insets.top + 8,
+                opacity: overlaysSubdued ? 0.38 : 1,
+              },
+            ]}
           >
             <Text style={styles.topFriends}>Friends</Text>
             <Pressable
