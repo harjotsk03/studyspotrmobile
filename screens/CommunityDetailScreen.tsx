@@ -98,10 +98,9 @@ export type CommunityStackParamList = {
     communityIsPublic: boolean;
     userCommunityRole?: string;
   };
-  BrowseEvents: undefined;
   CreateEvent: {
-    communityId: string;
-    communityName: string;
+    communityId?: string;
+    communityName?: string;
   };
   InviteEvent: {
     communityId: string;

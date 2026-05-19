@@ -1,8 +1,11 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import type { NavigationProp, ParamListBase } from "@react-navigation/native";
+import { useState } from "react";
 import { ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
 import { ArrowLeft } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FeedPostCard from "../components/FeedPostCard";
+import SharePostToFriendsSheet from "../components/SharePostToFriendsSheet";
 import { Colors } from "../constants/Colors";
 import { useAuth } from "../context/AuthContext";
 import type { FeedPost } from "../utils/feedApi";
@@ -19,6 +22,7 @@ export default function FeedPostDetailScreen({ navigation, route }: Props) {
   const { token, profile } = useAuth();
   const insets = useSafeAreaInsets();
   const currentUserId = profile?.userProfile?.id ?? null;
+  const [friendsShareOpen, setFriendsShareOpen] = useState(false);
 
   return (
     <View style={styles.screen}>
@@ -41,8 +45,19 @@ export default function FeedPostDetailScreen({ navigation, route }: Props) {
           post={post}
           token={token}
           currentUserId={currentUserId}
+          onShareWithFriends={
+            token ? () => setFriendsShareOpen(true) : undefined
+          }
         />
       </ScrollView>
+
+      <SharePostToFriendsSheet
+        visible={friendsShareOpen}
+        post={post}
+        token={token}
+        navigation={navigation as NavigationProp<ParamListBase>}
+        onClose={() => setFriendsShareOpen(false)}
+      />
     </View>
   );
 }

@@ -3,6 +3,7 @@ import {
   Alert,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -11,14 +12,19 @@ import {
   Text,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import {
+  ArrowLeftIcon,
   ArrowRightIcon,
+  BookOpenIcon,
   CameraIcon,
+  CheckCircle2,
   FileTextIcon,
   GlobeIcon,
+  GraduationCapIcon,
   ImageIcon,
   LockIcon,
   TagIcon,
@@ -60,13 +66,34 @@ const TOTAL_STEPS = 3;
 
 const STEP_SUBTITLES = [
   "Give your community a name and description",
-  "Pick a category and set visibility",
-  "Add optional avatar and banner photos",
+  "Choose a type, category, and visibility",
+  "Add an optional community photo and banner",
+];
+
+type CommunityType = "student_community" | "study_group";
+
+const COMMUNITY_TYPES: {
+  value: CommunityType;
+  label: string;
+  description: string;
+  Icon: typeof GraduationCapIcon;
+}[] = [
+  {
+    value: "student_community",
+    label: "Student Community",
+    description: "A general community for students to connect.",
+    Icon: GraduationCapIcon,
+  },
+  {
+    value: "study_group",
+    label: "Study Group",
+    description: "Focused on studying a subject or course together.",
+    Icon: BookOpenIcon,
+  },
 ];
 
 const CATEGORIES = [
   "Technology",
-  "Study Groups",
   "Sports",
   "Arts & Culture",
   "Business",
@@ -84,6 +111,7 @@ async function createCommunity(
   description: string,
   is_public: boolean,
   category: string,
+  community_type: CommunityType,
 ) {
   const res = await fetch(
     `${API_BASE_URL}/api/v1/communities/create-community`,
@@ -94,7 +122,13 @@ async function createCommunity(
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify({ name, description, is_public, category }),
+      body: JSON.stringify({
+        name,
+        description,
+        is_public,
+        category,
+        community_type,
+      }),
     },
   );
   const json = await res.json();
@@ -193,6 +227,7 @@ async function confirmCommunityImages(
 export default function CreateCommunityScreen() {
   const navigation =
     useNavigation<NativeStackNavigationProp<CommunityStackParamList>>();
+  const insets = useSafeAreaInsets();
   const { token } = useAuth();
 
   const [step, setStep] = useState(0);
@@ -206,6 +241,8 @@ export default function CreateCommunityScreen() {
   const [descriptionError, setDescriptionError] = useState("");
 
   // Step 1
+  const [communityType, setCommunityType] = useState<CommunityType | "">("");
+  const [communityTypeError, setCommunityTypeError] = useState("");
   const [category, setCategory] = useState("");
   const [isPublic, setIsPublic] = useState(true);
   const [categoryError, setCategoryError] = useState("");
@@ -213,6 +250,11 @@ export default function CreateCommunityScreen() {
   // Step 2
   const [avatarAsset, setAvatarAsset] = useState<ImageAsset | null>(null);
   const [bannerAsset, setBannerAsset] = useState<ImageAsset | null>(null);
+
+  // Success modal
+  const [successModalVisible, setSuccessModalVisible] = useState(false);
+  const [createdCommunity, setCreatedCommunity] =
+    useState<CreatedCommunity | null>(null);
 
   const buildCreatedCommunityData = (
     community: CreatedCommunity,
@@ -266,12 +308,20 @@ export default function CreateCommunityScreen() {
   };
 
   const validateStep1 = (): boolean => {
+    let valid = true;
+    if (!communityType) {
+      setCommunityTypeError("Please choose a community type.");
+      valid = false;
+    } else {
+      setCommunityTypeError("");
+    }
     if (!category) {
       setCategoryError("Please choose a category.");
-      return false;
+      valid = false;
+    } else {
+      setCategoryError("");
     }
-    setCategoryError("");
-    return true;
+    return valid;
   };
 
   // ── Image picking ────────────────────────────────────────────────────────
@@ -308,6 +358,10 @@ export default function CreateCommunityScreen() {
       Alert.alert("Error", "You must be logged in to create a community.");
       return;
     }
+    if (!communityType) {
+      Alert.alert("Error", "Please choose a community type.");
+      return;
+    }
     submitInFlightRef.current = true;
     setLoading(true);
     try {
@@ -317,6 +371,7 @@ export default function CreateCommunityScreen() {
         description.trim(),
         isPublic,
         category,
+        communityType,
       );
 
       if (avatarAsset || bannerAsset) {
@@ -376,11 +431,8 @@ export default function CreateCommunityScreen() {
         }
       }
 
-      Alert.alert(
-        "Community created!",
-        `"${name.trim()}" is live. Go check it out.`,
-        [{ text: "OK", onPress: () => resetToCreatedCommunity(community) }],
-      );
+      setCreatedCommunity(community);
+      setSuccessModalVisible(true);
     } catch (err) {
       Alert.alert(
         "Something went wrong",
@@ -402,6 +454,21 @@ export default function CreateCommunityScreen() {
     }
   };
 
+  const handleHeaderBack = () => {
+    if (loading) return;
+    if (step > 0) {
+      setStep(step - 1);
+    } else {
+      navigation.goBack();
+    }
+  };
+
+  const handleSuccessGo = () => {
+    if (!createdCommunity) return;
+    setSuccessModalVisible(false);
+    resetToCreatedCommunity(createdCommunity);
+  };
+
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
@@ -409,8 +476,27 @@ export default function CreateCommunityScreen() {
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
+      <View
+        style={[styles.topBar, { paddingTop: insets.top + 8 }]}
+        pointerEvents="box-none"
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          onPress={handleHeaderBack}
+          disabled={loading}
+          style={({ pressed }) => [
+            styles.backIconButton,
+            pressed && styles.backIconButtonPressed,
+          ]}
+          hitSlop={10}
+        >
+          <ArrowLeftIcon size={22} color={Colors.dark} strokeWidth={2.2} />
+        </Pressable>
+      </View>
+
       <ScrollView
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={[styles.scroll, { paddingTop: insets.top + 64 }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
@@ -435,7 +521,6 @@ export default function CreateCommunityScreen() {
           <>
             <Input
               label="Community Name"
-              placeholder="e.g. UBC Study Group"
               value={name}
               onChangeText={(t) => {
                 setName(t);
@@ -464,10 +549,68 @@ export default function CreateCommunityScreen() {
           </>
         )}
 
-        {/* ── Step 1: Category & Visibility ──────────────────────────────── */}
+        {/* ── Step 1: Type, Category & Visibility ────────────────────────── */}
         {step === 1 && (
           <>
             <View style={styles.sectionHeader}>
+              <GraduationCapIcon size={16} color="#666" />
+              <Text style={styles.sectionLabel}>Community Type</Text>
+            </View>
+            <View style={styles.typeStack}>
+              {COMMUNITY_TYPES.map(({ value, label, description, Icon }) => {
+                const selected = communityType === value;
+                return (
+                  <Pressable
+                    key={value}
+                    style={[
+                      styles.typeCard,
+                      selected && styles.typeCardSelected,
+                    ]}
+                    onPress={() => {
+                      setCommunityType(value);
+                      if (communityTypeError) setCommunityTypeError("");
+                    }}
+                  >
+                    <View
+                      style={[
+                        styles.typeIconWrap,
+                        selected && styles.typeIconWrapSelected,
+                      ]}
+                    >
+                      <Icon
+                        size={20}
+                        color={selected ? Colors.accent : "#666"}
+                        strokeWidth={2.2}
+                      />
+                    </View>
+                    <View style={styles.typeTextGroup}>
+                      <Text
+                        style={[
+                          styles.typeLabel,
+                          selected && styles.typeLabelSelected,
+                        ]}
+                      >
+                        {label}
+                      </Text>
+                      <Text style={styles.typeDescription}>{description}</Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.typeRadio,
+                        selected && styles.typeRadioSelected,
+                      ]}
+                    >
+                      {selected && <View style={styles.typeRadioInner} />}
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+            {!!communityTypeError && (
+              <Text style={styles.errorText}>{communityTypeError}</Text>
+            )}
+
+            <View style={[styles.sectionHeader, styles.fieldGap]}>
               <TagIcon size={16} color="#666" />
               <Text style={styles.sectionLabel}>Category</Text>
             </View>
@@ -534,10 +677,10 @@ export default function CreateCommunityScreen() {
               Both photos are optional — you can always add them later.
             </Text>
 
-            {/* Avatar picker */}
+            {/* Community photo picker */}
             <View style={styles.sectionHeader}>
               <CameraIcon size={16} color="#666" />
-              <Text style={styles.sectionLabel}>Community Avatar</Text>
+              <Text style={styles.sectionLabel}>Community Photo</Text>
             </View>
             <Pressable
               style={styles.avatarPickerContainer}
@@ -580,25 +723,8 @@ export default function CreateCommunityScreen() {
           </>
         )}
 
-        {/* ── Navigation buttons ─────────────────────────────────────────── */}
+        {/* ── Primary CTA ────────────────────────────────────────────────── */}
         <View style={styles.buttonRow}>
-          {step > 0 ? (
-            <Button
-              label="Back"
-              variant="accent"
-              onPress={() => setStep(step - 1)}
-              disabled={loading}
-              style={styles.backButton}
-            />
-          ) : (
-            <Button
-              label="Cancel"
-              variant="accent"
-              onPress={() => navigation.goBack()}
-              disabled={loading}
-              style={styles.backButton}
-            />
-          )}
           <Button
             label={step === TOTAL_STEPS - 1 ? "Create Community" : "Next"}
             variant="default"
@@ -612,6 +738,49 @@ export default function CreateCommunityScreen() {
           />
         </View>
       </ScrollView>
+
+      {/* ── Success modal ───────────────────────────────────────────────── */}
+      <Modal
+        visible={successModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (createdCommunity) handleSuccessGo();
+        }}
+      >
+        <View style={styles.successBackdrop}>
+          <View style={styles.successCard}>
+            <View style={styles.successIconWrap}>
+              <CheckCircle2 size={56} color={Colors.accent} strokeWidth={2.2} />
+            </View>
+            <Text style={styles.successTitle}>Community created!</Text>
+            <Text style={styles.successBody}>
+              <Text style={styles.successBodyEmphasis}>
+                &ldquo;
+                {createdCommunity?.name ?? name.trim()}
+                &rdquo;
+              </Text>{" "}
+              is live. You&rsquo;re the owner — invite friends and start the
+              conversation.
+            </Text>
+            <Button
+              label="Go to Community"
+              variant="default"
+              onPress={handleSuccessGo}
+              style={styles.successPrimaryBtn}
+            />
+            <Pressable
+              onPress={() => {
+                setSuccessModalVisible(false);
+                navigation.navigate("CommunityList");
+              }}
+              hitSlop={8}
+            >
+              <Text style={styles.successSecondary}>Back to communities</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -623,10 +792,30 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.light,
   },
+  topBar: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 20,
+    zIndex: 10,
+  },
+  backIconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#eee",
+  },
+  backIconButtonPressed: {
+    opacity: 0.75,
+  },
   scroll: {
     flexGrow: 1,
     paddingHorizontal: 28,
-    paddingTop: 100,
     paddingBottom: 40,
   },
   title: {
@@ -799,16 +988,139 @@ const styles = StyleSheet.create({
     color: "#aaa",
     textAlign: "center",
   },
+  // Type chooser
+  typeStack: {
+    gap: 10,
+  },
+  typeCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: "#e5e5e5",
+    backgroundColor: "#fff",
+  },
+  typeCardSelected: {
+    borderColor: Colors.accent,
+    backgroundColor: Colors.accent + "12",
+  },
+  typeIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#f4f4f4",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  typeIconWrapSelected: {
+    backgroundColor: "#fff",
+  },
+  typeTextGroup: {
+    flex: 1,
+  },
+  typeLabel: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 15,
+    color: Colors.dark,
+  },
+  typeLabelSelected: {
+    color: Colors.dark,
+  },
+  typeDescription: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 12,
+    color: "#777",
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  typeRadio: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: "#ccc",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  typeRadioSelected: {
+    borderColor: Colors.accent,
+  },
+  typeRadioInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: Colors.accent,
+  },
   // Buttons
   buttonRow: {
     flexDirection: "row",
     gap: 12,
     marginTop: 28,
   },
-  backButton: {
+  nextButton: {
     flex: 1,
   },
-  nextButton: {
-    flex: 2,
+  // Success modal
+  successBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 28,
+  },
+  successCard: {
+    width: "100%",
+    maxWidth: 380,
+    backgroundColor: "#fff",
+    borderRadius: 24,
+    padding: 28,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 10,
+  },
+  successIconWrap: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: Colors.accent + "1A",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
+  successTitle: {
+    fontFamily: Fonts.gabarito.bold,
+    fontSize: 22,
+    color: Colors.dark,
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  successBody: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14,
+    color: "#555",
+    textAlign: "center",
+    lineHeight: 20,
+    marginBottom: 22,
+  },
+  successBodyEmphasis: {
+    fontFamily: Fonts.gabarito.semiBold,
+    color: Colors.dark,
+  },
+  successPrimaryBtn: {
+    alignSelf: "stretch",
+    marginBottom: 12,
+  },
+  successSecondary: {
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 13,
+    color: "#777",
+    paddingVertical: 6,
+    textAlign: "center",
   },
 });

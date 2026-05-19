@@ -55,12 +55,13 @@ export default function LoginScreen() {
         return;
       }
 
-      await login(data.user, data.access_token, data.refresh_token, rememberMe);
-      const firstName =
-        data.user?.userProfile?.first_name ?? data.user?.first_name ?? "";
-      const lastName =
-        data.user?.userProfile?.last_name ?? data.user?.last_name ?? "";
-      Alert.alert("Welcome", `${firstName} ${lastName}`.trim() || "Welcome!");
+      await login(
+        data.user,
+        data.access_token,
+        data.refresh_token,
+        rememberMe,
+        true,
+      );
     } catch {
       Alert.alert("Network error", "Could not reach the server.");
     } finally {

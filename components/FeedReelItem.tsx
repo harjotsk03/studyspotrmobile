@@ -16,6 +16,7 @@ import {
   Heart,
   MessageCircle,
   MoreHorizontal,
+  Send,
   Share as ShareIcon,
   Volume2,
   VolumeX,
@@ -28,9 +29,11 @@ import {
   deleteFeedPost,
   feedAuthorDisplayName,
   likeFeedPost,
+  reportFeedPost,
   unlikeFeedPost,
   type FeedPost,
 } from "../utils/feedApi";
+import FeedPostOptionsSheet from "./FeedPostOptionsSheet";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 
 /** Space reserved at bottom-right for the action rail (icons + labels) */
@@ -51,6 +54,8 @@ type Props = {
   onMergePost: (postId: string, merge: Partial<FeedPost>) => void;
   onReplacePost: (post: FeedPost) => void;
   onOpenComments: () => void;
+  /** In-app share: pick a friend / existing chat (parent opens picker). */
+  onShareWithFriends?: () => void;
 };
 
 export default function FeedReelItem({
@@ -66,6 +71,7 @@ export default function FeedReelItem({
   onMergePost,
   onReplacePost,
   onOpenComments,
+  onShareWithFriends,
 }: Props) {
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -76,6 +82,7 @@ export default function FeedReelItem({
   const burstOpacity = useRef(new Animated.Value(0)).current;
   const heartRailScale = useRef(new Animated.Value(1)).current;
   const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const prevPostIdRef = useRef(post.id);
   const prevViewerLikedRef = useRef(post.viewer_has_liked);
   const videoRef = useRef<Video | null>(null);
@@ -238,29 +245,21 @@ export default function FeedReelItem({
     }
   }, [post.caption, media]);
 
-  const openMenu = useCallback(() => {
-    if (!token || !isOwner) return;
-    Alert.alert("Post", undefined, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () => {
-          void (async () => {
-            try {
-              await deleteFeedPost(token, post.id);
-              onDeleted(post.id);
-            } catch (e) {
-              Alert.alert(
-                "Error",
-                e instanceof Error ? e.message : "Could not delete.",
-              );
-            }
-          })();
-        },
-      },
-    ]);
-  }, [token, isOwner, post.id, onDeleted]);
+  const confirmDeletePost = useCallback(async () => {
+    if (!token) return;
+    await deleteFeedPost(token, post.id);
+    onDeleted(post.id);
+  }, [token, post.id, onDeleted]);
+
+  const confirmReportPost = useCallback(async () => {
+    if (!token) return;
+    await reportFeedPost(token, post.id);
+  }, [token, post.id]);
+
+  const openPostOptions = useCallback(() => {
+    if (!token) return;
+    setOptionsOpen(true);
+  }, [token]);
 
   const bottomPad = Math.max(insets.bottom, 12) + 8;
   const chromeOpacity = overlaysSubdued ? 0.38 : 1;
@@ -376,12 +375,33 @@ export default function FeedReelItem({
           </Pressable>
 
           <Pressable
-            style={[styles.railBtn, !isOwner && styles.railMenuHidden]}
-            onPress={openMenu}
+            style={[
+              styles.railBtn,
+              (!token || !onShareWithFriends) && styles.railMenuHidden,
+            ]}
+            onPress={() => onShareWithFriends?.()}
             hitSlop={8}
-            pointerEvents={isOwner ? "auto" : "none"}
-            accessibilityElementsHidden={!isOwner}
-            importantForAccessibility={isOwner ? "yes" : "no-hide-descendants"}
+            pointerEvents={token && onShareWithFriends ? "auto" : "none"}
+            accessibilityElementsHidden={!token || !onShareWithFriends}
+            importantForAccessibility={
+              token && onShareWithFriends ? "yes" : "no-hide-descendants"
+            }
+            accessibilityRole="button"
+            accessibilityLabel="Send post to a friend"
+          >
+            <Send size={28} color="#fff" strokeWidth={2.2} />
+            <Text style={styles.railLabel}>Send</Text>
+          </Pressable>
+
+          <Pressable
+            style={[styles.railBtn, !token && styles.railMenuHidden]}
+            onPress={openPostOptions}
+            hitSlop={8}
+            pointerEvents={token ? "auto" : "none"}
+            accessibilityElementsHidden={!token}
+            importantForAccessibility={token ? "yes" : "no-hide-descendants"}
+            accessibilityRole="button"
+            accessibilityLabel="Post options"
           >
             <MoreHorizontal size={30} color="#fff" strokeWidth={2.2} />
           </Pressable>
@@ -405,6 +425,18 @@ export default function FeedReelItem({
           ) : null}
         </View>
       </View>
+
+      <FeedPostOptionsSheet
+        visible={optionsOpen}
+        onClose={() => setOptionsOpen(false)}
+        isOwner={isOwner}
+        onShare={onShare}
+        onShareWithFriends={
+          token && onShareWithFriends ? onShareWithFriends : undefined
+        }
+        onDeleteConfirmed={confirmDeletePost}
+        onReportConfirmed={confirmReportPost}
+      />
     </View>
   );
 }

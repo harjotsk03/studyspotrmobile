@@ -1,9 +1,9 @@
 import { useCallback, useState } from "react";
 import {
-  Alert,
   Image,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -19,15 +19,18 @@ import type { RootStackParamList } from "../types/navigation";
 import {
   deleteFeedPost,
   feedAuthorDisplayName,
+  reportFeedPost,
   type FeedPost,
 } from "../utils/feedApi";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
+import FeedPostOptionsSheet from "./FeedPostOptionsSheet";
 
 type Props = {
   post: FeedPost;
   token: string | null;
   currentUserId?: string | null;
   onDeleted?: (postId: string) => void;
+  onShareWithFriends?: () => void;
 };
 
 function formatFeedTime(iso: string): string {
@@ -50,12 +53,13 @@ export default function FeedPostCard({
   token,
   currentUserId,
   onDeleted,
+  onShareWithFriends,
 }: Props) {
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { width: windowWidth } = useWindowDimensions();
   const mediaWidth = Math.min(windowWidth - 40, 560);
-  const [menuBusy, setMenuBusy] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
 
   const author = post.author;
   const displayName = feedAuthorDisplayName(author);
@@ -81,36 +85,36 @@ export default function FeedPostCard({
 
   const isOwner = Boolean(currentUserId && post.author_id === currentUserId);
 
-  const openMenu = useCallback(() => {
-    if (!token || menuBusy || !isOwner) return;
-    Alert.alert(
-      "Delete post?",
-      "Remove this post from your feed? This cannot be undone.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: () => {
-            void (async () => {
-              setMenuBusy(true);
-              try {
-                await deleteFeedPost(token, post.id);
-                onDeleted?.(post.id);
-              } catch (e) {
-                Alert.alert(
-                  "Error",
-                  e instanceof Error ? e.message : "Could not delete post.",
-                );
-              } finally {
-                setMenuBusy(false);
-              }
-            })();
-          },
-        },
-      ],
-    );
-  }, [token, menuBusy, isOwner, post.id, onDeleted]);
+  const onShare = useCallback(async () => {
+    try {
+      const first = post.media[0];
+      const line =
+        post.caption?.trim() || "Shared from StudySpotr friends feed.";
+      const url =
+        first?.type === "video" || first?.type === "image" ? first.url : "";
+      await Share.share({
+        message: url ? `${line}\n${url}` : line,
+      });
+    } catch {
+      /* dismissed */
+    }
+  }, [post.caption, post.media]);
+
+  const confirmDeletePost = useCallback(async () => {
+    if (!token) return;
+    await deleteFeedPost(token, post.id);
+    onDeleted?.(post.id);
+  }, [token, post.id, onDeleted]);
+
+  const confirmReportPost = useCallback(async () => {
+    if (!token) return;
+    await reportFeedPost(token, post.id);
+  }, [token, post.id]);
+
+  const openPostOptions = useCallback(() => {
+    if (!token) return;
+    setOptionsOpen(true);
+  }, [token]);
 
   return (
     <View style={styles.card}>
@@ -124,7 +128,9 @@ export default function FeedPostCard({
           {photo ? (
             <Image source={{ uri: photo }} style={styles.avatarImg} />
           ) : (
-            <View style={[styles.avatarFallback, { backgroundColor: avatarColor }]}>
+            <View
+              style={[styles.avatarFallback, { backgroundColor: avatarColor }]}
+            >
               <Text style={styles.avatarInitial}>{initials}</Text>
             </View>
           )}
@@ -143,10 +149,10 @@ export default function FeedPostCard({
             </View>
           </View>
         </Pressable>
-        {isOwner ? (
+        {token ? (
           <Pressable
             hitSlop={10}
-            onPress={openMenu}
+            onPress={openPostOptions}
             accessibilityLabel="Post options"
           >
             <EllipsisVertical size={22} color="#888" strokeWidth={2} />
@@ -189,9 +195,19 @@ export default function FeedPostCard({
         </ScrollView>
       ) : null}
 
-      {post.caption ? (
-        <Text style={styles.caption}>{post.caption}</Text>
-      ) : null}
+      {post.caption ? <Text style={styles.caption}>{post.caption}</Text> : null}
+
+      <FeedPostOptionsSheet
+        visible={optionsOpen}
+        onClose={() => setOptionsOpen(false)}
+        isOwner={isOwner}
+        onShare={onShare}
+        onShareWithFriends={
+          token && onShareWithFriends ? onShareWithFriends : undefined
+        }
+        onDeleteConfirmed={confirmDeletePost}
+        onReportConfirmed={confirmReportPost}
+      />
     </View>
   );
 }

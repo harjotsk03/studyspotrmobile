@@ -1,4 +1,5 @@
 import { View } from "react-native";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import { NavigationContainer } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
@@ -46,7 +47,6 @@ import CommunityDetailScreen, {
 import CommunityInfoScreen from "./screens/CommunityInfoScreen";
 import CreateCommunityScreen from "./screens/CreateCommunityScreen";
 import EditCommunityScreen from "./screens/EditCommunityScreen";
-import BrowseEventsScreen from "./screens/BrowseEventsScreen";
 import CommunityEventsScreen from "./screens/CommunityEventsScreen";
 import CreateEventScreen from "./screens/CreateEventScreen";
 import InviteEventScreen from "./screens/InviteEventScreen";
@@ -74,6 +74,7 @@ import type {
   SpotsStackParamList,
 } from "./types/navigation";
 import { SkeletonBox } from "./components/Skeleton";
+import LoginWelcomeToast from "./components/LoginWelcomeToast";
 
 const Tab = createBottomTabNavigator();
 const RootStack = createNativeStackNavigator<RootStackParamList>();
@@ -108,10 +109,6 @@ function CommunityStackScreen() {
       <CommunityStack.Screen
         name="CommunityEvents"
         component={CommunityEventsScreen}
-      />
-      <CommunityStack.Screen
-        name="BrowseEvents"
-        component={BrowseEventsScreen}
       />
       <CommunityStack.Screen name="CreateEvent" component={CreateEventScreen} />
       <CommunityStack.Screen name="InviteEvent" component={InviteEventScreen} />
@@ -285,37 +282,49 @@ function AppContent() {
   );
 
   return (
-    <RootStack.Navigator
-      screenOptions={{ headerShown: false, animation: "slide_from_right" }}
-    >
-      <RootStack.Screen name="MainTabs" children={() => tabs} />
-      <RootStack.Screen name="PublicProfile" component={PublicProfileScreen} />
-      <RootStack.Screen
-        name="SpotViewer"
-        component={SpotDetailScreen}
-        options={{ gestureEnabled: true }}
-      />
-      <RootStack.Screen
-        name="FeedPostDetail"
-        component={FeedPostDetailScreen}
-      />
-      <RootStack.Screen
-        name="CommunityDetail"
-        component={CommunityDetailScreen}
-      />
-      <RootStack.Screen name="CommunityInfo" component={CommunityInfoScreen} />
-      <RootStack.Screen
-        name="CommunityEvents"
-        component={CommunityEventsScreen}
-      />
-      <RootStack.Screen name="EditCommunity" component={EditCommunityScreen} />
-      <RootStack.Screen name="CreateEvent" component={CreateEventScreen} />
-      <RootStack.Screen name="InviteEvent" component={InviteEventScreen} />
-      <RootStack.Screen
-        name="CommunityMembers"
-        component={CommunityMembersScreen}
-      />
-    </RootStack.Navigator>
+    <View style={{ flex: 1 }}>
+      <RootStack.Navigator
+        screenOptions={{ headerShown: false, animation: "slide_from_right" }}
+      >
+        <RootStack.Screen name="MainTabs" children={() => tabs} />
+        <RootStack.Screen
+          name="PublicProfile"
+          component={PublicProfileScreen}
+        />
+        <RootStack.Screen
+          name="SpotViewer"
+          component={SpotDetailScreen}
+          options={{ gestureEnabled: true }}
+        />
+        <RootStack.Screen
+          name="FeedPostDetail"
+          component={FeedPostDetailScreen}
+        />
+        <RootStack.Screen
+          name="CommunityDetail"
+          component={CommunityDetailScreen}
+        />
+        <RootStack.Screen
+          name="CommunityInfo"
+          component={CommunityInfoScreen}
+        />
+        <RootStack.Screen
+          name="CommunityEvents"
+          component={CommunityEventsScreen}
+        />
+        <RootStack.Screen
+          name="EditCommunity"
+          component={EditCommunityScreen}
+        />
+        <RootStack.Screen name="CreateEvent" component={CreateEventScreen} />
+        <RootStack.Screen name="InviteEvent" component={InviteEventScreen} />
+        <RootStack.Screen
+          name="CommunityMembers"
+          component={CommunityMembersScreen}
+        />
+      </RootStack.Navigator>
+      <LoginWelcomeToast />
+    </View>
   );
 }
 
@@ -369,10 +378,12 @@ export default function App() {
       <NotificationsProvider>
         <SearchStateProvider>
           <SpotsProvider>
-            <NavigationContainer>
-              <StatusBar style="dark" />
-              <AppContent />
-            </NavigationContainer>
+            <SafeAreaProvider>
+              <NavigationContainer>
+                <StatusBar style="dark" />
+                <AppContent />
+              </NavigationContainer>
+            </SafeAreaProvider>
           </SpotsProvider>
         </SearchStateProvider>
       </NotificationsProvider>

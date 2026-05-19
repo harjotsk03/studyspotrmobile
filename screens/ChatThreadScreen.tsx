@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -67,6 +67,7 @@ function formatMessageTime(iso: string) {
 
 export default function ChatThreadScreen({ navigation, route }: Props) {
   const { conversationId, peer } = route.params;
+
   const { token, profile } = useAuth();
   const insets = useSafeAreaInsets();
   const myId = profile?.userProfile?.id ?? "";
@@ -106,6 +107,13 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
   useEffect(() => {
     void loadInitial();
   }, [loadInitial]);
+
+  useLayoutEffect(() => {
+    const dm = route.params.draftMessage;
+    if (typeof dm !== "string" || !dm.trim()) return;
+    setDraft(dm.trim());
+    navigation.setParams({ draftMessage: undefined });
+  }, [conversationId, navigation, route.params.draftMessage]);
 
   useFocusEffect(
     useCallback(() => {

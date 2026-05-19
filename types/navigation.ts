@@ -18,6 +18,8 @@ export type InboxStackParamList = {
   ChatThread: {
     conversationId: string;
     peer?: ChatOtherUser;
+    /** One-shot composer prefilled when sharing a post (cleared after apply). */
+    draftMessage?: string;
   };
 };
 

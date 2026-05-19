@@ -19,7 +19,7 @@ import DateTimePicker, {
   type DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useNavigation } from "@react-navigation/native";
 import type {
   NativeStackNavigationProp,
   NativeStackScreenProps,
@@ -64,6 +64,7 @@ const EVENT_TYPES = [
 
 type EventType = (typeof EVENT_TYPES)[number];
 type PickerTarget = "startDate" | "startTime" | "endDate" | "endTime";
+type AdminCommunityOption = { id: string; name: string };
 
 type Props = NativeStackScreenProps<CommunityStackParamList, "CreateEvent">;
 
@@ -207,7 +208,8 @@ function ToggleRow({
 // ─── Screen ──────────────────────────────────────────────────────────────────
 
 export default function CreateEventScreen({ route }: Props) {
-  const { communityId, communityName } = route.params;
+  const prefillCommunityId = route.params?.communityId?.trim() ?? "";
+  const prefillCommunityName = route.params?.communityName?.trim() ?? "";
   const navigation =
     useNavigation<NativeStackNavigationProp<CommunityStackParamList>>();
   const insets = useSafeAreaInsets();
@@ -217,6 +219,18 @@ export default function CreateEventScreen({ route }: Props) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [titleError, setTitleError] = useState("");
+  const [linkToCommunity, setLinkToCommunity] = useState(
+    Boolean(prefillCommunityId),
+  );
+  const [linkedCommunityId, setLinkedCommunityId] = useState(prefillCommunityId);
+  const [linkedCommunityName, setLinkedCommunityName] = useState(
+    prefillCommunityName,
+  );
+  const [communityError, setCommunityError] = useState("");
+  const [communityPickerOpen, setCommunityPickerOpen] = useState(false);
+  const [adminCommunities, setAdminCommunities] = useState<AdminCommunityOption[]>(
+    [],
+  );
 
   // Type section
   const [typeOpen, setTypeOpen] = useState(true);
@@ -257,40 +271,57 @@ export default function CreateEventScreen({ route }: Props) {
     endTime,
   );
 
-  const validateCreateAccess = useCallback(
-    async (opts?: { alertOnDenied?: boolean }) => {
-      if (!token) return false;
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    void (async () => {
       try {
-        const membership = await fetchCommunityMembership(token, communityId);
-        const canCreate =
-          membership.is_member && isCommunityAdminOrOwner(membership);
-
-        if (!canCreate) {
-          if (opts?.alertOnDenied) {
-            Alert.alert(
-              "Access changed",
-              membership.is_member
-                ? "You no longer have permission to create events."
-                : "You are no longer a member of this community.",
-            );
-          }
-          navigation.goBack();
-          return false;
+        const res = await fetch(
+          `${API_BASE_URL}/api/v1/communities/?limit=200&offset=0`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/json",
+            },
+          },
+        );
+        const json: unknown = await res.json().catch(() => null);
+        if (!res.ok || cancelled || !json || typeof json !== "object") return;
+        const raw = Array.isArray((json as { communities?: unknown[] }).communities)
+          ? ((json as { communities?: unknown[] }).communities as unknown[])
+          : [];
+        const next: AdminCommunityOption[] = [];
+        for (const item of raw) {
+          if (!item || typeof item !== "object") continue;
+          const obj = item as Record<string, unknown>;
+          const id = typeof obj.id === "string" ? obj.id.trim() : "";
+          const name = typeof obj.name === "string" ? obj.name.trim() : "";
+          const role =
+            typeof obj.user_role === "string" ? obj.user_role.toLowerCase() : "";
+          if (!id || !name) continue;
+          if (role !== "admin" && role !== "owner") continue;
+          next.push({ id, name });
         }
+        if (cancelled) return;
+        setAdminCommunities(next);
 
-        return true;
+        if (prefillCommunityId && prefillCommunityName && !linkedCommunityName) {
+          setLinkedCommunityName(prefillCommunityName);
+        }
       } catch {
-        return true;
+        if (!cancelled) setAdminCommunities([]);
       }
-    },
-    [communityId, navigation, token],
-  );
+    })();
 
-  useFocusEffect(
-    useCallback(() => {
-      void validateCreateAccess({ alertOnDenied: true });
-    }, [validateCreateAccess]),
-  );
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    token,
+    prefillCommunityId,
+    prefillCommunityName,
+    linkedCommunityName,
+  ]);
 
   // ── Section toggles ──────────────────────────────────────────────────────
 
@@ -368,6 +399,13 @@ export default function CreateEventScreen({ route }: Props) {
   const validate = (): boolean => {
     let valid = true;
 
+    if (linkToCommunity && !linkedCommunityId) {
+      setCommunityError("Choose a community or disable linking.");
+      valid = false;
+    } else {
+      setCommunityError("");
+    }
+
     if (!title.trim()) {
       setTitleError("Title is required.");
       valid = false;
@@ -414,8 +452,25 @@ export default function CreateEventScreen({ route }: Props) {
   // ── Submit ───────────────────────────────────────────────────────────────
 
   const handleCreate = async () => {
-    if (!token || !(await validateCreateAccess({ alertOnDenied: true }))) return;
+    if (!token) return;
     if (!validate()) return;
+
+    if (linkToCommunity && linkedCommunityId) {
+      try {
+        const membership = await fetchCommunityMembership(token, linkedCommunityId);
+        if (!(membership.is_member && isCommunityAdminOrOwner(membership))) {
+          Alert.alert(
+            "Access changed",
+            membership.is_member
+              ? "You no longer have permission to link events to this community."
+              : "You are no longer a member of this community.",
+          );
+          return;
+        }
+      } catch {
+        // Allow submit if membership refresh fails; backend will enforce.
+      }
+    }
 
     const startISO = toISO(startDate!, startTime!);
     const endISO = endDate && endTime ? toISO(endDate, endTime) : undefined;
@@ -427,7 +482,7 @@ export default function CreateEventScreen({ route }: Props) {
     setLoading(true);
     try {
       const res = await fetch(
-        `${API_BASE_URL}/api/v1/communities/${communityId}/events/create-event`,
+        `${API_BASE_URL}/api/v1/events/create-event`,
         {
           method: "POST",
           headers: {
@@ -446,6 +501,7 @@ export default function CreateEventScreen({ route }: Props) {
             meeting_url: isOnline ? meetingUrl.trim() : undefined,
             discoverable_to_all: discoverableToAll,
             max_attendees: maxAttendeesNum,
+            community_id: linkToCommunity ? linkedCommunityId : undefined,
           }),
         },
       );
@@ -463,12 +519,18 @@ export default function CreateEventScreen({ route }: Props) {
         return;
       }
 
-      navigation.replace("InviteEvent", {
-        communityId,
-        communityName,
-        eventId: createdEventId,
-        eventTitle: title.trim(),
-      });
+      if (linkToCommunity && linkedCommunityId && linkedCommunityName) {
+        navigation.replace("InviteEvent", {
+          communityId: linkedCommunityId,
+          communityName: linkedCommunityName,
+          eventId: createdEventId,
+          eventTitle: title.trim(),
+        });
+      } else {
+        Alert.alert("Event created", "Your event is now live.", [
+          { text: "OK", onPress: () => navigation.goBack() },
+        ]);
+      }
     } catch (err) {
       Alert.alert(
         "Failed to create event",
@@ -495,7 +557,9 @@ export default function CreateEventScreen({ route }: Props) {
         <View style={styles.headerCenter}>
           <Text style={styles.headerTitle}>Create Event</Text>
           <Text style={styles.headerSubtitle} numberOfLines={1}>
-            {communityName}
+            {linkToCommunity && linkedCommunityName
+              ? linkedCommunityName
+              : "Standalone or community-linked"}
           </Text>
         </View>
         <View style={[styles.iconButton, { opacity: 0 }]} />
@@ -511,6 +575,48 @@ export default function CreateEventScreen({ route }: Props) {
           contentContainerStyle={styles.scroll}
           scrollEnabled={pickerTarget === null}
         >
+          <View style={styles.card}>
+            <Text style={styles.sectionTitleStatic}>Community Link</Text>
+            <View style={styles.fieldGap}>
+              <ToggleRow
+                label="Link to a community"
+                description="Optional. You can publish this event without a community."
+                value={linkToCommunity}
+                onValueChange={(v) => {
+                  setLinkToCommunity(v);
+                  if (!v) {
+                    setLinkedCommunityId("");
+                    setLinkedCommunityName("");
+                    setCommunityError("");
+                  }
+                }}
+              />
+            </View>
+            {linkToCommunity ? (
+              <View style={styles.fieldGap}>
+                <Text style={styles.selectLabel}>Community *</Text>
+                <Pressable
+                  style={styles.selectField}
+                  onPress={() => setCommunityPickerOpen(true)}
+                >
+                  <TagIcon size={16} color="#999" />
+                  <Text
+                    style={[
+                      styles.selectValue,
+                      !linkedCommunityName && styles.selectPlaceholder,
+                    ]}
+                  >
+                    {linkedCommunityName || "Choose one of your admin communities"}
+                  </Text>
+                  <ChevronDown size={16} color="#999" />
+                </Pressable>
+                {!!communityError && (
+                  <Text style={styles.errorText}>{communityError}</Text>
+                )}
+              </View>
+            ) : null}
+          </View>
+
           {/* ── Primary fields ────────────────────────────────────────── */}
           <View style={styles.card}>
             <Input
@@ -727,6 +833,63 @@ export default function CreateEventScreen({ route }: Props) {
       </KeyboardAvoidingView>
 
       <Modal
+        visible={communityPickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCommunityPickerOpen(false)}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setCommunityPickerOpen(false)}
+        >
+          <Pressable style={styles.modalCard} onPress={() => {}}>
+            <Text style={styles.modalTitle}>Link to community</Text>
+            <Text style={styles.modalBody}>
+              Select one of your communities where you are admin/owner.
+            </Text>
+            <ScrollView
+              style={styles.modalList}
+              showsVerticalScrollIndicator={false}
+            >
+              {adminCommunities.length === 0 ? (
+                <Text style={styles.modalEmpty}>
+                  No admin communities available.
+                </Text>
+              ) : (
+                adminCommunities.map((community) => {
+                  const selected = community.id === linkedCommunityId;
+                  return (
+                    <Pressable
+                      key={community.id}
+                      style={[
+                        styles.modalOption,
+                        selected && styles.modalOptionSelected,
+                      ]}
+                      onPress={() => {
+                        setLinkedCommunityId(community.id);
+                        setLinkedCommunityName(community.name);
+                        setCommunityError("");
+                        setCommunityPickerOpen(false);
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.modalOptionText,
+                          selected && styles.modalOptionTextSelected,
+                        ]}
+                      >
+                        {community.name}
+                      </Text>
+                    </Pressable>
+                  );
+                })
+              )}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal
         visible={pickerTarget !== null}
         transparent
         animationType="none"
@@ -830,7 +993,39 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 0,
   },
+  sectionTitleStatic: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 15,
+    color: Colors.dark,
+  },
   fieldGap: { marginTop: 14 },
+  selectLabel: {
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 13,
+    color: "#666",
+    marginBottom: 6,
+    marginLeft: 2,
+  },
+  selectField: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: Colors.light,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  selectValue: {
+    flex: 1,
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14,
+    color: Colors.dark,
+  },
+  selectPlaceholder: {
+    color: "#999",
+  },
   textArea: { minHeight: 90, alignItems: "flex-start" },
   dateRow: { flexDirection: "column", gap: 10 },
   durationCard: {
@@ -888,6 +1083,63 @@ const styles = StyleSheet.create({
   chipTextSelected: {
     color: Colors.dark,
     fontFamily: Fonts.gabarito.medium,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 28,
+  },
+  modalCard: {
+    width: "100%",
+    maxHeight: "70%",
+    borderRadius: 20,
+    backgroundColor: "#fff",
+    padding: 20,
+  },
+  modalTitle: {
+    fontFamily: Fonts.gabarito.bold,
+    fontSize: 20,
+    color: Colors.dark,
+    textAlign: "center",
+  },
+  modalBody: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14,
+    color: "#777",
+    textAlign: "center",
+    marginTop: 4,
+    marginBottom: 14,
+  },
+  modalList: {
+    marginHorizontal: -4,
+  },
+  modalOption: {
+    minHeight: 48,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  modalOptionSelected: {
+    backgroundColor: Colors.primary + "12",
+  },
+  modalOptionText: {
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 15,
+    color: Colors.dark,
+  },
+  modalOptionTextSelected: {
+    color: Colors.primary,
+  },
+  modalEmpty: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14,
+    color: "#888",
+    textAlign: "center",
+    paddingVertical: 14,
   },
   submitButton: { marginTop: 8 },
 });

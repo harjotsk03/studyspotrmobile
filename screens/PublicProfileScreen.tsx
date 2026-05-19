@@ -6,9 +6,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
   FlatList,
   Image,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -22,7 +24,7 @@ import ProfileStat from "../components/ProfileStat";
 import ProfileTabsBar, {
   type PublicProfileMainTabKey,
 } from "../components/ProfileTabsBar";
-import { SkeletonBox, SkeletonCard } from "../components/Skeleton";
+import { SkeletonBox } from "../components/Skeleton";
 import { API_BASE_URL } from "../constants/Api";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
@@ -118,6 +120,88 @@ function tabEmptyLabel(mainTab: PublicProfileMainTabKey): string {
   if (mainTab === "liked") return "No liked posts yet.";
   if (mainTab === "spots") return "No spots listed yet.";
   return "No reviews yet.";
+}
+
+/** Matches loaded header: hero row, stats beside avatar, bio, actions, tabs, grid (#6). */
+function PublicProfileLoadingSkeleton() {
+  const winW = Dimensions.get("window").width;
+  const pad = 16 * 2;
+  const colGaps = 2 * 2;
+  const tileW = Math.max(56, (winW - pad - colGaps) / 3) - 2;
+  const tileH = tileW / 0.78;
+
+  return (
+    <ScrollView
+      showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+      contentContainerStyle={styles.skeletonScroll}
+    >
+      <View style={styles.heroRow}>
+        <SkeletonBox width={92} height={92} radius={46} />
+        <View style={styles.heroMain}>
+          <SkeletonBox width="76%" height={22} radius={11} />
+          <SkeletonBox
+            width="38%"
+            height={14}
+            radius={7}
+            style={{ marginTop: 8 }}
+          />
+          <View style={styles.statsRow}>
+            {[0, 1, 2].map((i) => (
+              <View key={i} style={styles.statCell}>
+                <SkeletonBox
+                  width="52%"
+                  height={17}
+                  radius={9}
+                  style={{ alignSelf: "center" }}
+                />
+                <SkeletonBox
+                  width="78%"
+                  height={11}
+                  radius={6}
+                  style={{ marginTop: 7, alignSelf: "center" }}
+                />
+              </View>
+            ))}
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.skeletonBioBlock}>
+        <SkeletonBox width="100%" height={14} radius={7} />
+        <SkeletonBox
+          width="68%"
+          height={14}
+          radius={7}
+          style={{ marginTop: 8 }}
+        />
+      </View>
+
+      <View style={styles.actionButtonsRow}>
+        <SkeletonBox height={42} radius={12} style={{ flex: 1 }} />
+        <SkeletonBox height={42} radius={12} style={{ flex: 1 }} />
+      </View>
+
+      <SkeletonBox
+        width="100%"
+        height={52}
+        radius={12}
+        style={{ marginTop: 14 }}
+      />
+
+      <View style={styles.skeletonGridWrap}>
+        {[0, 1, 2].map((row) => (
+          <View key={row} style={styles.skeletonGridRow}>
+            {[0, 1, 2].map((col) => (
+              <View key={`${row}-${col}`} style={styles.skeletonGridTile}>
+                <SkeletonBox width={tileW} height={tileH} radius={4} />
+              </View>
+            ))}
+          </View>
+        ))}
+      </View>
+    </ScrollView>
+  );
 }
 
 export default function PublicProfileScreen({ navigation, route }: Props) {
@@ -875,61 +959,7 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
           <View style={[styles.iconButton, styles.iconButtonPlaceholder]} />
         </View>
 
-        {loading && (
-          <View style={styles.scroll}>
-            <View style={styles.heroCard}>
-              <SkeletonBox width={96} height={96} radius={48} />
-              <SkeletonBox
-                width={170}
-                height={24}
-                radius={12}
-                style={{ marginTop: 16 }}
-              />
-              <SkeletonBox
-                width={110}
-                height={14}
-                radius={7}
-                style={{ marginTop: 8 }}
-              />
-              <SkeletonBox
-                width={128}
-                height={41}
-                radius={14}
-                style={{ marginTop: 18 }}
-              />
-            </View>
-            <View style={styles.statsContainer}>
-              {[0, 1, 2].map((item) => (
-                <View key={item} style={styles.statSkeleton}>
-                  <SkeletonBox width={42} height={20} radius={10} />
-                  <SkeletonBox
-                    width={70}
-                    height={12}
-                    radius={6}
-                    style={{ marginTop: 8 }}
-                  />
-                </View>
-              ))}
-            </View>
-            <SkeletonBox
-              width="88%"
-              height={15}
-              radius={8}
-              style={{ alignSelf: "center", marginTop: 24 }}
-            />
-            <SkeletonCard style={styles.infoCard}>
-              <SkeletonBox width="65%" height={14} radius={7} />
-              <SkeletonBox width="56%" height={14} radius={7} />
-              <SkeletonBox width="72%" height={14} radius={7} />
-            </SkeletonCard>
-            <SkeletonBox
-              width="100%"
-              height={44}
-              radius={22}
-              style={{ marginTop: 24 }}
-            />
-          </View>
-        )}
+        {loading && <PublicProfileLoadingSkeleton />}
 
         {!loading && !!error && (
           <View style={styles.stateCard}>
@@ -1038,13 +1068,29 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     paddingTop: 4,
   },
-  scroll: {
+  skeletonScroll: {
     paddingHorizontal: 16,
-    paddingBottom: 40,
+    paddingTop: 4,
+    paddingBottom: 44,
   },
-  heroCard: {
+  skeletonBioBlock: {
+    marginTop: 14,
+  },
+  skeletonGridWrap: {
+    marginTop: 12,
+    gap: 0,
+  },
+  skeletonGridRow: {
+    flexDirection: "row",
+    gap: 2,
+    marginBottom: 2,
+  },
+  skeletonGridTile: {
+    flex: 1,
+    maxWidth: "33.333%",
+    padding: 1,
     alignItems: "center",
-    paddingTop: 8,
+    justifyContent: "center",
   },
   heroRow: {
     flexDirection: "row",
@@ -1132,15 +1178,6 @@ const styles = StyleSheet.create({
   actionBtnSpacer: {
     flex: 1,
   },
-  statsContainer: {
-    flexDirection: "row",
-    justifyContent: "center",
-    gap: 24,
-    marginTop: 24,
-  },
-  statSkeleton: {
-    alignItems: "center",
-  },
   bio: {
     color: "#555",
     fontFamily: Fonts.instrument.regular,
@@ -1167,18 +1204,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#555",
     lineHeight: 20,
-  },
-  infoCard: {
-    backgroundColor: "#fff",
-    borderRadius: 18,
-    gap: 8,
-    marginTop: 22,
-    padding: 18,
-  },
-  infoText: {
-    color: "#555",
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 14,
   },
   stateCard: {
     backgroundColor: "#fff",

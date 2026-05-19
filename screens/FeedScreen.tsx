@@ -11,20 +11,31 @@ import {
   View,
   type ViewToken,
 } from "react-native";
-import { useIsFocused } from "@react-navigation/native";
-import { Plus } from "lucide-react-native";
+import {
+  useIsFocused,
+  useNavigation,
+  type NavigationProp,
+  type ParamListBase,
+} from "@react-navigation/native";
+import type { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
+import { Plus, Activity } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FeedCommentsModal from "../components/FeedCommentsModal";
 import FeedComposerModal from "../components/FeedComposerModal";
 import FeedReelItem from "../components/FeedReelItem";
+import SharePostToFriendsSheet from "../components/SharePostToFriendsSheet";
 import TopNav from "../components/TopNav";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import type { UserProfileData } from "../context/AuthContext";
 import { useAuth } from "../context/AuthContext";
+import { useNotifications } from "../context/NotificationsContext";
+import type { MainTabsParamList } from "../types/navigation";
 import { fetchFeedFriends, type FeedPost } from "../utils/feedApi";
 
 const win = Dimensions.get("window");
+
+type FeedTabNavigation = BottomTabNavigationProp<MainTabsParamList, "Feed">;
 
 function enrichFeedPostAuthor(
   post: FeedPost | null,
@@ -53,6 +64,8 @@ function enrichFeedPostAuthor(
 export default function FeedScreen() {
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
+  const navigation = useNavigation<FeedTabNavigation>();
+  const { unreadCount } = useNotifications();
   const { token, profile } = useAuth();
   const user = profile?.userProfile;
 
@@ -70,6 +83,9 @@ export default function FeedScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [feedError, setFeedError] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [shareFriendsPost, setShareFriendsPost] = useState<FeedPost | null>(
+    null,
+  );
   const [overlaysSubdued, setOverlaysSubdued] = useState(false);
 
   const loadingMoreRef = useRef(false);
@@ -288,6 +304,7 @@ export default function FeedScreen() {
                 onMergePost={mergePost}
                 onReplacePost={replacePost}
                 onOpenComments={() => setCommentsPostId(item.id)}
+                onShareWithFriends={() => setShareFriendsPost(item)}
               />
             )}
             ListEmptyComponent={
@@ -333,14 +350,40 @@ export default function FeedScreen() {
               },
             ]}
           >
-            <Text style={styles.topFriends}>Friends</Text>
+            <View style={styles.topLeftCluster}>
+              <Pressable
+                onPress={() => setComposerOpen(true)}
+                hitSlop={8}
+                style={styles.addCircle}
+                accessibilityRole="button"
+                accessibilityLabel="Create post"
+              >
+                <Plus size={22} color="#fff" strokeWidth={2.4} />
+              </Pressable>
+              <Text style={styles.topBrand} numberOfLines={1}>
+                Study Spotr
+              </Text>
+            </View>
             <Pressable
-              onPress={() => setComposerOpen(true)}
+              onPress={() =>
+                navigation.navigate({
+                  name: "Inbox",
+                  params: { screen: "InboxHome" },
+                })
+              }
               hitSlop={12}
+              style={styles.activityButton}
               accessibilityRole="button"
-              accessibilityLabel="New post"
+              accessibilityLabel="Activity and notifications"
             >
-              <Plus size={26} color="#fff" strokeWidth={2.4} />
+              <Activity size={24} color="#fff" strokeWidth={2.2} />
+              {unreadCount > 0 ? (
+                <View style={styles.activityBadge}>
+                  <Text style={styles.activityBadgeText}>
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </Text>
+                </View>
+              ) : null}
             </Pressable>
           </View>
 
@@ -386,6 +429,14 @@ export default function FeedScreen() {
         </>
       )}
 
+      <SharePostToFriendsSheet
+        visible={Boolean(shareFriendsPost)}
+        post={shareFriendsPost}
+        token={token}
+        navigation={navigation as NavigationProp<ParamListBase>}
+        onClose={() => setShareFriendsPost(null)}
+      />
+
       <FeedComposerModal
         visible={composerOpen}
         token={token}
@@ -413,16 +464,64 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingBottom: 8,
+    gap: 12,
   },
-  topFriends: {
+  topLeftCluster: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    minWidth: 0,
+    gap: 10,
+  },
+  addCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.22)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.35)",
+  },
+  topBrand: {
+    flexShrink: 1,
     fontFamily: Fonts.gabarito.bold,
-    fontSize: 22,
+    fontSize: 20,
     color: "#fff",
     textShadowColor: "rgba(0,0,0,0.45)",
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
+    letterSpacing: 0.2,
+  },
+  activityButton: {
+    position: "relative",
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.14)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.28)",
+  },
+  activityBadge: {
+    position: "absolute",
+    top: 2,
+    right: 2,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 5,
+    borderRadius: 9,
+    backgroundColor: Colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  activityBadgeText: {
+    fontFamily: Fonts.gabarito.bold,
+    fontSize: 10,
+    color: "#fff",
   },
   loadingOverlayDark: {
     ...StyleSheet.absoluteFillObject,

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Image,
+  ActivityIndicator,
   Modal,
   Pressable,
   RefreshControl,
@@ -26,10 +26,22 @@ import {
 } from "../components/Skeleton";
 import type {
   CommunityData,
-  CommunityLatestMember,
   CommunityStackParamList,
+  CommunityLatestMember,
 } from "./CommunityDetailScreen";
-import { Check, ChevronDown, Search } from "lucide-react-native";
+import EventDetailDrawer, {
+  type CommunityEvent as DrawerEvent,
+  type RsvpStatus,
+} from "./EventDetailDrawer";
+import {
+  CalendarDays,
+  Check,
+  ChevronDown,
+  Clock,
+  MapPin,
+  Search,
+  Users,
+} from "lucide-react-native";
 
 // Cycle through these when the API doesn't return a colour
 const FALLBACK_COLORS = [
@@ -64,6 +76,68 @@ interface ApiCommunity {
   category?: string;
   is_public?: boolean;
   user_role?: string;
+}
+
+type ApiBrowseEvent = DrawerEvent & {
+  community_id?: string;
+  communityId?: string;
+  community_name?: string;
+  communityName?: string;
+  community?: ApiCommunity;
+  communities?: ApiCommunity;
+  community_is_public?: boolean;
+  communityIsPublic?: boolean;
+  user_community_role?: string;
+  userCommunityRole?: string;
+};
+
+type BrowseEvent = DrawerEvent & {
+  communityId: string;
+  communityName: string;
+  communityIsPublic: boolean;
+  userCommunityRole?: string;
+};
+
+function toBrowseEvent(event: ApiBrowseEvent): BrowseEvent {
+  const community = event.community ?? event.communities;
+  return {
+    ...event,
+    communityId: event.communityId ?? event.community_id ?? community?.id ?? "",
+    communityName:
+      event.communityName ??
+      event.community_name ??
+      community?.name ??
+      "General",
+    communityIsPublic:
+      event.communityIsPublic ??
+      event.community_is_public ??
+      community?.is_public ??
+      true,
+    userCommunityRole:
+      event.userCommunityRole ??
+      event.user_community_role ??
+      community?.user_role,
+  };
+}
+
+function formatEventDate(iso: string) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    return { day: "--", month: "---", full: "Unknown date", time: "--:--" };
+  }
+  return {
+    day: d.toLocaleDateString(undefined, { day: "2-digit" }),
+    month: d.toLocaleDateString(undefined, { month: "short" }),
+    full: d.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }),
+    time: d.toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    }),
+  };
 }
 
 function toMemberAvatars(latest_members?: (ApiMember | string)[]): string[] {
@@ -102,6 +176,60 @@ function toCommunityData(api: ApiCommunity, index: number): CommunityData {
   };
 }
 
+function CommunityEventCard({
+  event,
+  onPress,
+}: {
+  event: BrowseEvent;
+  onPress: () => void;
+}) {
+  const { day, month, full, time } = formatEventDate(event.start_time);
+  return (
+    <Pressable
+      style={({ pressed }) => [
+        styles.eventCard,
+        pressed && styles.eventCardPressed,
+      ]}
+      onPress={onPress}
+    >
+      <View style={styles.eventDateBadge}>
+        <Text style={styles.eventDateDay}>{day}</Text>
+        <Text style={styles.eventDateMonth}>{month}</Text>
+      </View>
+      <View style={styles.eventBody}>
+        <Text style={styles.eventCommunityName} numberOfLines={1}>
+          {event.communityName || "General"}
+        </Text>
+        <Text style={styles.eventTitle} numberOfLines={2}>
+          {event.title}
+        </Text>
+        <View style={styles.eventMetaRow}>
+          <Clock size={13} color="#888" strokeWidth={2} />
+          <Text style={styles.eventMetaText} numberOfLines={1}>
+            {full} · {time}
+          </Text>
+        </View>
+        {!!event.location && (
+          <View style={styles.eventMetaRow}>
+            <MapPin size={13} color="#888" strokeWidth={2} />
+            <Text style={styles.eventMetaText} numberOfLines={1}>
+              {event.location}
+            </Text>
+          </View>
+        )}
+        {typeof event.attendee_count === "number" ? (
+          <View style={styles.eventMetaRow}>
+            <Users size={13} color="#888" strokeWidth={2} />
+            <Text style={styles.eventMetaText}>
+              {event.attendee_count.toLocaleString()} attendees
+            </Text>
+          </View>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+}
+
 export default function CommunityScreen() {
   const navigation =
     useNavigation<NativeStackNavigationProp<CommunityStackParamList>>();
@@ -117,6 +245,50 @@ export default function CommunityScreen() {
   const [visibilityFilter, setVisibilityFilter] = useState<
     "all" | "public" | "private"
   >("all");
+  const [activeTab, setActiveTab] = useState<"communities" | "events">(
+    "communities",
+  );
+
+  const [events, setEvents] = useState<BrowseEvent[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(true);
+  const [eventsRefreshing, setEventsRefreshing] = useState(false);
+  const [eventsError, setEventsError] = useState("");
+  const [eventQuery, setEventQuery] = useState("");
+
+  const [selectedEvent, setSelectedEvent] = useState<BrowseEvent | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const openEvent = (event: BrowseEvent) => {
+    setSelectedEvent(event);
+    setDrawerOpen(true);
+  };
+
+  const handleAttendanceChange = (
+    eventId: string,
+    newCount: number,
+    newStatus: RsvpStatus,
+  ) => {
+    setEvents((current) =>
+      current.map((event) =>
+        event.id === eventId
+          ? {
+              ...event,
+              attendee_count: newCount,
+              user_rsvp_status: newStatus,
+            }
+          : event,
+      ),
+    );
+    setSelectedEvent((current) =>
+      current && current.id === eventId
+        ? {
+            ...current,
+            attendee_count: newCount,
+            user_rsvp_status: newStatus,
+          }
+        : current,
+    );
+  };
 
   const fetchCommunities = async (isRefresh = false) => {
     if (!token) return;
@@ -149,9 +321,64 @@ export default function CommunityScreen() {
     }
   };
 
+  const fetchEvents = async (isRefresh = false) => {
+    if (!token) return;
+    if (isRefresh) setEventsRefreshing(true);
+    else setEventsLoading(true);
+    setEventsError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/events?filter=all`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+      });
+      const json: unknown = await res.json().catch(() => null);
+      if (!res.ok || !json || typeof json !== "object") {
+        throw new Error(
+          (json as { error?: string })?.error ??
+            `Failed to load events (${res.status})`,
+        );
+      }
+      const obj = json as Record<string, unknown>;
+      const upcoming = Array.isArray(obj.upcoming) ? obj.upcoming : [];
+      const previous = Array.isArray(obj.previous) ? obj.previous : [];
+      const all = Array.isArray(obj.events)
+        ? obj.events
+        : [...upcoming, ...previous];
+      const normalized = all
+        .filter((item): item is ApiBrowseEvent =>
+          Boolean(item && typeof item === "object"),
+        )
+        .map(toBrowseEvent)
+        .sort(
+          (a, b) =>
+            new Date(a.start_time).getTime() - new Date(b.start_time).getTime(),
+        );
+      setEvents(normalized);
+    } catch (err) {
+      setEventsError(
+        err instanceof Error ? err.message : "Failed to load events.",
+      );
+      setEvents([]);
+    } finally {
+      if (isRefresh) setEventsRefreshing(false);
+      else setEventsLoading(false);
+    }
+  };
+
   useEffect(() => {
     void fetchCommunities();
+    void fetchEvents();
   }, [token]);
+
+  const onRefresh = () => {
+    if (activeTab === "communities") {
+      void fetchCommunities(true);
+    } else {
+      void fetchEvents(true);
+    }
+  };
 
   const categories = useMemo(() => {
     const unique = Array.from(
@@ -189,6 +416,24 @@ export default function CommunityScreen() {
     });
   }, [categoryFilter, communities, query, visibilityFilter]);
 
+  const filteredEvents = useMemo(() => {
+    const q = eventQuery.trim().toLowerCase();
+    if (!q) return events;
+    return events.filter((event) =>
+      [
+        event.title,
+        event.description,
+        event.communityName,
+        event.location,
+        event.event_type,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [eventQuery, events]);
+
   return (
     <View style={styles.container}>
       <TopNav />
@@ -196,150 +441,212 @@ export default function CommunityScreen() {
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => fetchCommunities(true)}
+            refreshing={
+              activeTab === "communities" ? refreshing : eventsRefreshing
+            }
+            onRefresh={onRefresh}
             tintColor={Colors.primary}
             colors={[Colors.primary]}
           />
         }
       >
-        <Image
-          source={require("../assets/communityheader.png")}
-          style={styles.headerImage}
-          resizeMode="cover"
-        />
-        <View style={styles.ctaRow}>
-          <View style={styles.ctaCopy}>
-            <Text style={styles.title}>Create Your Own Community</Text>
-            <Text style={styles.subtitle}>
-              Host events, share posts, and meet new people.
-            </Text>
-          </View>
-          <Button
-            label="Create"
-            variant="accent"
-            size="sm"
-            onPress={() => navigation.navigate("CreateCommunity")}
-          />
-        </View>
-
-        <View style={styles.ctaRow}>
-          <View style={styles.ctaCopy}>
-            <Text style={styles.title}>Upcoming Events</Text>
-            <Text style={styles.subtitle}>
-              Find networking, studying, and career events.
-            </Text>
-          </View>
-          <Button
-            label="Browse"
-            variant="default"
-            size="sm"
-            onPress={() => navigation.navigate("BrowseEvents")}
-          />
-        </View>
-
-        <View style={styles.communitiesContainer}>
-          <Text style={styles.sectionTitle}>Popular Communities Near You</Text>
-          <Input
-            placeholder="Search communities"
-            value={query}
-            onChangeText={setQuery}
-            autoCapitalize="none"
-            autoCorrect={false}
-            icon={<Search size={16} color="#999" strokeWidth={2.2} />}
-            containerStyle={styles.searchInput}
-          />
-
+        <View style={styles.tabSwitchWrap}>
           <Pressable
-            style={styles.categorySelector}
-            onPress={() => setCategoryModalVisible(true)}
+            style={[
+              styles.tabSwitchBtn,
+              activeTab === "communities" && styles.tabSwitchBtnActive,
+            ]}
+            onPress={() => setActiveTab("communities")}
           >
-            <View>
-              <Text style={styles.categorySelectorLabel}>Category</Text>
-              <Text style={styles.categorySelectorValue}>{categoryFilter}</Text>
-            </View>
-            <ChevronDown size={18} color="#777" strokeWidth={2.2} />
+            <Text
+              style={[
+                styles.tabSwitchTx,
+                activeTab === "communities" && styles.tabSwitchTxActive,
+              ]}
+            >
+              Communities
+            </Text>
           </Pressable>
+          <Pressable
+            style={[
+              styles.tabSwitchBtn,
+              activeTab === "events" && styles.tabSwitchBtnActive,
+            ]}
+            onPress={() => setActiveTab("events")}
+          >
+            <Text
+              style={[
+                styles.tabSwitchTx,
+                activeTab === "events" && styles.tabSwitchTxActive,
+              ]}
+            >
+              Events
+            </Text>
+          </Pressable>
+        </View>
 
-          <View style={styles.visibilityRow}>
-            {[
-              { label: "All", value: "all" as const },
-              { label: "Public", value: "public" as const },
-              { label: "Private", value: "private" as const },
-            ].map((item) => {
-              const selected = visibilityFilter === item.value;
-              return (
-                <Pressable
-                  key={item.value}
-                  style={[
-                    styles.visibilityChip,
-                    selected && styles.visibilityChipActive,
-                  ]}
-                  onPress={() => setVisibilityFilter(item.value)}
-                >
-                  <Text
-                    style={[
-                      styles.visibilityChipText,
-                      selected && styles.visibilityChipTextActive,
-                    ]}
-                  >
-                    {item.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          {loading && (
-            <SkeletonList
-              count={4}
-              row={
-                <SkeletonCard style={styles.communitySkeletonCard}>
-                  <View style={styles.communitySkeletonTop}>
-                    <SkeletonBox width={48} height={48} radius={24} />
-                    <View style={{ flex: 1, gap: 8 }}>
-                      <SkeletonBox width="65%" height={18} radius={9} />
-                      <SkeletonBox width="38%" height={13} radius={7} />
-                    </View>
-                  </View>
-                  <SkeletonBox width="100%" height={14} radius={7} />
-                  <SkeletonBox width="84%" height={14} radius={7} />
-                </SkeletonCard>
-              }
-            />
-          )}
-
-          {!loading && !!error && <Text style={styles.errorText}>{error}</Text>}
-
-          {!loading && !error && communities.length === 0 && (
-            <Text style={styles.emptyText}>No communities found.</Text>
-          )}
-
-          {!loading &&
-            !error &&
-            communities.length > 0 &&
-            filteredCommunities.length === 0 && (
-              <Text style={styles.emptyText}>
-                No communities match your filters.
+        {activeTab === "communities" ? (
+          <View style={styles.communitiesContainer}>
+            <View style={styles.sectionTitleRow}>
+              <Text style={styles.sectionTitle}>
+                Popular Communities Near You
               </Text>
+              <Button
+                label="Create"
+                variant="accent"
+                size="sm"
+                onPress={() => navigation.navigate("CreateCommunity")}
+              />
+            </View>
+            <Input
+              placeholder="Search communities"
+              value={query}
+              onChangeText={setQuery}
+              autoCapitalize="none"
+              autoCorrect={false}
+              icon={<Search size={16} color="#999" strokeWidth={2.2} />}
+              containerStyle={styles.searchInput}
+            />
+
+            <Pressable
+              style={styles.categorySelector}
+              onPress={() => setCategoryModalVisible(true)}
+            >
+              <View>
+                <Text style={styles.categorySelectorLabel}>Category</Text>
+                <Text style={styles.categorySelectorValue}>
+                  {categoryFilter}
+                </Text>
+              </View>
+              <ChevronDown size={18} color="#777" strokeWidth={2.2} />
+            </Pressable>
+
+            <View style={styles.visibilityRow}>
+              {[
+                { label: "All", value: "all" as const },
+                { label: "Public", value: "public" as const },
+                { label: "Private", value: "private" as const },
+              ].map((item) => {
+                const selected = visibilityFilter === item.value;
+                return (
+                  <Pressable
+                    key={item.value}
+                    style={[
+                      styles.visibilityChip,
+                      selected && styles.visibilityChipActive,
+                    ]}
+                    onPress={() => setVisibilityFilter(item.value)}
+                  >
+                    <Text
+                      style={[
+                        styles.visibilityChipText,
+                        selected && styles.visibilityChipTextActive,
+                      ]}
+                    >
+                      {item.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {loading && (
+              <SkeletonList
+                count={4}
+                row={
+                  <SkeletonCard style={styles.communitySkeletonCard}>
+                    <View style={styles.communitySkeletonTop}>
+                      <SkeletonBox width={48} height={48} radius={24} />
+                      <View style={{ flex: 1, gap: 8 }}>
+                        <SkeletonBox width="65%" height={18} radius={9} />
+                        <SkeletonBox width="38%" height={13} radius={7} />
+                      </View>
+                    </View>
+                    <SkeletonBox width="100%" height={14} radius={7} />
+                    <SkeletonBox width="84%" height={14} radius={7} />
+                  </SkeletonCard>
+                }
+              />
             )}
 
-          {filteredCommunities.map((community) => (
-            <CommunityCard
-              key={community.id}
-              name={community.name}
-              members={community.members}
-              latestMembers={community.latestMembers}
-              description={community.description}
-              icon={community.icon}
-              color={community.color}
-              memberAvatars={community.memberAvatars}
-              onPress={() =>
-                navigation.navigate("CommunityDetail", { community })
-              }
+            {!loading && !!error && (
+              <Text style={styles.errorText}>{error}</Text>
+            )}
+
+            {!loading && !error && communities.length === 0 && (
+              <Text style={styles.emptyText}>No communities found.</Text>
+            )}
+
+            {!loading &&
+              !error &&
+              communities.length > 0 &&
+              filteredCommunities.length === 0 && (
+                <Text style={styles.emptyText}>
+                  No communities match your filters.
+                </Text>
+              )}
+
+            {filteredCommunities.map((community) => (
+              <CommunityCard
+                key={community.id}
+                name={community.name}
+                members={community.members}
+                latestMembers={community.latestMembers}
+                description={community.description}
+                icon={community.icon}
+                color={community.color}
+                memberAvatars={community.memberAvatars}
+                onPress={() =>
+                  navigation.navigate("CommunityDetail", { community })
+                }
+              />
+            ))}
+          </View>
+        ) : (
+          <View style={styles.communitiesContainer}>
+            <View style={styles.sectionTitleRow}>
+              <Text style={styles.sectionTitle}>Discover Events</Text>
+              <Button
+                label="New Event"
+                variant="accent"
+                size="sm"
+                onPress={() => navigation.navigate("CreateEvent", {})}
+              />
+            </View>
+            <Input
+              placeholder="Search events"
+              value={eventQuery}
+              onChangeText={setEventQuery}
+              autoCapitalize="none"
+              autoCorrect={false}
+              icon={<Search size={16} color="#999" strokeWidth={2.2} />}
+              containerStyle={styles.searchInput}
             />
-          ))}
-        </View>
+
+            {eventsLoading ? (
+              <View style={styles.eventsLoadingWrap}>
+                <ActivityIndicator color={Colors.primary} />
+              </View>
+            ) : eventsError ? (
+              <Text style={styles.errorText}>{eventsError}</Text>
+            ) : filteredEvents.length === 0 ? (
+              <View style={styles.eventsEmptyWrap}>
+                <CalendarDays size={40} color="#ccc" strokeWidth={1.6} />
+                <Text style={styles.emptyText}>
+                  No events found. Create one to get started.
+                </Text>
+              </View>
+            ) : (
+              filteredEvents.map((event) => (
+                <CommunityEventCard
+                  key={`${event.communityId || "general"}-${event.id}`}
+                  event={event}
+                  onPress={() => openEvent(event)}
+                />
+              ))
+            )}
+          </View>
+        )}
       </ScrollView>
 
       <Modal
@@ -396,6 +703,17 @@ export default function CommunityScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <EventDetailDrawer
+        event={selectedEvent}
+        visible={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        communityId={selectedEvent?.communityId ?? ""}
+        token={token}
+        communityIsPublic={selectedEvent?.communityIsPublic ?? true}
+        userCommunityRole={selectedEvent?.userCommunityRole}
+        onAttendanceChange={handleAttendanceChange}
+      />
     </View>
   );
 }
@@ -423,28 +741,53 @@ const styles = StyleSheet.create({
     width: "100%",
     height: 58,
   },
-  title: {
-    fontSize: 18,
-    fontFamily: Fonts.gabarito.medium,
-    color: Colors.dark,
-    marginBottom: 2,
+  tabSwitchWrap: {
+    marginTop: 8,
+    marginHorizontal: 16,
+    marginBottom: 6,
+    flexDirection: "row",
+    backgroundColor: "#f9f9f9",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#e6e6e6",
+    padding: 4,
+    gap: 4,
   },
-  subtitle: {
-    fontSize: 12,
-    fontFamily: Fonts.instrument.regular,
+  tabSwitchBtn: {
+    flex: 1,
+    minHeight: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 10,
+  },
+  tabSwitchBtnActive: {
+    backgroundColor: Colors.primary,
+  },
+  tabSwitchTx: {
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 14,
     color: Colors.dark,
-    lineHeight: 16,
+  },
+  tabSwitchTxActive: {
+    color: "#fff",
   },
   communitiesContainer: {
     paddingHorizontal: 16,
     paddingTop: 14,
     paddingBottom: 40,
   },
+  sectionTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 14,
+  },
   sectionTitle: {
+    flex: 1,
     fontSize: 22,
     fontFamily: Fonts.gabarito.semiBold,
     color: Colors.dark,
-    marginBottom: 14,
   },
   searchInput: {
     marginBottom: 12,
@@ -523,6 +866,75 @@ const styles = StyleSheet.create({
     color: "#888",
     textAlign: "center",
     marginTop: 24,
+  },
+  eventsLoadingWrap: {
+    paddingVertical: 24,
+    alignItems: "center",
+  },
+  eventsEmptyWrap: {
+    alignItems: "center",
+    gap: 10,
+    paddingTop: 28,
+  },
+  eventCard: {
+    flexDirection: "row",
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#eee",
+    padding: 16,
+    marginBottom: 12,
+    gap: 14,
+  },
+  eventCardPressed: {
+    opacity: 0.75,
+  },
+  eventDateBadge: {
+    width: 52,
+    height: 52,
+    borderRadius: 12,
+    backgroundColor: Colors.primary + "14",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  eventDateDay: {
+    fontFamily: Fonts.gabarito.bold,
+    fontSize: 20,
+    color: Colors.primary,
+    lineHeight: 22,
+  },
+  eventDateMonth: {
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 10,
+    color: Colors.primary,
+    letterSpacing: 0.5,
+  },
+  eventBody: {
+    flex: 1,
+    gap: 4,
+  },
+  eventCommunityName: {
+    fontFamily: Fonts.instrument.medium,
+    fontSize: 12,
+    color: Colors.accent,
+  },
+  eventTitle: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 16,
+    color: Colors.dark,
+    marginBottom: 2,
+  },
+  eventMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  eventMetaText: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 13,
+    color: "#888",
+    flex: 1,
   },
   modalBackdrop: {
     flex: 1,
