@@ -24,7 +24,11 @@ import { Fonts } from "../constants/Fonts";
 import { useAuth } from "../context/AuthContext";
 import { type StudySpot, useSpots } from "../context/SpotsContext";
 import type { SpotsStackParamList } from "../types/navigation";
-import { createSpotMultipart, updateSpotMultipart } from "../utils/spotsApi";
+import {
+  createSpotMultipart,
+  SpotDuplicateError,
+  updateSpotMultipart,
+} from "../utils/spotsApi";
 import { getSpotCoordinates } from "../utils/getSpotCoordinates";
 import { getSpotTitle } from "../utils/getSpotTitle";
 
@@ -446,6 +450,30 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
         { text: "OK", onPress: () => navigation.goBack() },
       ]);
     } catch (e) {
+      if (e instanceof SpotDuplicateError) {
+        const existing = e.duplicate.spot;
+        const existingName =
+          (typeof existing?.name === "string" && existing.name.trim()) ||
+          "this spot";
+        await refetchSpots().catch(() => {});
+        Alert.alert(
+          "Already on Studyspotr",
+          `"${existingName}" is already listed at this location. We'll open it now so you can review or save it.`,
+          [
+            {
+              text: "View spot",
+              onPress: () => {
+                if (route.name === "CreateSpot") {
+                  navigation.replace("SpotDetail", { spot: existing });
+                } else {
+                  navigation.navigate("SpotDetail", { spot: existing });
+                }
+              },
+            },
+          ],
+        );
+        return;
+      }
       Alert.alert("Error", e instanceof Error ? e.message : isEdit ? "Could not update spot." : "Could not create spot.");
     } finally {
       setLoading(false);

@@ -1,7 +1,5 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
   FlatList,
   Image,
   RefreshControl,
@@ -10,6 +8,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { ArrowLeft } from "lucide-react-native";
@@ -25,6 +24,33 @@ import {
   isConversationUnread,
   type ChatConversation,
 } from "../utils/chatApi";
+
+/** Per-user cache key for the conversations list. */
+const CACHE_KEY_PREFIX = "chat:conversations:";
+const cacheKeyForUser = (userId: string) => `${CACHE_KEY_PREFIX}${userId}`;
+
+/** Stable identity check so we skip re-renders when the network returns the
+ * same data we already had cached. */
+function rowsAreEqual(
+  a: ChatConversation[],
+  b: ChatConversation[],
+): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.id !== y.id ||
+      x.last_message_preview !== y.last_message_preview ||
+      x.last_message_at !== y.last_message_at ||
+      isConversationUnread(x) !== isConversationUnread(y)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
 
 function formatListTime(value?: string | null) {
   if (!value || !value.trim()) return "";
@@ -49,35 +75,100 @@ export default function MessagesScreen() {
   const navigation =
     useNavigation<NativeStackNavigationProp<InboxStackParamList>>();
   const insets = useSafeAreaInsets();
-  const { token } = useAuth();
+  const { token, profile } = useAuth();
+  const userId = profile?.userProfile?.id ?? null;
 
   const [rows, setRows] = useState<ChatConversation[]>([]);
-  const [loading, setLoading] = useState(true);
+  /** True only until we've either restored the cache or made our first network
+   * round-trip; after that we always render the list (with cached rows). */
+  const [hydrated, setHydrated] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const rowsRef = useRef<ChatConversation[]>([]);
 
+  /** Updates `rows` only if the new list differs from the previous one, so we
+   * don't flicker the UI when the network confirms what we already had. */
+  const applyRows = useCallback((next: ChatConversation[]) => {
+    if (!rowsAreEqual(rowsRef.current, next)) {
+      rowsRef.current = next;
+      setRows(next);
+    }
+  }, []);
+
+  const persistRows = useCallback(
+    async (list: ChatConversation[]) => {
+      if (!userId) return;
+      try {
+        await AsyncStorage.setItem(
+          cacheKeyForUser(userId),
+          JSON.stringify(list),
+        );
+      } catch {
+        /* best-effort cache write */
+      }
+    },
+    [userId],
+  );
+
+  /** Read the cached conversations once when we know who's signed in. We do
+   * this in an effect (not on first render) so the disk read never blocks the
+   * initial paint; the empty-state UI shows immediately and is replaced with
+   * cached rows once they're available. */
+  useEffect(() => {
+    let cancelled = false;
+    if (!userId) {
+      rowsRef.current = [];
+      setRows([]);
+      setHydrated(true);
+      return;
+    }
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(cacheKeyForUser(userId));
+        if (cancelled) return;
+        if (raw) {
+          const parsed = JSON.parse(raw) as unknown;
+          if (Array.isArray(parsed)) {
+            applyRows(parsed as ChatConversation[]);
+          }
+        }
+      } catch {
+        /* corrupt cache — ignore */
+      } finally {
+        if (!cancelled) setHydrated(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, applyRows]);
+
+  /** Background refetch — never flips a full-screen spinner. The only UI
+   * indicator is the pull-to-refresh spinner the user explicitly triggered. */
   const load = useCallback(async () => {
     if (!token) {
-      setRows([]);
-      setLoading(false);
+      applyRows([]);
+      setError(null);
       return;
     }
     try {
       const list = await fetchChatConversations(token);
-      setRows(list);
+      applyRows(list);
+      setError(null);
+      void persistRows(list);
     } catch (e) {
-      Alert.alert(
-        "Error",
-        e instanceof Error ? e.message : "Could not load conversations.",
-      );
+      const message =
+        e instanceof Error ? e.message : "Could not load conversations.";
+      // Only surface the error visually when we have nothing cached to fall
+      // back on — otherwise we silently keep showing the last good list.
+      if (rowsRef.current.length === 0) setError(message);
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
-  }, [token]);
+  }, [token, applyRows, persistRows]);
 
   useFocusEffect(
     useCallback(() => {
-      setLoading(true);
       void load();
     }, [load]),
   );
@@ -179,8 +270,6 @@ export default function MessagesScreen() {
             Your conversations will appear here once you are signed in.
           </Text>
         </View>
-      ) : loading ? (
-        <ActivityIndicator style={styles.loader} color={Colors.accent} />
       ) : (
         <FlatList
           data={rows}
@@ -195,12 +284,29 @@ export default function MessagesScreen() {
             />
           }
           ListEmptyComponent={
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>No conversations yet</Text>
-              <Text style={styles.emptyBody}>
-                Message someone from their profile to start a chat.
-              </Text>
-            </View>
+            // While the disk cache is still being read, render nothing rather
+            // than a "no conversations" empty state so we don't flash the
+            // wrong copy at users who do have prior messages.
+            !hydrated ? null : error ? (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyTitle}>Couldn't load messages</Text>
+                <Text style={styles.emptyBody}>{error}</Text>
+                <TouchableOpacity
+                  onPress={onRefresh}
+                  activeOpacity={0.7}
+                  style={styles.retryButton}
+                >
+                  <Text style={styles.retryLabel}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyTitle}>No conversations yet</Text>
+                <Text style={styles.emptyBody}>
+                  Message someone from their profile to start a chat.
+                </Text>
+              </View>
+            )
           }
         />
       )}
@@ -241,7 +347,6 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.gabarito.bold,
     fontSize: 21,
   },
-  loader: { marginTop: 48 },
   listContent: {
     paddingHorizontal: 16,
     paddingBottom: 28,
@@ -324,5 +429,19 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.instrument.regular,
     fontSize: 14,
     lineHeight: 20,
+  },
+  retryButton: {
+    marginTop: 14,
+    alignSelf: "flex-start",
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  retryLabel: {
+    color: Colors.primary,
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 14,
   },
 });

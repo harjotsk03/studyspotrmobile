@@ -33,11 +33,15 @@ export default function ProfilePostGridTile({ post, onPress }: Props) {
 }
 
 const styles = StyleSheet.create({
+  /**
+   * 4:5 portrait — matches Instagram's profile grid since their move from
+   * square to portrait tiles. Tight `padding: 0.5` keeps the 3‑col mosaic
+   * read as a single dense block.
+   */
   wrap: {
     flex: 1,
-    aspectRatio: 0.78,
+    aspectRatio: 0.8,
     maxWidth: "33.333%",
-    padding: 1,
   },
   image: {
     flex: 1,

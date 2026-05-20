@@ -489,7 +489,7 @@ export default function CommunityScreen() {
           <View style={styles.communitiesContainer}>
             <View style={styles.sectionTitleRow}>
               <Text style={styles.sectionTitle}>
-                Popular Communities Near You
+                Communities Near You
               </Text>
               <Button
                 label="Create"

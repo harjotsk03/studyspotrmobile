@@ -484,9 +484,36 @@ export default function ProfileScreen() {
 
   const openPostDetail = useCallback(
     (post: FeedPost) => {
-      navigation.navigate("FeedPostDetail", { post });
+      if (!userId) return;
+      const isLikedTab = mainTab === "liked";
+      const headerTitle = user?.username?.trim()
+        ? `@${user.username.trim()}`
+        : [user?.first_name, user?.last_name]
+            .filter(Boolean)
+            .join(" ")
+            .trim() || "Posts";
+      navigation.navigate("UserPostsFeed", {
+        userId,
+        source: isLikedTab ? "liked" : "posts",
+        initialPostId: post.id,
+        title: headerTitle,
+        subtitle: isLikedTab ? "Liked" : "Posts",
+        initialPosts: isLikedTab ? likedPosts : publishedPosts,
+        initialCursor: isLikedTab ? likedCursor : publishedCursor,
+      });
     },
-    [navigation],
+    [
+      navigation,
+      userId,
+      mainTab,
+      user?.username,
+      user?.first_name,
+      user?.last_name,
+      likedPosts,
+      publishedPosts,
+      likedCursor,
+      publishedCursor,
+    ],
   );
 
   const openSpot = useCallback(
@@ -867,14 +894,13 @@ const styles = StyleSheet.create({
   },
   flatScroll: {
     paddingTop: 12,
-    paddingHorizontal: 16,
     paddingBottom: 44,
     flexGrow: 1,
     gap: 12,
   },
   gridColumnWrap: {
-    gap: 2,
-    marginBottom: 2,
+    gap: 1,
+    marginBottom: 1,
   },
   settingsScroll: {
     flexGrow: 1,
@@ -892,6 +918,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 16,
+    paddingHorizontal: 16,
   },
   heroMain: {
     flex: 1,
@@ -990,12 +1017,14 @@ const styles = StyleSheet.create({
     color: "#555",
     lineHeight: 20,
     textAlign: "left",
+    paddingHorizontal: 16,
   },
   actionButtonsRow: {
     flexDirection: "row",
     gap: 10,
     marginTop: 14,
     marginBottom: 2,
+    paddingHorizontal: 16,
   },
   actionBtn: {
     flex: 1,

@@ -3,12 +3,16 @@ import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as Location from "expo-location";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
+  Animated,
+  Easing,
   FlatList,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -134,10 +138,53 @@ export default function SpotsScreen() {
   const [filters, setFilters] =
     useState<SpotFiltersValue>(DEFAULT_SPOT_FILTERS);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [userLocation, setUserLocation] = useState<{
     latitude: number;
     longitude: number;
   } | null>(null);
+
+  const refreshSpinAnim = useRef(new Animated.Value(0)).current;
+  const refreshSpinLoopRef = useRef<Animated.CompositeAnimation | null>(null);
+
+  const handleManualRefresh = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await refetchSpots();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshing, refetchSpots]);
+
+  // Spin the map's refresh icon while a refetch is in progress.
+  useEffect(() => {
+    const isBusy = refreshing || spotsLoading;
+    if (isBusy) {
+      refreshSpinAnim.setValue(0);
+      const loop = Animated.loop(
+        Animated.timing(refreshSpinAnim, {
+          toValue: 1,
+          duration: 900,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        }),
+      );
+      refreshSpinLoopRef.current = loop;
+      loop.start();
+      return () => {
+        loop.stop();
+        refreshSpinLoopRef.current = null;
+      };
+    }
+    refreshSpinAnim.stopAnimation();
+    refreshSpinAnim.setValue(0);
+  }, [refreshing, spotsLoading, refreshSpinAnim]);
+
+  const refreshSpin = refreshSpinAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"],
+  });
 
   const trimmedQuery = searchQuery.trim().toLowerCase();
   const hasActiveSearch = trimmedQuery.length > 0;
@@ -497,7 +544,7 @@ export default function SpotsScreen() {
         onReset={() => setFilters(DEFAULT_SPOT_FILTERS)}
       />
 
-      {spotsLoading ? (
+      {spotsLoading && spots.length === 0 ? (
         <SkeletonList
           count={effectiveViewMode === "map" ? 3 : 5}
           style={styles.listContent}
@@ -575,6 +622,37 @@ export default function SpotsScreen() {
             </MapView>
           )}
 
+          <Pressable
+            onPress={() => void handleManualRefresh()}
+            style={({ pressed }) => [
+              styles.mapRefreshButton,
+              pressed && styles.mapRefreshButtonPressed,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Refresh spots"
+            disabled={refreshing || spotsLoading}
+          >
+            <Animated.View
+              style={{ transform: [{ rotate: refreshSpin }] }}
+            >
+              <Ionicons
+                name="refresh"
+                size={20}
+                color={Colors.dark}
+              />
+            </Animated.View>
+            <Text style={styles.mapRefreshLabel}>
+              {refreshing || spotsLoading ? "Refreshing" : "Refresh"}
+            </Text>
+            {refreshing || spotsLoading ? (
+              <ActivityIndicator
+                size="small"
+                color={Colors.primary}
+                style={{ marginLeft: 2 }}
+              />
+            ) : null}
+          </Pressable>
+
           <View
             style={[styles.carouselWrapper, { bottom: 6 }]}
             pointerEvents="box-none"
@@ -611,6 +689,14 @@ export default function SpotsScreen() {
           ]}
           ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
           renderItem={({ item }) => renderSpotCard(item)}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void handleManualRefresh()}
+              tintColor={Colors.primary}
+              colors={[Colors.primary]}
+            />
+          }
           ListEmptyComponent={
             <View style={styles.emptyListState}>
               <Text style={styles.stateText}>
@@ -775,6 +861,34 @@ const styles = StyleSheet.create({
   },
   mapContainer: {
     flex: 1,
+  },
+  mapRefreshButton: {
+    position: "absolute",
+    top: 12,
+    right: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#E6E6E6",
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+    zIndex: 5,
+  },
+  mapRefreshButtonPressed: {
+    opacity: 0.7,
+  },
+  mapRefreshLabel: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 13,
+    color: Colors.dark,
   },
   carouselWrapper: {
     position: "absolute",

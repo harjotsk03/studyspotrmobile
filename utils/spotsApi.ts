@@ -82,6 +82,54 @@ export function spotReviewSpotLabel(review: SpotReview): string {
   return "Untitled Spot";
 }
 
+export type SpotDuplicateCandidate = {
+  id: string;
+  name?: string;
+  address?: string;
+  score?: number;
+};
+
+export type SpotDuplicatePayload = {
+  duplicate: true;
+  spot_id: string;
+  spot: StudySpot;
+  candidates?: SpotDuplicateCandidate[];
+  ai?: {
+    confidence?: number;
+    reason?: string;
+    used_ai?: boolean;
+  } | null;
+  via?: "heuristic" | "ai";
+  message?: string;
+};
+
+/**
+ * Thrown by `createSpotMultipart` when the backend's duplicate-detection
+ * pipeline (bounding-box → trigram → optional AI verification) finds an
+ * existing spot at the same location. Carries the matched spot so callers
+ * can route the user to its detail screen.
+ */
+export class SpotDuplicateError extends Error {
+  duplicate: SpotDuplicatePayload;
+  constructor(payload: SpotDuplicatePayload) {
+    super(
+      payload.message ??
+        "A similar spot already exists at this location.",
+    );
+    this.name = "SpotDuplicateError";
+    this.duplicate = payload;
+  }
+}
+
+function isDuplicatePayload(value: unknown): value is SpotDuplicatePayload {
+  if (!value || typeof value !== "object") return false;
+  const o = value as Record<string, unknown>;
+  if (o.duplicate !== true) return false;
+  if (typeof o.spot_id !== "string" || !o.spot_id.trim()) return false;
+  if (!o.spot || typeof o.spot !== "object") return false;
+  return true;
+}
+
 function apiError(json: unknown, fallback: string): string {
   if (!json || typeof json !== "object") return fallback;
   const o = json as Record<string, unknown>;
@@ -214,6 +262,10 @@ export async function createSpotMultipart(
     throw new Error(
       apiError(json, "Too many spots created recently. Wait a bit and try again."),
     );
+  }
+
+  if (res.status === 409 && isDuplicatePayload(json)) {
+    throw new SpotDuplicateError(json);
   }
 
   if (!res.ok) {

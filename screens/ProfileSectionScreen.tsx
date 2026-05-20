@@ -20,6 +20,7 @@ import Button from '../components/Button';
 import DeleteAccountModal from '../components/DeleteAccountModal';
 import Input from '../components/Input';
 import type { FeedPost } from '../utils/feedApi';
+import type { UserPostsFeedParams } from './UserPostsFeedScreen';
 
 export type ProfileSectionKey = 'personal' | 'school' | 'location' | 'settings';
 
@@ -27,6 +28,7 @@ export type ProfileStackParamList = {
   ProfileHome: undefined;
   ProfileSection: { section: ProfileSectionKey };
   FeedPostDetail: { post: FeedPost };
+  UserPostsFeed: UserPostsFeedParams;
 };
 
 type Props = NativeStackScreenProps<ProfileStackParamList, 'ProfileSection'>;

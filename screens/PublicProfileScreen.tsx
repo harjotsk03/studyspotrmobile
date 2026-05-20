@@ -796,9 +796,32 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
 
   const openPostDetail = useCallback(
     (post: FeedPost) => {
-      rootNavigation.navigate("FeedPostDetail", { post });
+      if (!user?.id) return;
+      const isLikedTab = mainTab === "liked";
+      const headerTitle = user.username?.trim()
+        ? `@${user.username.trim()}`
+        : displayName;
+      rootNavigation.navigate("UserPostsFeed", {
+        userId: user.id,
+        source: isLikedTab ? "liked" : "posts",
+        initialPostId: post.id,
+        title: headerTitle,
+        subtitle: isLikedTab ? "Liked" : "Posts",
+        initialPosts: isLikedTab ? likedPosts : publishedPosts,
+        initialCursor: isLikedTab ? likedCursor : publishedCursor,
+      });
     },
-    [rootNavigation],
+    [
+      rootNavigation,
+      user?.id,
+      user?.username,
+      displayName,
+      mainTab,
+      likedPosts,
+      publishedPosts,
+      likedCursor,
+      publishedCursor,
+    ],
   );
 
   const isGridTab = unlocked && (mainTab === "posts" || mainTab === "liked");
@@ -1231,8 +1254,8 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   gridColumnWrap: {
-    gap: 2,
-    marginBottom: 2,
+    gap: 1,
+    marginBottom: 1,
   },
   sep: { height: 4 },
   spotCard: {

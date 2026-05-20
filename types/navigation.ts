@@ -3,6 +3,7 @@ import type { CommunityStackParamList } from "../screens/CommunityDetailScreen";
 import type { StudySpot } from "../context/SpotsContext";
 import type { FeedPost } from "../utils/feedApi";
 import type { ChatOtherUser } from "../utils/chatApi";
+import type { UserPostsFeedParams } from "../screens/UserPostsFeedScreen";
 
 export type SpotsStackParamList = {
   SpotsHome: undefined;
@@ -37,6 +38,7 @@ export type RootStackParamList = {
   PublicProfile: { userId: string };
   FeedPostDetail: { post: FeedPost };
   SpotViewer: { spot: StudySpot };
+  UserPostsFeed: UserPostsFeedParams;
 } & Pick<
   CommunityStackParamList,
   | "CommunityDetail"

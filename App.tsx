@@ -55,6 +55,7 @@ import ProfileSectionScreen, {
   type ProfileStackParamList,
 } from "./screens/ProfileSectionScreen";
 import FeedPostDetailScreen from "./screens/FeedPostDetailScreen";
+import UserPostsFeedScreen from "./screens/UserPostsFeedScreen";
 import InboxScreen from "./screens/InboxScreen";
 import FriendRequestsScreen from "./screens/FriendRequestsScreen";
 import MessagesScreen from "./screens/MessagesScreen";
@@ -137,6 +138,10 @@ function ProfileStackScreen() {
       <ProfileStack.Screen
         name="FeedPostDetail"
         component={FeedPostDetailScreen}
+      />
+      <ProfileStack.Screen
+        name="UserPostsFeed"
+        component={UserPostsFeedScreen}
       />
     </ProfileStack.Navigator>
   );
@@ -299,6 +304,10 @@ function AppContent() {
         <RootStack.Screen
           name="FeedPostDetail"
           component={FeedPostDetailScreen}
+        />
+        <RootStack.Screen
+          name="UserPostsFeed"
+          component={UserPostsFeedScreen}
         />
         <RootStack.Screen
           name="CommunityDetail"

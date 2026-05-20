@@ -8,6 +8,7 @@ import {
   FlatList,
   Keyboard,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -17,6 +18,8 @@ import {
   TouchableOpacity,
   View,
   Image,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -61,6 +64,13 @@ const WINDOW_H = Dimensions.get("window").height;
 /** TikTok-like: tall sheet, ~top quarter stays as dimmed tap-to-dismiss area */
 const SHEET_HEIGHT = Math.round(WINDOW_H * 0.74);
 const TIKTOK_SEND = "#FE2C55";
+
+/** Drag down by at least this many px to consider a slow dismiss. */
+const DISMISS_DRAG_DISTANCE = 110;
+/** Drag faster than this (px/ms) downward to flick-dismiss at any distance > 12px. */
+const DISMISS_FLICK_VELOCITY = 0.7;
+/** Min downward distance for a flick to count (rejects accidental jitters). */
+const DISMISS_FLICK_MIN_DISTANCE = 12;
 
 const QUICK_EMOJIS = [
   "😂",
@@ -170,6 +180,11 @@ export default function FeedCommentsModal({
 
   const backdropOpacity = useRef(new Animated.Value(0)).current;
   const sheetTranslateY = useRef(new Animated.Value(WINDOW_H)).current;
+  /** Live scroll offset of the comments list; used to gate the drag-to-dismiss
+   * gesture so users can still scroll long threads without dismissing. */
+  const listScrollYRef = useRef(0);
+  /** Snapshot of `sheetTranslateY` at the moment a drag begins. */
+  const dragStartTranslateRef = useRef(0);
 
   const resetLocal = useCallback(() => {
     setComments([]);
@@ -445,36 +460,115 @@ export default function FeedCommentsModal({
     return () => enter.stop();
   }, [visible, postId, slidePx, backdropOpacity, sheetTranslateY]);
 
-  const handleDismiss = useCallback(() => {
-    if (closingRef.current) return;
-    closingRef.current = true;
+  /** Animate the sheet closed. `flickVelocity` is the user's release velocity
+   * (px/ms downward) — when present we shorten the close animation so it
+   * feels like a continuation of the user's swipe rather than a fresh ease. */
+  const handleDismiss = useCallback(
+    (flickVelocity?: number) => {
+      if (closingRef.current) return;
+      closingRef.current = true;
+      Keyboard.dismiss();
 
-    const exit = Animated.parallel([
-      Animated.timing(backdropOpacity, {
-        toValue: 0,
-        duration: 200,
-        useNativeDriver: true,
-      }),
-      Animated.timing(sheetTranslateY, {
-        toValue: slidePx,
-        duration: 260,
-        easing: Easing.in(Easing.cubic),
-        useNativeDriver: true,
-      }),
-    ]);
+      const flicked = typeof flickVelocity === "number" && flickVelocity > 0;
+      const sheetDuration = flicked ? 160 : 260;
+      const fadeDuration = flicked ? 140 : 200;
 
-    exit.start(({ finished }) => {
-      closingRef.current = false;
-      if (finished) onClose();
-    });
-  }, [onClose, slidePx, backdropOpacity, sheetTranslateY]);
+      const exit = Animated.parallel([
+        Animated.timing(backdropOpacity, {
+          toValue: 0,
+          duration: fadeDuration,
+          useNativeDriver: true,
+        }),
+        Animated.timing(sheetTranslateY, {
+          toValue: slidePx,
+          duration: sheetDuration,
+          easing: flicked ? Easing.out(Easing.quad) : Easing.in(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]);
+
+      exit.start(({ finished }) => {
+        closingRef.current = false;
+        if (finished) onClose();
+      });
+    },
+    [onClose, slidePx, backdropOpacity, sheetTranslateY],
+  );
+
+  const springBack = useCallback(() => {
+    Animated.spring(sheetTranslateY, {
+      toValue: 0,
+      friction: 8,
+      tension: 120,
+      useNativeDriver: true,
+    }).start();
+    Animated.timing(backdropOpacity, {
+      toValue: 1,
+      duration: 160,
+      useNativeDriver: true,
+    }).start();
+  }, [sheetTranslateY, backdropOpacity]);
+
+  const onListScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      listScrollYRef.current = e.nativeEvent.contentOffset.y;
+    },
+    [],
+  );
+
+  const dragPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        // Only consider claiming the gesture if the user is at the top of the
+        // comments list AND is dragging clearly downward. This lets the
+        // FlatList handle normal vertical scrolling.
+        onMoveShouldSetPanResponderCapture: (_evt, g) => {
+          if (closingRef.current) return false;
+          const downward = g.dy > 4;
+          const verticalDominant = Math.abs(g.dy) > Math.abs(g.dx) * 1.2;
+          const atTop = listScrollYRef.current <= 0;
+          return downward && verticalDominant && atTop;
+        },
+        onPanResponderGrant: () => {
+          sheetTranslateY.stopAnimation((value) => {
+            dragStartTranslateRef.current = value;
+          });
+          // Fade backdrop slightly as the user drags so the dismiss intent
+          // feels acknowledged immediately.
+        },
+        onPanResponderMove: (_evt, g) => {
+          const next = Math.max(0, dragStartTranslateRef.current + g.dy);
+          sheetTranslateY.setValue(next);
+          const fade = Math.max(0, 1 - next / slidePx);
+          backdropOpacity.setValue(fade);
+        },
+        onPanResponderRelease: (_evt, g) => {
+          const distance = g.dy;
+          const velocity = g.vy;
+          const flick =
+            velocity > DISMISS_FLICK_VELOCITY &&
+            distance > DISMISS_FLICK_MIN_DISTANCE;
+          const slowDismiss = distance > DISMISS_DRAG_DISTANCE;
+          if (flick || slowDismiss) {
+            handleDismiss(flick ? velocity : undefined);
+          } else {
+            springBack();
+          }
+        },
+        onPanResponderTerminate: () => {
+          springBack();
+        },
+        onPanResponderTerminationRequest: () => false,
+      }),
+    [sheetTranslateY, backdropOpacity, slidePx, handleDismiss, springBack],
+  );
 
   return (
     <Modal
       visible={visible && !!postId}
       transparent
       animationType="none"
-      onRequestClose={handleDismiss}
+      onRequestClose={() => handleDismiss()}
     >
       <View style={styles.overlayRoot}>
         <Animated.View
@@ -483,7 +577,7 @@ export default function FeedCommentsModal({
         >
           <Pressable
             style={styles.backdrop}
-            onPress={handleDismiss}
+            onPress={() => handleDismiss()}
             accessibilityRole="button"
             accessibilityLabel="Close comments"
           />
@@ -493,6 +587,7 @@ export default function FeedCommentsModal({
             styles.sheetAnimatedWrap,
             { transform: [{ translateY: sheetTranslateY }] },
           ]}
+          {...dragPanResponder.panHandlers}
         >
           <View style={[styles.sheetOuter, { height: slidePx }]}>
             <View
@@ -518,7 +613,7 @@ export default function FeedCommentsModal({
                 </View>
                 <TouchableOpacity
                   style={styles.headerSide}
-                  onPress={handleDismiss}
+                  onPress={() => handleDismiss()}
                   hitSlop={12}
                   accessibilityLabel="Close comments"
                 >
@@ -537,6 +632,8 @@ export default function FeedCommentsModal({
                   style={styles.list}
                   contentContainerStyle={styles.listContent}
                   keyboardShouldPersistTaps="handled"
+                  onScroll={onListScroll}
+                  scrollEventThrottle={16}
                   renderItem={({ item: row }) => {
                     const item = row.comment;
                     const depth = row.depth;

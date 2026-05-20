@@ -12,6 +12,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -29,6 +30,15 @@ import {
   sendChatMessage,
   type ChatMessage,
 } from "../utils/chatApi";
+
+/** Per-user / per-conversation cache key for the most recent messages. */
+const THREAD_CACHE_PREFIX = "chat:thread:";
+/** Cap the persisted slice so we don't store unbounded history on disk. */
+const THREAD_CACHE_LIMIT = 60;
+
+function threadCacheKey(userId: string, conversationId: string) {
+  return `${THREAD_CACHE_PREFIX}${userId}:${conversationId}`;
+}
 import {
   emitJoinConversation,
   emitLeaveConversation,
@@ -74,7 +84,10 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [initialLoading, setInitialLoading] = useState(true);
+  /** True only until the disk cache for this thread has been read. Used to
+   * avoid flashing an empty state at users who actually have prior messages
+   * cached locally. */
+  const [hydrated, setHydrated] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [sendBusy, setSendBusy] = useState(false);
   const [draft, setDraft] = useState("");
@@ -82,31 +95,81 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
 
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const loadingOlderRef = useRef(false);
+  /** Live snapshot of the current message count — read inside callbacks so we
+   * can decide whether to surface load errors without making those callbacks
+   * depend on `messages.length` (which would re-fetch on every new message). */
+  const messageCountRef = useRef(0);
+  useEffect(() => {
+    messageCountRef.current = messages.length;
+  }, [messages.length]);
+  const cacheKey = myId ? threadCacheKey(myId, conversationId) : null;
 
   const title = chatPeerDisplayName(peer);
 
+  /** Hydrate from disk on mount / when the conversation changes. We do this
+   * in an effect (not on first render) so the disk read is non-blocking. */
+  useEffect(() => {
+    let cancelled = false;
+    if (!cacheKey) {
+      setMessages([]);
+      setHydrated(true);
+      return;
+    }
+    setHydrated(false);
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(cacheKey);
+        if (cancelled) return;
+        if (raw) {
+          const parsed = JSON.parse(raw) as unknown;
+          if (Array.isArray(parsed)) {
+            setMessages(parsed as ChatMessage[]);
+          }
+        }
+      } catch {
+        /* corrupt cache — ignore */
+      } finally {
+        if (!cancelled) setHydrated(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [cacheKey]);
+
+  /** Background refresh — never blocks the UI. Merges into whatever's already
+   * on screen from the cache so we don't lose / re-flicker rendered bubbles. */
   const loadInitial = useCallback(async () => {
     if (!token) return;
-    setInitialLoading(true);
     try {
       const page = await fetchChatMessages(token, conversationId, {
         limit: 40,
       });
-      setMessages(page.messages);
+      setMessages((prev) => mergeMessagesDedupeNewestFirst(prev, page.messages));
       setNextCursor(page.next_cursor);
     } catch (e) {
-      Alert.alert(
-        "Error",
-        e instanceof Error ? e.message : "Could not load messages.",
-      );
-    } finally {
-      setInitialLoading(false);
+      // Only nag the user if we had nothing cached to fall back on.
+      if (messageCountRef.current === 0) {
+        Alert.alert(
+          "Error",
+          e instanceof Error ? e.message : "Could not load messages.",
+        );
+      }
     }
   }, [token, conversationId]);
 
   useEffect(() => {
     void loadInitial();
   }, [loadInitial]);
+
+  /** Persist whatever we've got on screen (capped) for the next visit. */
+  useEffect(() => {
+    if (!cacheKey || !hydrated) return;
+    const slice = messages.slice(0, THREAD_CACHE_LIMIT);
+    AsyncStorage.setItem(cacheKey, JSON.stringify(slice)).catch(() => {
+      /* best-effort write */
+    });
+  }, [cacheKey, hydrated, messages]);
 
   useLayoutEffect(() => {
     const dm = route.params.draftMessage;
@@ -290,32 +353,35 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
           <View style={[styles.iconButton, styles.hiddenIcon]} />
         </View>
 
-        {initialLoading ? (
-          <ActivityIndicator style={styles.loader} color={Colors.accent} />
-        ) : (
-          <FlatList
-            ref={listRef}
-            data={messages}
-            inverted
-            keyExtractor={(item) => item.id}
-            renderItem={renderMessage}
-            contentContainerStyle={styles.listContent}
-            onEndReached={() => void loadOlder()}
-            onEndReachedThreshold={0.25}
-            ListFooterComponent={
-              loadingOlder ? (
-                <ActivityIndicator color={Colors.accent} style={styles.topLoader} />
-              ) : nextCursor ? (
-                <Pressable onPress={() => void loadOlder()} style={styles.loadMoreWrap}>
-                  <Text style={styles.loadMoreText}>Load older messages</Text>
-                </Pressable>
-              ) : null
-            }
-            ListEmptyComponent={
+        <FlatList
+          ref={listRef}
+          data={messages}
+          inverted
+          keyExtractor={(item) => item.id}
+          renderItem={renderMessage}
+          contentContainerStyle={styles.listContent}
+          onEndReached={() => void loadOlder()}
+          onEndReachedThreshold={0.25}
+          ListFooterComponent={
+            loadingOlder ? (
+              <ActivityIndicator color={Colors.accent} style={styles.topLoader} />
+            ) : nextCursor ? (
+              <Pressable
+                onPress={() => void loadOlder()}
+                style={styles.loadMoreWrap}
+              >
+                <Text style={styles.loadMoreText}>Load older messages</Text>
+              </Pressable>
+            ) : null
+          }
+          ListEmptyComponent={
+            // Suppress the "no messages" copy until the disk cache has been
+            // read so users with prior chats don't see it flash on entry.
+            hydrated ? (
               <Text style={styles.empty}>No messages yet. Say hello.</Text>
-            }
-          />
-        )}
+            ) : null
+          }
+        />
 
         <View
           style={[
@@ -386,7 +452,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
     textAlign: "center",
   },
-  loader: { marginTop: 36 },
   listContent: {
     paddingHorizontal: 14,
     paddingVertical: 12,
@@ -449,6 +514,7 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingHorizontal: 14,
     paddingTop: 10,
+    paddingBottom: 0,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "#e8e8e8",
     backgroundColor: "#fff",

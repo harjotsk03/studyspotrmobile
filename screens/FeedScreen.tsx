@@ -1,8 +1,7 @@
 import { Audio } from "expo-av";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Dimensions,
   FlatList,
   Pressable,
   RefreshControl,
@@ -18,13 +17,14 @@ import {
   type ParamListBase,
 } from "@react-navigation/native";
 import type { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
-import { Plus, Activity } from "lucide-react-native";
+import { Heart, PlusSquare } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FeedCommentsModal from "../components/FeedCommentsModal";
 import FeedComposerModal from "../components/FeedComposerModal";
-import FeedReelItem from "../components/FeedReelItem";
+import FeedInstaCard, { type MediaRect } from "../components/FeedInstaCard";
+import FullScreenReelViewer from "../components/FullScreenReelViewer";
 import SharePostToFriendsSheet from "../components/SharePostToFriendsSheet";
-import TopNav from "../components/TopNav";
+import SuggestedUsers from "../components/SuggestedUsers";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import type { UserProfileData } from "../context/AuthContext";
@@ -33,9 +33,55 @@ import { useNotifications } from "../context/NotificationsContext";
 import type { MainTabsParamList } from "../types/navigation";
 import { fetchFeedFriends, type FeedPost } from "../utils/feedApi";
 
-const win = Dimensions.get("window");
-
 type FeedTabNavigation = BottomTabNavigationProp<MainTabsParamList, "Feed">;
+
+type FeedListItem =
+  | { type: "post"; key: string; post: FeedPost }
+  | { type: "suggestions"; key: string };
+
+/** Insert a SuggestedUsers carousel after every N posts. */
+const POSTS_PER_SUGGESTION_BLOCK = 4;
+/** Per-block jitter (±) to make insertion feel less mechanical. */
+const SUGGESTION_JITTER = 1;
+
+/** Small string hash → deterministic 0..1 number; used to vary cadence by feed. */
+function hashSeed(seed: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 1000) / 1000;
+}
+
+function buildFeedListItems(posts: FeedPost[]): FeedListItem[] {
+  if (posts.length === 0) return [];
+  const items: FeedListItem[] = [];
+  // Seed by the first post id so the cadence is stable per feed session but
+  // varies between refreshes / users.
+  const sessionSeed = posts[0]?.id ?? "";
+  let suggestionIndex = 0;
+
+  const nextCadence = () => {
+    const r = hashSeed(`${sessionSeed}:${suggestionIndex}`);
+    const offset = Math.floor(r * (SUGGESTION_JITTER * 2 + 1)) - SUGGESTION_JITTER;
+    return Math.max(2, POSTS_PER_SUGGESTION_BLOCK + offset);
+  };
+
+  let untilNext = nextCadence();
+  for (let i = 0; i < posts.length; i += 1) {
+    const post = posts[i];
+    items.push({ type: "post", key: `post-${post.id}`, post });
+    untilNext -= 1;
+    const isLast = i === posts.length - 1;
+    if (untilNext <= 0 && !isLast) {
+      items.push({ type: "suggestions", key: `sug-${suggestionIndex}` });
+      suggestionIndex += 1;
+      untilNext = nextCadence();
+    }
+  }
+  return items;
+}
 
 function enrichFeedPostAuthor(
   post: FeedPost | null,
@@ -69,10 +115,6 @@ export default function FeedScreen() {
   const { token, profile } = useAuth();
   const user = profile?.userProfile;
 
-  const [viewport, setViewport] = useState({
-    h: win.height,
-    w: win.width,
-  });
   const [activePostId, setActivePostId] = useState<string | null>(null);
   const [commentsPostId, setCommentsPostId] = useState<string | null>(null);
 
@@ -86,9 +128,12 @@ export default function FeedScreen() {
   const [shareFriendsPost, setShareFriendsPost] = useState<FeedPost | null>(
     null,
   );
-  const [overlaysSubdued, setOverlaysSubdued] = useState(false);
+  const [globalMuted, setGlobalMuted] = useState(true);
+  const [fullScreenPost, setFullScreenPost] = useState<FeedPost | null>(null);
+  const [fullScreenRect, setFullScreenRect] = useState<MediaRect | null>(null);
 
   const loadingMoreRef = useRef(false);
+  const listRef = useRef<FlatList<FeedListItem>>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -143,6 +188,9 @@ export default function FeedScreen() {
     setPosts((prev) =>
       prev.map((p) => (p.id === fresh.id ? { ...p, ...fresh } : p)),
     );
+    setFullScreenPost((curr) =>
+      curr && curr.id === fresh.id ? { ...curr, ...fresh } : curr,
+    );
   }, []);
 
   useEffect(() => {
@@ -167,9 +215,19 @@ export default function FeedScreen() {
       setFeedError(e instanceof Error ? e.message : "Could not refresh.");
     } finally {
       setRefreshing(false);
-      setOverlaysSubdued(false);
     }
   }, [token, fetchPage]);
+
+  /** Tap the Feed tab while it's already focused → smooth scroll to top and
+   * kick off a refresh. Pattern matches Instagram/Twitter's top-of-feed jump. */
+  useEffect(() => {
+    const unsubscribe = navigation.addListener("tabPress", () => {
+      if (!navigation.isFocused()) return;
+      listRef.current?.scrollToOffset({ offset: 0, animated: true });
+      void onRefresh();
+    });
+    return unsubscribe;
+  }, [navigation, onRefresh]);
 
   const loadMore = useCallback(async () => {
     if (
@@ -220,104 +278,185 @@ export default function FeedScreen() {
   const handleDeleted = useCallback((postId: string) => {
     setPosts((prev) => prev.filter((p) => p.id !== postId));
     setCommentsPostId((open) => (open === postId ? null : open));
+    setFullScreenPost((curr) => (curr && curr.id === postId ? null : curr));
   }, []);
 
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
-      const top = viewableItems.find((v) => v.isViewable);
-      const id =
-        top?.item && typeof top.item === "object" && "id" in top.item
-          ? String((top.item as FeedPost).id)
-          : null;
-      setActivePostId(id);
+      // Pick the topmost viewable POST item (skip suggestion rows so videos
+      // keep auto-playing while users scroll past a carousel).
+      for (const v of viewableItems) {
+        if (!v.isViewable) continue;
+        const item = v.item as FeedListItem | undefined;
+        if (item?.type === "post") {
+          setActivePostId(item.post.id);
+          return;
+        }
+      }
     },
   ).current;
 
   const viewabilityConfig = useRef({
-    itemVisiblePercentThreshold: 75,
+    itemVisiblePercentThreshold: 55,
+    minimumViewTime: 80,
   }).current;
-
-  const reelH = Math.max(viewport.h, 1);
-  const reelW = Math.max(viewport.w, 1);
 
   const commentsPost = commentsPostId
     ? posts.find((p) => p.id === commentsPostId)
     : undefined;
 
+  const openFullScreen = useCallback(
+    (post: FeedPost, rect: MediaRect) => {
+      setFullScreenRect(rect);
+      setFullScreenPost(post);
+    },
+    [],
+  );
+
+  const closeFullScreen = useCallback(() => {
+    setFullScreenPost(null);
+  }, []);
+
+  const handleFullScreenShareWithFriends = useCallback((post: FeedPost) => {
+    setShareFriendsPost(post);
+  }, []);
+
+  const handleFullScreenOpenComments = useCallback((postId: string) => {
+    setCommentsPostId(postId);
+  }, []);
+
+  // When the full-screen viewer is open and the underlying card's video is
+  // playing, we want to pause the in-feed video. We accomplish that by
+  // marking the active id as null while the viewer is open.
+  const effectiveActiveId = fullScreenPost ? null : activePostId;
+
   const emptyCopy =
     "When friends share posts, they’ll show up here. Share something to start the conversation.";
 
-  return (
-    <View
-      style={[styles.container, token ? styles.containerFeed : null]}
-      onLayout={(e) => {
-        const { height, width } = e.nativeEvent.layout;
-        if (height > 0 && width > 0) {
-          setViewport({ h: height, w: width });
-        }
-      }}
-    >
-      {!token ? <TopNav /> : null}
+  const headerHeight = useMemo(() => insets.top + 52, [insets.top]);
 
+  const listItems = useMemo<FeedListItem[]>(
+    () => buildFeedListItems(posts),
+    [posts],
+  );
+
+  return (
+    <View style={styles.container}>
       {!token ? (
-        <View style={styles.centerMessage}>
-          <Text style={styles.centerTitle}>Sign in for your feed</Text>
-          <Text style={styles.centerSubtitle}>
-            Sign in to see posts from your friends.
-          </Text>
-        </View>
+        <>
+          <View style={[styles.topHeader, { paddingTop: insets.top + 8 }]}>
+            <Text style={styles.brand}>Study Spotr</Text>
+          </View>
+          <View style={styles.centerMessage}>
+            <Text style={styles.centerTitle}>Sign in for your feed</Text>
+            <Text style={styles.centerSubtitle}>
+              Sign in to see posts from your friends.
+            </Text>
+          </View>
+        </>
       ) : (
         <>
+          <View
+            style={[
+              styles.topHeader,
+              { paddingTop: insets.top + 8, height: headerHeight },
+            ]}
+          >
+            <Text style={styles.brand}>Study Spotr</Text>
+            <View style={styles.topActions}>
+              <Pressable
+                onPress={() => setComposerOpen(true)}
+                hitSlop={10}
+                style={styles.topIconBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Create post"
+              >
+                <PlusSquare size={26} color={Colors.dark} strokeWidth={2} />
+              </Pressable>
+              <Pressable
+                onPress={() =>
+                  navigation.navigate({
+                    name: "Inbox",
+                    params: { screen: "InboxHome" },
+                  })
+                }
+                hitSlop={10}
+                style={styles.topIconBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Activity and notifications"
+              >
+                <Heart size={26} color={Colors.dark} strokeWidth={2} />
+                {unreadCount > 0 ? (
+                  <View style={styles.activityBadge}>
+                    <Text style={styles.activityBadgeText}>
+                      {unreadCount > 99 ? "99+" : unreadCount}
+                    </Text>
+                  </View>
+                ) : null}
+              </Pressable>
+            </View>
+          </View>
+
           <FlatList
-            data={posts}
-            keyExtractor={(item) => item.id}
-            pagingEnabled
-            snapToInterval={reelH}
-            snapToAlignment="start"
-            decelerationRate="fast"
-            disableIntervalMomentum
-            onScrollBeginDrag={() => setOverlaysSubdued(true)}
-            onMomentumScrollEnd={() => setOverlaysSubdued(false)}
+            ref={listRef}
+            data={listItems}
+            keyExtractor={(item) => item.key}
             showsVerticalScrollIndicator={false}
             removeClippedSubviews
-            windowSize={5}
-            maxToRenderPerBatch={3}
-            initialNumToRender={2}
-            getItemLayout={(_, index) => ({
-              length: reelH,
-              offset: reelH * index,
-              index,
-            })}
+            windowSize={7}
+            maxToRenderPerBatch={4}
+            initialNumToRender={3}
             viewabilityConfig={viewabilityConfig}
             onViewableItemsChanged={onViewableItemsChanged}
-            renderItem={({ item }) => (
-              <FeedReelItem
-                post={item}
-                screenFocused={isFocused}
-                isActive={item.id === activePostId}
-                overlaysSubdued={overlaysSubdued}
-                viewportHeight={reelH}
-                viewportWidth={reelW}
-                token={token}
-                currentUserId={user?.id}
-                onDeleted={handleDeleted}
-                onMergePost={mergePost}
-                onReplacePost={replacePost}
-                onOpenComments={() => setCommentsPostId(item.id)}
-                onShareWithFriends={() => setShareFriendsPost(item)}
-              />
-            )}
+            contentContainerStyle={
+              listItems.length === 0
+                ? styles.listEmptyContent
+                : styles.listContent
+            }
+            ItemSeparatorComponent={() => <View style={styles.cardGap} />}
+            renderItem={({ item }) => {
+              if (item.type === "suggestions") {
+                return (
+                  <View style={styles.suggestionsBlock}>
+                    <Text style={styles.suggestionsTitle}>
+                      Suggested for you
+                    </Text>
+                    <SuggestedUsers />
+                  </View>
+                );
+              }
+              const post = item.post;
+              return (
+                <FeedInstaCard
+                  post={post}
+                  screenFocused={isFocused}
+                  isActive={post.id === effectiveActiveId}
+                  token={token}
+                  currentUserId={user?.id}
+                  globalMuted={globalMuted}
+                  onToggleMuted={() => setGlobalMuted((m) => !m)}
+                  onDeleted={handleDeleted}
+                  onMergePost={mergePost}
+                  onReplacePost={replacePost}
+                  onOpenComments={() => setCommentsPostId(post.id)}
+                  onShareWithFriends={() => setShareFriendsPost(post)}
+                  onOpenFullScreen={openFullScreen}
+                />
+              );
+            }}
             ListEmptyComponent={
               loading ? (
-                <View style={{ height: reelH }} />
+                <View style={styles.emptyLoadingWrap}>
+                  <ActivityIndicator color={Colors.dark} />
+                </View>
               ) : (
-                <View style={[styles.emptyWrap, { minHeight: reelH }]}>
-                  <Text style={styles.emptyTextDark}>{emptyCopy}</Text>
+                <View style={styles.emptyWrap}>
+                  <Text style={styles.emptyText}>{emptyCopy}</Text>
                   <Pressable
-                    style={styles.emptyCtaDark}
+                    style={styles.emptyCta}
                     onPress={() => setComposerOpen(true)}
                   >
-                    <Text style={styles.emptyCtaLabelDark}>Create a post</Text>
+                    <Text style={styles.emptyCtaLabel}>Create a post</Text>
                   </Pressable>
                 </View>
               )
@@ -326,80 +465,35 @@ export default function FeedScreen() {
               <RefreshControl
                 refreshing={refreshing}
                 onRefresh={() => void onRefresh()}
-                tintColor="#fff"
+                tintColor={Colors.dark}
               />
             }
             onEndReached={() => void loadMore()}
-            onEndReachedThreshold={0.4}
+            onEndReachedThreshold={0.5}
             ListFooterComponent={
               loadingMore ? (
                 <View style={styles.listFooterLoading}>
-                  <ActivityIndicator color="#fff" />
+                  <ActivityIndicator color={Colors.dark} />
                 </View>
-              ) : null
+              ) : (
+                <View style={{ height: 24 }} />
+              )
             }
           />
 
-          <View
-            pointerEvents="box-none"
-            style={[
-              styles.topOverlay,
-              {
-                paddingTop: insets.top + 8,
-                opacity: overlaysSubdued ? 0.38 : 1,
-              },
-            ]}
-          >
-            <View style={styles.topLeftCluster}>
-              <Pressable
-                onPress={() => setComposerOpen(true)}
-                hitSlop={8}
-                style={styles.addCircle}
-                accessibilityRole="button"
-                accessibilityLabel="Create post"
-              >
-                <Plus size={22} color="#fff" strokeWidth={2.4} />
-              </Pressable>
-              <Text style={styles.topBrand} numberOfLines={1}>
-                Study Spotr
-              </Text>
-            </View>
-            <Pressable
-              onPress={() =>
-                navigation.navigate({
-                  name: "Inbox",
-                  params: { screen: "InboxHome" },
-                })
-              }
-              hitSlop={12}
-              style={styles.activityButton}
-              accessibilityRole="button"
-              accessibilityLabel="Activity and notifications"
-            >
-              <Activity size={24} color="#fff" strokeWidth={2.2} />
-              {unreadCount > 0 ? (
-                <View style={styles.activityBadge}>
-                  <Text style={styles.activityBadgeText}>
-                    {unreadCount > 99 ? "99+" : unreadCount}
-                  </Text>
-                </View>
-              ) : null}
-            </Pressable>
-          </View>
-
           {loading && posts.length === 0 ? (
-            <View style={styles.loadingOverlayDark}>
-              <ActivityIndicator size="large" color="#fff" />
+            <View style={styles.loadingOverlay}>
+              <ActivityIndicator size="large" color={Colors.dark} />
             </View>
           ) : null}
 
           {feedError ? (
             <View
-              style={[styles.errorBannerDark, { bottom: 24 + insets.bottom }]}
+              style={[styles.errorBanner, { bottom: 24 + insets.bottom }]}
             >
-              <Text style={styles.errorTextDark}>{feedError}</Text>
+              <Text style={styles.errorText}>{feedError}</Text>
               <Pressable onPress={() => void loadInitial()}>
-                <Text style={styles.errorRetryDark}>Retry</Text>
+                <Text style={styles.errorRetry}>Retry</Text>
               </Pressable>
             </View>
           ) : null}
@@ -426,6 +520,20 @@ export default function FeedScreen() {
               );
             }}
           />
+
+          <FullScreenReelViewer
+            visible={Boolean(fullScreenPost)}
+            post={fullScreenPost}
+            fromRect={fullScreenRect}
+            token={token}
+            currentUserId={user?.id}
+            onClose={closeFullScreen}
+            onMergePost={mergePost}
+            onReplacePost={replacePost}
+            onDeleted={handleDeleted}
+            onOpenComments={handleFullScreenOpenComments}
+            onShareWithFriends={handleFullScreenShareWithFriends}
+          />
         </>
       )}
 
@@ -450,84 +558,86 @@ export default function FeedScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.light,
+    backgroundColor: "#fff",
   },
-  containerFeed: {
-    backgroundColor: "#000",
-  },
-  topOverlay: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    top: 0,
-    zIndex: 20,
+  topHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 14,
-    paddingBottom: 8,
-    gap: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    backgroundColor: "#fff",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#EEE",
+    zIndex: 10,
   },
-  topLeftCluster: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    minWidth: 0,
-    gap: 10,
-  },
-  addCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.22)",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.35)",
-  },
-  topBrand: {
-    flexShrink: 1,
+  brand: {
     fontFamily: Fonts.gabarito.bold,
-    fontSize: 20,
-    color: "#fff",
-    textShadowColor: "rgba(0,0,0,0.45)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+    fontSize: 22,
+    color: Colors.dark,
     letterSpacing: 0.2,
   },
-  activityButton: {
+  topActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+  },
+  topIconBtn: {
     position: "relative",
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 32,
+    height: 32,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.14)",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.28)",
   },
   activityBadge: {
     position: "absolute",
-    top: 2,
-    right: 2,
-    minWidth: 18,
-    height: 18,
-    paddingHorizontal: 5,
-    borderRadius: 9,
+    top: -2,
+    right: -4,
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 4,
+    borderRadius: 8,
     backgroundColor: Colors.accent,
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: "#fff",
   },
   activityBadgeText: {
     fontFamily: Fonts.gabarito.bold,
-    fontSize: 10,
+    fontSize: 9,
     color: "#fff",
   },
-  loadingOverlayDark: {
+  listContent: {
+    paddingBottom: 40,
+  },
+  listEmptyContent: {
+    flexGrow: 1,
+  },
+  cardGap: {
+    height: 6,
+    backgroundColor: "#FAFAFA",
+  },
+  suggestionsBlock: {
+    paddingTop: 18,
+    paddingBottom: 18,
+    backgroundColor: "#fff",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: "#EFEFEF",
+  },
+  suggestionsTitle: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 15,
+    color: Colors.dark,
+    paddingHorizontal: 20,
+    marginBottom: 12,
+  },
+  loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.55)",
+    backgroundColor: "rgba(255,255,255,0.6)",
     zIndex: 15,
   },
   centerMessage: {
@@ -549,31 +659,37 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 24,
   },
-  emptyWrap: {
-    paddingHorizontal: 36,
+  emptyLoadingWrap: {
+    paddingTop: 80,
+    alignItems: "center",
     justifyContent: "center",
+  },
+  emptyWrap: {
+    flex: 1,
+    paddingHorizontal: 36,
+    paddingTop: 80,
     alignItems: "center",
   },
-  emptyTextDark: {
+  emptyText: {
     fontFamily: Fonts.instrument.regular,
     fontSize: 15,
-    color: "#bbb",
+    color: "#777",
     textAlign: "center",
     lineHeight: 22,
     marginBottom: 18,
   },
-  emptyCtaDark: {
+  emptyCta: {
     paddingHorizontal: 22,
     paddingVertical: 12,
     borderRadius: 999,
-    backgroundColor: "#fff",
+    backgroundColor: Colors.dark,
   },
-  emptyCtaLabelDark: {
+  emptyCtaLabel: {
     fontFamily: Fonts.gabarito.semiBold,
     fontSize: 14,
-    color: "#111",
+    color: "#fff",
   },
-  errorBannerDark: {
+  errorBanner: {
     position: "absolute",
     left: 16,
     right: 16,
@@ -584,26 +700,30 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderRadius: 14,
-    backgroundColor: "rgba(40,20,20,0.92)",
+    backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "rgba(255,120,120,0.35)",
+    borderColor: "#FCA5A5",
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
     zIndex: 25,
   },
-  errorTextDark: {
+  errorText: {
     flex: 1,
     fontFamily: Fonts.instrument.regular,
     fontSize: 13,
-    color: "#fecaca",
+    color: "#B91C1C",
   },
-  errorRetryDark: {
+  errorRetry: {
     fontFamily: Fonts.gabarito.semiBold,
     fontSize: 14,
-    color: "#fff",
+    color: Colors.primary,
   },
   listFooterLoading: {
     paddingVertical: 20,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#000",
   },
 });
