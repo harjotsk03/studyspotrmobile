@@ -22,11 +22,17 @@ import {
   Lock,
   LogOut,
   Pencil,
+  Send,
   Share,
   Tag,
   Trash2,
   Users,
 } from "lucide-react-native";
+import type {
+  NavigationProp,
+  ParamListBase,
+} from "@react-navigation/native";
+import ShareToFriendsSheet from "../components/ShareToFriendsSheet";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
@@ -97,6 +103,9 @@ export type CommunityStackParamList = {
     isAdmin: boolean;
     communityIsPublic: boolean;
     userCommunityRole?: string;
+    /** Optional: opens the EventDetailDrawer for this event id as soon as
+     * the list mounts. Used by shared-event preview cards in chat. */
+    openEventId?: string;
   };
   CreateEvent: {
     communityId?: string;
@@ -188,6 +197,7 @@ export default function CommunityDetailScreen({ route }: Props) {
   const [cancelLoading, setCancelLoading] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [leaveLoading, setLeaveLoading] = useState(false);
+  const [shareSheetOpen, setShareSheetOpen] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -584,7 +594,19 @@ export default function CommunityDetailScreen({ route }: Props) {
         <Text style={styles.headerTitle} numberOfLines={1}>
           {community.name}
         </Text>
-        <View style={styles.placeholder} />
+        {token ? (
+          <TouchableOpacity
+            onPress={() => setShareSheetOpen(true)}
+            style={styles.headerActionButton}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Share community"
+          >
+            <Send size={18} color={Colors.dark} strokeWidth={2.2} />
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.placeholder} />
+        )}
       </View>
 
       {fetching && <CommunityDetailSkeleton />}
@@ -899,6 +921,16 @@ export default function CommunityDetailScreen({ route }: Props) {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <ShareToFriendsSheet
+        visible={shareSheetOpen}
+        attachment={
+          shareSheetOpen ? { kind: "community", community } : null
+        }
+        token={token}
+        navigation={navigation as unknown as NavigationProp<ParamListBase>}
+        onClose={() => setShareSheetOpen(false)}
+      />
     </View>
   );
 }
@@ -1053,6 +1085,14 @@ const styles = StyleSheet.create({
   placeholder: {
     width: 40,
     height: 40,
+  },
+  headerActionButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#EBEBEB",
+    alignItems: "center",
+    justifyContent: "center",
   },
   hiddenContent: {
     display: "none",

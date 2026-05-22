@@ -290,6 +290,7 @@ export default function CommunityEventsScreen({ route }: Props) {
     isAdmin,
     communityIsPublic,
     userCommunityRole,
+    openEventId,
   } = route.params;
   const navigation =
     useNavigation<NativeStackNavigationProp<CommunityStackParamList>>();
@@ -376,6 +377,60 @@ export default function CommunityEventsScreen({ route }: Props) {
       void validateCommunityAccess({ alertOnDenied: true });
     }, [validateCommunityAccess]),
   );
+
+  // If we arrived here from a shared-event preview card in chat, open the
+  // matching event drawer automatically. We only do this once per
+  // `openEventId` so repeatedly tapping list items doesn't re-trigger it.
+  const consumedOpenEventIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!openEventId || !token) return;
+    if (consumedOpenEventIdRef.current === openEventId) return;
+
+    // Fast path: the event is already in the loaded list.
+    const local = events.find((e) => e.id === openEventId);
+    if (local) {
+      consumedOpenEventIdRef.current = openEventId;
+      setSelectedEvent(local);
+      setDrawerOpen(true);
+      return;
+    }
+
+    // Otherwise fetch the single event directly so we can open the drawer
+    // even when it lives outside the current filter (e.g. shared past
+    // event while user is on "Upcoming").
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/api/v1/communities/${communityId}/events/${openEventId}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/json",
+            },
+          },
+        );
+        if (!res.ok) return;
+        const json: unknown = await res.json().catch(() => null);
+        if (!json || typeof json !== "object" || cancelled) return;
+        const raw =
+          (json as Record<string, unknown>).event ??
+          (json as Record<string, unknown>);
+        const ev = raw as CommunityEvent | null;
+        if (!ev || typeof ev !== "object" || !ev.id) return;
+        consumedOpenEventIdRef.current = openEventId;
+        setSelectedEvent(ev);
+        setDrawerOpen(true);
+      } catch {
+        // Silent — leaves the user on the events list, which is still a
+        // valid landing surface.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [openEventId, token, communityId, events]);
 
   const handleRefresh = useCallback(async () => {
     if (await validateCommunityAccess({ alertOnDenied: true })) {

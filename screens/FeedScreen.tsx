@@ -2,12 +2,15 @@ import { Audio } from "expo-av";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   FlatList,
   Pressable,
   RefreshControl,
   StyleSheet,
   Text,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   type ViewToken,
 } from "react-native";
 import {
@@ -21,9 +24,10 @@ import { Heart, PlusSquare } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FeedCommentsModal from "../components/FeedCommentsModal";
 import FeedComposerModal from "../components/FeedComposerModal";
+import FeedEndOfFeedCreate from "../components/FeedEndOfFeedCreate";
 import FeedInstaCard, { type MediaRect } from "../components/FeedInstaCard";
 import FullScreenReelViewer from "../components/FullScreenReelViewer";
-import SharePostToFriendsSheet from "../components/SharePostToFriendsSheet";
+import ShareToFriendsSheet from "../components/ShareToFriendsSheet";
 import SuggestedUsers from "../components/SuggestedUsers";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
@@ -134,6 +138,21 @@ export default function FeedScreen() {
 
   const loadingMoreRef = useRef(false);
   const listRef = useRef<FlatList<FeedListItem>>(null);
+
+  /** Drag-to-create at end-of-feed:
+   * - `dragProgress` is a 0..1 value driven from the JS thread by tracking
+   *   how far the user has over-scrolled past the bottom (iOS bounce).
+   * - When `dragProgress` exceeds 1, we mark the gesture as "ready" so the
+   *   footer can swap its copy to "Release to create". On release of the
+   *   drag, if still ready, we open the composer.
+   * - `triggeredRef` guards against multiple opens within the same gesture
+   *   and is reset on momentum-scroll-end. */
+  const dragProgress = useRef(new Animated.Value(0)).current;
+  const [readyToTrigger, setReadyToTrigger] = useState(false);
+  const triggeredRef = useRef(false);
+  /** Overscroll past contentSize.height − layoutHeight needed to fully arm
+   * the trigger. ~110 px feels deliberate without being annoying. */
+  const DRAG_TRIGGER_PX = 110;
 
   useEffect(() => {
     if (!token) return;
@@ -340,6 +359,72 @@ export default function FeedScreen() {
     [posts],
   );
 
+  /** True when we have posts AND the API has signalled "no more pages".
+   * We hide the trigger UI while pagination is still in-flight so a fast
+   * scroll past the spinner doesn't open the composer. */
+  const atEndOfFeed =
+    posts.length > 0 && !nextCursor && !loadingMore && !loading && !refreshing;
+  const atEndOfFeedRef = useRef(atEndOfFeed);
+  useEffect(() => {
+    atEndOfFeedRef.current = atEndOfFeed;
+    if (!atEndOfFeed) {
+      // Reset visual state when the trigger becomes unavailable (e.g. after
+      // a refresh introduces a new cursor).
+      dragProgress.setValue(0);
+      setReadyToTrigger(false);
+      triggeredRef.current = false;
+    }
+  }, [atEndOfFeed, dragProgress]);
+
+  const handleScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (!atEndOfFeedRef.current) return;
+      const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+      const maxScroll = Math.max(
+        0,
+        contentSize.height - layoutMeasurement.height,
+      );
+      const overscroll = contentOffset.y - maxScroll;
+      if (overscroll <= 0) {
+        // Not over-scrolling — keep at zero so any pending state clears.
+        dragProgress.setValue(0);
+        if (readyToTrigger) setReadyToTrigger(false);
+        return;
+      }
+      const ratio = Math.min(1.4, overscroll / DRAG_TRIGGER_PX);
+      dragProgress.setValue(ratio);
+      const nextReady = ratio >= 1;
+      if (nextReady !== readyToTrigger) setReadyToTrigger(nextReady);
+    },
+    [dragProgress, readyToTrigger],
+  );
+
+  const handleScrollEndDrag = useCallback(() => {
+    if (!atEndOfFeedRef.current) return;
+    if (triggeredRef.current) return;
+    if (!readyToTrigger) {
+      // Animate back to zero quickly so the chevron snaps home.
+      Animated.timing(dragProgress, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: false,
+      }).start();
+      return;
+    }
+    triggeredRef.current = true;
+    setReadyToTrigger(false);
+    Animated.timing(dragProgress, {
+      toValue: 0,
+      duration: 220,
+      useNativeDriver: false,
+    }).start();
+    setComposerOpen(true);
+  }, [dragProgress, readyToTrigger]);
+
+  const handleMomentumScrollEnd = useCallback(() => {
+    triggeredRef.current = false;
+  }, []);
+
   return (
     <View style={styles.container}>
       {!token ? (
@@ -470,11 +555,20 @@ export default function FeedScreen() {
             }
             onEndReached={() => void loadMore()}
             onEndReachedThreshold={0.5}
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
+            onScrollEndDrag={handleScrollEndDrag}
+            onMomentumScrollEnd={handleMomentumScrollEnd}
             ListFooterComponent={
               loadingMore ? (
                 <View style={styles.listFooterLoading}>
                   <ActivityIndicator color={Colors.dark} />
                 </View>
+              ) : atEndOfFeed ? (
+                <FeedEndOfFeedCreate
+                  dragProgress={dragProgress}
+                  readyToTrigger={readyToTrigger}
+                />
               ) : (
                 <View style={{ height: 24 }} />
               )
@@ -537,9 +631,11 @@ export default function FeedScreen() {
         </>
       )}
 
-      <SharePostToFriendsSheet
+      <ShareToFriendsSheet
         visible={Boolean(shareFriendsPost)}
-        post={shareFriendsPost}
+        attachment={
+          shareFriendsPost ? { kind: "post", post: shareFriendsPost } : null
+        }
         token={token}
         navigation={navigation as NavigationProp<ParamListBase>}
         onClose={() => setShareFriendsPost(null)}

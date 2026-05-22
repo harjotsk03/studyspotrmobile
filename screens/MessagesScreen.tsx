@@ -24,6 +24,7 @@ import {
   isConversationUnread,
   type ChatConversation,
 } from "../utils/chatApi";
+import { describeBodyForPreview } from "../utils/messageShare";
 
 /** Per-user cache key for the conversations list. */
 const CACHE_KEY_PREFIX = "chat:conversations:";
@@ -190,11 +191,16 @@ export default function MessagesScreen() {
     const unread = isConversationUnread(item);
     const peer = item.other_user;
     const label = chatPeerDisplayName(peer ?? null);
-    const preview =
-      typeof item.last_message_preview === "string" &&
-      item.last_message_preview.trim()
-        ? item.last_message_preview.trim()
-        : "Tap to open conversation";
+    // The last-message preview can contain inline `[[share:…]]` tokens
+    // when the most recent message in the thread is a shared post/spot/
+    // community/event. Swap them out for a human-readable summary so the
+    // raw bracket syntax never reaches the UI.
+    const rawPreview =
+      typeof item.last_message_preview === "string"
+        ? item.last_message_preview
+        : "";
+    const previewText = describeBodyForPreview(rawPreview).trim();
+    const preview = previewText ? previewText : "Tap to open conversation";
     const when = formatListTime(item.last_message_at);
 
     const avatarUser = {

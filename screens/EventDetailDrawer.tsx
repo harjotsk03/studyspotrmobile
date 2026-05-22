@@ -8,7 +8,6 @@ import {
   PanResponder,
   Pressable,
   ScrollView,
-  Share,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -23,12 +22,17 @@ import {
   Trash2,
 } from "lucide-react-native";
 import { useNavigation } from "@react-navigation/native";
+import type {
+  NavigationProp,
+  ParamListBase,
+} from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import type { RootStackParamList } from "../types/navigation";
+import ShareToFriendsSheet from "../components/ShareToFriendsSheet";
 
 // ─── Shared Types ─────────────────────────────────────────────────────────────
 
@@ -399,6 +403,8 @@ export default function EventDetailDrawer({
   onEventDeleted,
 }: EventDetailDrawerProps) {
   const insets = useSafeAreaInsets();
+  const navigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const translateY = useRef(new Animated.Value(800)).current;
   const backdropOpacity = useRef(new Animated.Value(0)).current;
   const [modalVisible, setModalVisible] = useState(false);
@@ -410,6 +416,7 @@ export default function EventDetailDrawer({
   const [leaveConfirmVisible, setLeaveConfirmVisible] = useState(false);
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [shareSheetOpen, setShareSheetOpen] = useState(false);
 
   // Local community membership state (for when user joins from the drawer)
   const [communityJoinStatus, setCommunityJoinStatus] = useState<
@@ -813,16 +820,9 @@ export default function EventDetailDrawer({
     }
   }
 
-  async function handleShare() {
+  function handleShare() {
     if (!detailEvent) return;
-    try {
-      await Share.share({
-        title: detailEvent.title,
-        message: `Check out "${detailEvent.title}" on StudySpotr!`,
-      });
-    } catch {
-      // silent
-    }
+    setShareSheetOpen(true);
   }
 
   async function handleJoinCommunity() {
@@ -1085,7 +1085,7 @@ export default function EventDetailDrawer({
               <TouchableOpacity
                 style={styles.fullShareButton}
                 activeOpacity={0.8}
-                onPress={() => void handleShare()}
+                onPress={handleShare}
               >
                 <Share2 size={20} color={Colors.dark} strokeWidth={2} />
                 <Text style={styles.fullShareButtonText}>Share Event</Text>
@@ -1133,7 +1133,7 @@ export default function EventDetailDrawer({
             <TouchableOpacity
               style={styles.shareButton}
               activeOpacity={0.7}
-              onPress={() => void handleShare()}
+              onPress={handleShare}
             >
               <Share2 size={20} color={Colors.dark} strokeWidth={2} />
             </TouchableOpacity>
@@ -1253,6 +1253,18 @@ export default function EventDetailDrawer({
           </Animated.View>
         </View>
       )}
+
+      <ShareToFriendsSheet
+        visible={shareSheetOpen}
+        attachment={
+          shareSheetOpen && detailEvent
+            ? { kind: "event", event: detailEvent, communityId }
+            : null
+        }
+        token={token}
+        navigation={navigation as unknown as NavigationProp<ParamListBase>}
+        onClose={() => setShareSheetOpen(false)}
+      />
     </Modal>
   );
 }

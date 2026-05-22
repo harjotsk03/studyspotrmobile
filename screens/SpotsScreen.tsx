@@ -411,7 +411,6 @@ export default function SpotsScreen() {
           },
         ]}
       >
-        <Text style={styles.title}>Spots</Text>
 
         <View style={styles.searchRow}>
           <View style={styles.searchField}>

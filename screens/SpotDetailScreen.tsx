@@ -16,7 +16,12 @@ import {
   type NativeSyntheticEvent,
   type NativeScrollEvent,
 } from "react-native";
-import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import {
+  useFocusEffect,
+  useNavigation,
+  type NavigationProp,
+  type ParamListBase,
+} from "@react-navigation/native";
 import type {
   NativeStackNavigationProp,
   NativeStackScreenProps,
@@ -34,6 +39,7 @@ import {
   MessageSquarePlus,
   Plug,
   Presentation,
+  Send,
   Star,
   SunMedium,
   Trash2,
@@ -43,6 +49,7 @@ import {
   Volume2,
   Wifi,
 } from "lucide-react-native";
+import ShareToFriendsSheet from "../components/ShareToFriendsSheet";
 import SpotReviewComposerModal, {
   type ComposerMode,
 } from "../components/SpotReviewComposerModal";
@@ -268,7 +275,7 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
-  const { profile } = useAuth();
+  const { token, profile } = useAuth();
   const { refetchSpots } = useSpots();
   const user = profile?.userProfile;
 
@@ -284,6 +291,7 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [lightboxMountKey, setLightboxMountKey] = useState(0);
+  const [shareSheetOpen, setShareSheetOpen] = useState(false);
   const lightboxListRef = useRef<FlatList<SpotGalleryItem>>(null);
 
   const galleryItems = useMemo(
@@ -520,17 +528,33 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
         <Text style={styles.headerTitle} numberOfLines={1}>
           {title}
         </Text>
-        {isSpotOwner ? (
-          <TouchableOpacity
-            onPress={spotMenu}
-            style={styles.backButton}
-            activeOpacity={0.7}
-          >
-            <EllipsisVertical size={20} color={Colors.dark} strokeWidth={2.2} />
-          </TouchableOpacity>
-        ) : (
-          <View style={styles.placeholder} />
-        )}
+        <View style={styles.headerActions}>
+          {token ? (
+            <TouchableOpacity
+              onPress={() => setShareSheetOpen(true)}
+              style={styles.backButton}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Send this spot to a friend"
+            >
+              <Send size={18} color={Colors.dark} strokeWidth={2.2} />
+            </TouchableOpacity>
+          ) : null}
+          {isSpotOwner ? (
+            <TouchableOpacity
+              onPress={spotMenu}
+              style={styles.backButton}
+              activeOpacity={0.7}
+            >
+              <EllipsisVertical
+                size={20}
+                color={Colors.dark}
+                strokeWidth={2.2}
+              />
+            </TouchableOpacity>
+          ) : null}
+          {!token && !isSpotOwner ? <View style={styles.placeholder} /> : null}
+        </View>
       </View>
 
       <ScrollView
@@ -991,6 +1015,16 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
           await refetchSpots();
         }}
       />
+
+      <ShareToFriendsSheet
+        visible={shareSheetOpen}
+        attachment={shareSheetOpen ? { kind: "spot", spot } : null}
+        token={token}
+        navigation={
+          rootNavigation as unknown as NavigationProp<ParamListBase>
+        }
+        onClose={() => setShareSheetOpen(false)}
+      />
     </View>
   );
 }
@@ -1015,6 +1049,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#EBEBEB",
     alignItems: "center",
     justifyContent: "center",
+  },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
   headerTitle: {
     flex: 1,

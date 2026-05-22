@@ -5,7 +5,7 @@ import { ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
 import { ArrowLeft } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FeedPostCard from "../components/FeedPostCard";
-import SharePostToFriendsSheet from "../components/SharePostToFriendsSheet";
+import ShareToFriendsSheet from "../components/ShareToFriendsSheet";
 import { Colors } from "../constants/Colors";
 import { useAuth } from "../context/AuthContext";
 import type { FeedPost } from "../utils/feedApi";
@@ -51,9 +51,9 @@ export default function FeedPostDetailScreen({ navigation, route }: Props) {
         />
       </ScrollView>
 
-      <SharePostToFriendsSheet
+      <ShareToFriendsSheet
         visible={friendsShareOpen}
-        post={post}
+        attachment={friendsShareOpen ? { kind: "post", post } : null}
         token={token}
         navigation={navigation as NavigationProp<ParamListBase>}
         onClose={() => setFriendsShareOpen(false)}

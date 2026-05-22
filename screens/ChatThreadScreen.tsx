@@ -16,7 +16,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ArrowLeft, Send } from "lucide-react-native";
+import { ArrowLeft, Send, X } from "lucide-react-native";
+import SharedAttachmentPreview from "../components/SharedAttachmentPreview";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { useAuth } from "../context/AuthContext";
@@ -30,6 +31,11 @@ import {
   sendChatMessage,
   type ChatMessage,
 } from "../utils/chatApi";
+import {
+  encodeShareToken,
+  extractShareFromBody,
+  type SharedAttachmentRef,
+} from "../utils/messageShare";
 
 /** Per-user / per-conversation cache key for the most recent messages. */
 const THREAD_CACHE_PREFIX = "chat:thread:";
@@ -91,10 +97,21 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [sendBusy, setSendBusy] = useState(false);
   const [draft, setDraft] = useState("");
+  /** When a draft message arrives via route params with a share token (post
+   * or spot), we split it: the human-readable caption goes into `draft`
+   * (editable) and the parsed ref lives here so we can render a pinned
+   * preview card above the input — and re-attach the token at send time. */
+  const [attachedShare, setAttachedShare] =
+    useState<SharedAttachmentRef | null>(null);
   const [socketJoinError, setSocketJoinError] = useState<string | null>(null);
 
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const loadingOlderRef = useRef(false);
+  /** Latest `draftMessage` route param we've already consumed. Used to
+   * avoid re-applying the same draft on every re-render (without needing
+   * to dispatch a stale `setParams` action that React Navigation rejects
+   * mid-transition with "SET_PARAMS … not handled by any navigator"). */
+  const consumedDraftRef = useRef<string | null>(null);
   /** Live snapshot of the current message count — read inside callbacks so we
    * can decide whether to surface load errors without making those callbacks
    * depend on `messages.length` (which would re-fetch on every new message). */
@@ -174,9 +191,22 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
   useLayoutEffect(() => {
     const dm = route.params.draftMessage;
     if (typeof dm !== "string" || !dm.trim()) return;
-    setDraft(dm.trim());
-    navigation.setParams({ draftMessage: undefined });
-  }, [conversationId, navigation, route.params.draftMessage]);
+    // The same `dm` may stick around in route.params across re-renders
+    // (we deliberately don't try to `setParams` it back to undefined —
+    // doing so during a tab→nested-stack transition produces a noisy
+    // "SET_PARAMS … not handled" warning in React Navigation 7). Tracking
+    // the consumed value here gives us idempotency without the dispatch.
+    if (consumedDraftRef.current === dm) return;
+    consumedDraftRef.current = dm;
+
+    const { ref, text } = extractShareFromBody(dm);
+    if (ref) {
+      setAttachedShare(ref);
+      setDraft(text);
+    } else {
+      setDraft(dm.trim());
+    }
+  }, [conversationId, route.params.draftMessage]);
 
   useFocusEffect(
     useCallback(() => {
@@ -282,11 +312,22 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
 
   const onSend = useCallback(async () => {
     const text = draft.trim();
-    if (!token || !text || sendBusy) return;
+    if (!token || sendBusy) return;
+    if (!text && !attachedShare) return;
+
+    // Re-attach the share token before sending so the receiver's
+    // ChatThreadScreen can parse it back into a preview card.
+    const body = attachedShare
+      ? text
+        ? `${text}\n${encodeShareToken(attachedShare)}`
+        : encodeShareToken(attachedShare)
+      : text;
+
     setSendBusy(true);
     try {
-      const msg = await sendChatMessage(token, conversationId, text);
+      const msg = await sendChatMessage(token, conversationId, body);
       setDraft("");
+      setAttachedShare(null);
       setMessages((prev) => mergeMessagesDedupeNewestFirst(prev, [msg]));
     } catch (e) {
       Alert.alert(
@@ -296,34 +337,84 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
     } finally {
       setSendBusy(false);
     }
-  }, [token, conversationId, draft, sendBusy]);
+  }, [token, conversationId, draft, sendBusy, attachedShare]);
 
   const renderMessage = ({ item }: { item: ChatMessage }) => {
     const mine = Boolean(myId && item.sender_id === myId);
+    const { ref, text } = extractShareFromBody(item.body);
+    const trimmedText = text.trim();
+    const hasText = trimmedText.length > 0;
+    const timeLabel = formatMessageTime(item.created_at);
+
+    // Layouts:
+    //   - Plain message: text bubble with inline timestamp (existing look).
+    //   - Share + caption: text bubble (no inline time) → preview card → small
+    //     time below the card, hugging the same edge as the bubble.
+    //   - Share only: just the preview card with a small time line beneath.
+
     return (
       <View
-        style={[
-          styles.msgRow,
-          mine ? styles.msgRowMine : styles.msgRowTheirs,
-        ]}
+        style={[styles.msgRow, mine ? styles.msgRowMine : styles.msgRowTheirs]}
       >
-        <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
-          <Text
-            style={[styles.msgBody, mine ? styles.msgBodyMine : styles.msgBodyTheirs]}
-          >
-            {item.body}
-          </Text>
-          <Text
-            style={[styles.msgTime, mine ? styles.msgTimeMine : styles.msgTimeTheirs]}
-          >
-            {formatMessageTime(item.created_at)}
-          </Text>
+        <View
+          style={[
+            styles.msgStack,
+            mine ? styles.msgStackMine : styles.msgStackTheirs,
+          ]}
+        >
+          {hasText || !ref ? (
+            <View
+              style={[
+                styles.bubble,
+                mine ? styles.bubbleMine : styles.bubbleTheirs,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.msgBody,
+                  mine ? styles.msgBodyMine : styles.msgBodyTheirs,
+                ]}
+              >
+                {hasText ? trimmedText : item.body}
+              </Text>
+              {!ref ? (
+                <Text
+                  style={[
+                    styles.msgTime,
+                    mine ? styles.msgTimeMine : styles.msgTimeTheirs,
+                  ]}
+                >
+                  {timeLabel}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+
+          {ref ? (
+            <SharedAttachmentPreview
+              refData={ref}
+              token={token}
+              isMine={mine}
+            />
+          ) : null}
+
+          {ref ? (
+            <Text
+              style={[
+                styles.msgTimeBelow,
+                mine ? styles.msgTimeBelowMine : styles.msgTimeBelowTheirs,
+              ]}
+            >
+              {timeLabel}
+            </Text>
+          ) : null}
         </View>
       </View>
     );
   };
 
-  const canSend = draft.trim().length > 0 && !sendBusy;
+  const canSend =
+    !sendBusy && (draft.trim().length > 0 || attachedShare !== null);
 
   return (
     <KeyboardAvoidingView
@@ -383,6 +474,31 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
           }
         />
 
+        {/* Pinned share preview — only when the draft arrived with an
+            attached post/spot. Editable caption stays in the input below;
+            the actual share token is re-appended at send time. */}
+        {attachedShare ? (
+          <View style={styles.attachedRow}>
+            <View style={styles.attachedCardWrap}>
+              <SharedAttachmentPreview
+                refData={attachedShare}
+                token={token}
+                isMine={false}
+              />
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => setAttachedShare(null)}
+                style={styles.attachedRemoveBtn}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel="Remove attached share"
+              >
+                <X size={16} color={Colors.dark} strokeWidth={2.2} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
+
         <View
           style={[
             styles.composerRow,
@@ -391,7 +507,7 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
         >
           <TextInput
             style={styles.input}
-            placeholder="Message"
+            placeholder={attachedShare ? "Add a message…" : "Message"}
             placeholderTextColor="#999"
             value={draft}
             onChangeText={setDraft}
@@ -464,8 +580,17 @@ const styles = StyleSheet.create({
   },
   msgRowMine: { justifyContent: "flex-end" },
   msgRowTheirs: { justifyContent: "flex-start" },
-  bubble: {
+  /** Vertical stack of bubble + attachment preview + timestamp. We let the
+   * stack size to its content (max 82%) so single-line messages don't get
+   * stretched to the width of attachment cards. */
+  msgStack: {
     maxWidth: "82%",
+    gap: 0,
+  },
+  msgStackMine: { alignItems: "flex-end" },
+  msgStackTheirs: { alignItems: "flex-start" },
+  bubble: {
+    maxWidth: "100%",
     borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 10,
@@ -494,6 +619,21 @@ const styles = StyleSheet.create({
   },
   msgTimeMine: { color: "rgba(255,255,255,0.85)" },
   msgTimeTheirs: { color: "#888" },
+  /** Smaller, lower-contrast timestamp displayed below an attachment card
+   * (since the card itself doesn't have room for it). */
+  msgTimeBelow: {
+    fontFamily: Fonts.instrument.medium,
+    fontSize: 11,
+    color: "#999",
+    marginTop: 4,
+    paddingHorizontal: 4,
+  },
+  msgTimeBelowMine: {
+    textAlign: "right",
+  },
+  msgTimeBelowTheirs: {
+    textAlign: "left",
+  },
   empty: {
     textAlign: "center",
     color: "#888",
@@ -518,6 +658,41 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "#e8e8e8",
     backgroundColor: "#fff",
+  },
+  /** "Pinned" share attachment sitting directly above the input row. The
+   * remove button overlaps the top-right corner of the preview so the
+   * composer doesn't need an extra horizontal column. */
+  attachedRow: {
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 4,
+    backgroundColor: "#fff",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#e8e8e8",
+  },
+  attachedCardWrap: {
+    position: "relative",
+    alignSelf: "flex-start",
+    paddingTop: 8,
+    paddingRight: 8,
+  },
+  attachedRemoveBtn: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "#fff",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#dcdcdc",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   input: {
     flex: 1,

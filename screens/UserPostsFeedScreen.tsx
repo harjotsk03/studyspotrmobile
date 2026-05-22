@@ -24,7 +24,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FeedCommentsModal from "../components/FeedCommentsModal";
 import FeedInstaCard, { type MediaRect } from "../components/FeedInstaCard";
 import FullScreenReelViewer from "../components/FullScreenReelViewer";
-import SharePostToFriendsSheet from "../components/SharePostToFriendsSheet";
+import ShareToFriendsSheet from "../components/ShareToFriendsSheet";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { useAuth } from "../context/AuthContext";
@@ -449,9 +449,11 @@ export default function UserPostsFeedScreen() {
         onShareWithFriends={handleFullScreenShareWithFriends}
       />
 
-      <SharePostToFriendsSheet
+      <ShareToFriendsSheet
         visible={Boolean(shareFriendsPost)}
-        post={shareFriendsPost}
+        attachment={
+          shareFriendsPost ? { kind: "post", post: shareFriendsPost } : null
+        }
         token={token}
         navigation={navigation as NavigationProp<ParamListBase>}
         onClose={() => setShareFriendsPost(null)}

@@ -24,17 +24,35 @@ import {
   type ChatConversation,
   type ChatOtherUser,
 } from "../utils/chatApi";
+import { communityShareDraftForMessage } from "../utils/communityShareDraft";
+import { eventShareDraftForMessage } from "../utils/eventShareDraft";
 import { feedPostShareDraftForMessage } from "../utils/feedPostShareDraft";
+import { spotShareDraftForMessage } from "../utils/spotShareDraft";
 import type { FeedPost } from "../utils/feedApi";
+import type { StudySpot } from "../context/SpotsContext";
+import type { CommunityData } from "../screens/CommunityDetailScreen";
+import type { CommunityEvent } from "../screens/EventDetailDrawer";
 import {
   navigateToInboxChatThread,
   navigateToInboxMessagesList,
 } from "../utils/navigateToInboxChat";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 
+/** Discriminated union describing what's being shared. Keep this typed at
+ * the call site so we can build the correct draft body (and headline copy)
+ * without having to inspect a generic blob. */
+export type ShareTarget =
+  | { kind: "post"; post: FeedPost }
+  | { kind: "spot"; spot: StudySpot }
+  | { kind: "community"; community: CommunityData }
+  | { kind: "event"; event: CommunityEvent; communityId: string };
+
 type Props = {
   visible: boolean;
-  post: FeedPost | null;
+  /** What the user is sending. Pass `null` to render a no-op (keeps the
+   * Modal mounted but inert, matching the pattern used by parent screens
+   * for delayed unmount during the slide-out animation). */
+  attachment: ShareTarget | null;
   token: string | null;
   navigation: NavigationProp<ParamListBase>;
   onClose: () => void;
@@ -84,7 +102,12 @@ function AvatarCircle(props: { peer: ChatOtherUser; size: number }) {
       {photo ? (
         <Image source={{ uri: encodeURI(photo) }} style={styles.avatarImg} />
       ) : (
-        <Text style={[styles.avatarLetterSmall, { fontSize: Math.round(15 * (size / 58)) }]}>
+        <Text
+          style={[
+            styles.avatarLetterSmall,
+            { fontSize: Math.round(15 * (size / 58)) },
+          ]}
+        >
           {getUserInitials(initialsUser)}
         </Text>
       )}
@@ -97,16 +120,49 @@ function quickChipDisplayName(peer: ChatOtherUser): string {
   const firstRaw = raw.split(/\s+/)[0]?.trim();
   if (firstRaw) return firstRaw.slice(0, 11).trimEnd();
   const u = (peer.username ?? "").replace(/^@/, "").trim();
-  if (u)
-    return u.length > 10 ? `@${u.slice(0, 9)}…` : `@${u}`;
+  if (u) return u.length > 10 ? `@${u.slice(0, 9)}…` : `@${u}`;
   const full = chatPeerDisplayName(peer);
   const short = full.slice(0, 11).trimEnd();
   return short || "?";
 }
 
-export default function SharePostToFriendsSheet({
+/** Build the prefilled chat composer text for whichever resource the user
+ * tapped "share" on. Always appends a `[[share:<kind>:<id>]]` token that the
+ * receiver's ChatThreadScreen resolves into a rich preview card. */
+function draftForAttachment(attachment: ShareTarget): string {
+  switch (attachment.kind) {
+    case "post":
+      return feedPostShareDraftForMessage(attachment.post);
+    case "spot":
+      return spotShareDraftForMessage(attachment.spot);
+    case "community":
+      return communityShareDraftForMessage(attachment.community);
+    case "event":
+      return eventShareDraftForMessage(
+        attachment.event,
+        attachment.communityId,
+      );
+  }
+}
+
+/** Human-readable noun used in onboarding copy ("share <subject>s in one
+ * tap"). Falls back to "post" for backward-compatible phrasing. */
+function attachmentSubject(attachment: ShareTarget): string {
+  switch (attachment.kind) {
+    case "post":
+      return "post";
+    case "spot":
+      return "study spot";
+    case "community":
+      return "community";
+    case "event":
+      return "event";
+  }
+}
+
+export default function ShareToFriendsSheet({
   visible,
-  post,
+  attachment,
   token,
   navigation,
   onClose,
@@ -150,13 +206,18 @@ export default function SharePostToFriendsSheet({
   }, [visible]);
 
   const draft = useMemo(
-    () => (post ? feedPostShareDraftForMessage(post) : ""),
-    [post],
+    () => (attachment ? draftForAttachment(attachment) : ""),
+    [attachment],
   );
+  const subject = attachment ? attachmentSubject(attachment) : "post";
+  const introCopy =
+    subject === "post"
+      ? "Tap a friend to open the chat — your share is drafted. Use"
+      : `Tap a friend to open the chat — your ${subject} share is drafted. Use`;
 
   const handlePick = useCallback(
     (c: ChatConversation) => {
-      if (!post) return;
+      if (!attachment) return;
       onClose();
       requestAnimationFrame(() => {
         navigateToInboxChatThread(navigation, {
@@ -166,7 +227,7 @@ export default function SharePostToFriendsSheet({
         });
       });
     },
-    [post, navigation, draft, onClose],
+    [attachment, navigation, draft, onClose],
   );
 
   const goMessages = useCallback(() => {
@@ -248,7 +309,10 @@ export default function SharePostToFriendsSheet({
         >
           <View style={[styles.avatar, { backgroundColor: color }]}>
             {photo ? (
-              <Image source={{ uri: encodeURI(photo) }} style={styles.avatarImg} />
+              <Image
+                source={{ uri: encodeURI(photo) }}
+                style={styles.avatarImg}
+              />
             ) : (
               <Text style={styles.avatarLetter}>
                 {getUserInitials(initialsUser)}
@@ -272,7 +336,7 @@ export default function SharePostToFriendsSheet({
     [handlePick],
   );
 
-  if (!visible || !post) return null;
+  if (!visible || !attachment) return null;
 
   const showSeeMoreLinks = conversations.length > 0;
 
@@ -317,18 +381,23 @@ export default function SharePostToFriendsSheet({
         {mode === "quick" ? (
           <View style={styles.quickBody}>
             <Text style={styles.intro}>
-              Tap a friend to open the chat — your share is drafted. Use{" "}
-              <Text style={styles.introEm}>See more</Text> to search everyone you
-              message.
+              {introCopy} <Text style={styles.introEm}>See more</Text> to search
+              everyone you message.
             </Text>
 
             {loading ? (
-              <ActivityIndicator style={styles.centerSpinner} color={Colors.accent} />
+              <ActivityIndicator
+                style={styles.centerSpinner}
+                color={Colors.accent}
+              />
             ) : error ? (
               <View style={styles.emptyWrap}>
                 <Text style={styles.emptyTitle}>Could not load chats</Text>
                 <Text style={styles.emptySub}>{error}</Text>
-                <TouchableOpacity style={styles.retryBtn} onPress={() => void load()}>
+                <TouchableOpacity
+                  style={styles.retryBtn}
+                  onPress={() => void load()}
+                >
                   <Text style={styles.retryLabel}>Retry</Text>
                 </TouchableOpacity>
               </View>
@@ -337,7 +406,8 @@ export default function SharePostToFriendsSheet({
                 <MessageCircle size={44} color="#ccc" strokeWidth={2} />
                 <Text style={styles.emptyTitle}>No conversations yet</Text>
                 <Text style={styles.emptySub}>
-                  Message someone first, then you can share posts in one tap.
+                  Message someone first, then you can share {subject}s in one
+                  tap.
                 </Text>
                 <TouchableOpacity style={styles.ctaBtn} onPress={goMessages}>
                   <Text style={styles.ctaLabel}>Open messages</Text>

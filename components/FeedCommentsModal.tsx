@@ -403,13 +403,19 @@ export default function FeedCommentsModal({
     Alert.alert("Comments", "Showing newest first.");
   }, []);
 
+  // Tapping the avatar or name pushes PublicProfile. We close the sheet on
+  // the way out so when the user backs out of the profile screen they
+  // return to a clean feed rather than the still-open comments modal.
+  // Navigation goes first so the push covers the screen before the
+  // dismiss animation runs visibly.
   const openCommentAuthorProfile = useCallback(
     (userId: string | undefined) => {
       const id = userId?.trim();
       if (!id) return;
       navigation.navigate("PublicProfile", { userId: id });
+      onClose();
     },
-    [navigation],
+    [navigation, onClose],
   );
 
   const mePhoto =
@@ -704,6 +710,13 @@ export default function FeedCommentsModal({
                               onPress={() => openCommentAuthorProfile(uid)}
                               disabled={!canOpenProfile}
                               hitSlop={{ bottom: 4 }}
+                              // `Pressable` is a View; without an explicit
+                              // alignSelf it stretches to fill the parent
+                              // column, making the empty space to the right
+                              // of the name tappable. Constrain to the text
+                              // width so only the name itself opens the
+                              // profile.
+                              style={styles.cNamePressable}
                             >
                               <Text style={styles.cName}>{displayName}</Text>
                             </Pressable>
@@ -978,6 +991,9 @@ const styles = StyleSheet.create({
   cMiddle: {
     flex: 1,
     minWidth: 0,
+  },
+  cNamePressable: {
+    alignSelf: "flex-start",
   },
   cName: {
     fontFamily: Fonts.gabarito.semiBold,
