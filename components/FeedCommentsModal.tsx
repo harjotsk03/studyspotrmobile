@@ -24,15 +24,16 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as Haptics from "expo-haptics";
 import {
   ArrowUp,
   AtSign,
-  Heart,
   Image as ImageIcon,
   ListFilter,
   Smile,
   X,
 } from "lucide-react-native";
+import CommentHeart from "./CommentHeart";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import type { RootStackParamList } from "../types/navigation";
@@ -178,6 +179,19 @@ export default function FeedCommentsModal({
   const loadingRef = useRef(false);
   const closingRef = useRef(false);
 
+  /**
+   * Tracks the most recent tap on a comment row so we can recognize a
+   * double-tap (Instagram-style) and toggle a like. We deliberately key by
+   * comment id so tapping one row then quickly tapping a different row
+   * doesn't fire a phantom like on either.
+   */
+  const lastCommentTapRef = useRef<{ id: string; t: number }>({
+    id: "",
+    t: 0,
+  });
+  /** Max ms between two taps to count as a double-tap. */
+  const DOUBLE_TAP_WINDOW_MS = 300;
+
   const backdropOpacity = useRef(new Animated.Value(0)).current;
   const sheetTranslateY = useRef(new Animated.Value(WINDOW_H)).current;
   /** Live scroll offset of the comments list; used to gate the drag-to-dismiss
@@ -288,6 +302,16 @@ export default function FeedCommentsModal({
       const was = c.viewer_has_liked;
       const nextLiked = !was;
       const d = nextLiked ? 1 : -1;
+      // Tactile confirmation on like — kept light so the rapid double-tap
+      // path doesn't feel buzzy. We intentionally don't haptic on unlike;
+      // undoing an action shouldn't feel as satisfying as taking one.
+      if (nextLiked) {
+        try {
+          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        } catch {
+          // Haptics unavailable on this platform — silent.
+        }
+      }
       setComments((prev) =>
         prev.map((x) =>
           x.id === c.id
@@ -332,6 +356,28 @@ export default function FeedCommentsModal({
       }
     },
     [token],
+  );
+
+  /**
+   * Detect a double-tap on a comment row and like it (Instagram-style).
+   * Only ever triggers a *like* — if the comment is already liked we
+   * deliberately no-op rather than unliking, so the gesture can't undo
+   * itself on a fast double-tap.
+   */
+  const handleCommentRowPress = useCallback(
+    (c: FeedComment) => {
+      const now = Date.now();
+      const prev = lastCommentTapRef.current;
+      if (prev.id === c.id && now - prev.t < DOUBLE_TAP_WINDOW_MS) {
+        lastCommentTapRef.current = { id: "", t: 0 };
+        if (!c.viewer_has_liked) {
+          void toggleCommentLike(c);
+        }
+        return;
+      }
+      lastCommentTapRef.current = { id: c.id, t: now };
+    },
+    [toggleCommentLike],
   );
 
   const submit = useCallback(async () => {
@@ -677,6 +723,7 @@ export default function FeedCommentsModal({
                       >
                         <Pressable
                           style={styles.commentRow}
+                          onPress={() => handleCommentRowPress(item)}
                           onLongPress={() => {
                             if (mine) confirmDelete(item);
                           }}
@@ -741,19 +788,9 @@ export default function FeedCommentsModal({
                               activeOpacity={0.7}
                               onPress={() => void toggleCommentLike(item)}
                             >
-                              <Heart
+                              <CommentHeart
+                                liked={item.viewer_has_liked}
                                 size={20}
-                                color={
-                                  item.viewer_has_liked
-                                    ? Colors.accent
-                                    : "#8a8a8a"
-                                }
-                                strokeWidth={2.2}
-                                fill={
-                                  item.viewer_has_liked
-                                    ? Colors.accent
-                                    : "transparent"
-                                }
                               />
                               {item.like_count > 0 ? (
                                 <Text

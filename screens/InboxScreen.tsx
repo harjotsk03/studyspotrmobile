@@ -8,11 +8,13 @@ import {
   Text,
   View,
 } from "react-native";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import TopNav from "../components/TopNav";
 import Button from "../components/Button";
+import SwipeableNotificationCard from "../components/SwipeableNotificationCard";
+import UndoToast from "../components/UndoToast";
 import { SkeletonList, SkeletonRow } from "../components/Skeleton";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
@@ -132,25 +134,6 @@ function formatFollowRequestSummary(requests: NotificationItem[]) {
   }`;
 }
 
-function formatNotificationTime(value?: string | null) {
-  if (!value) return "";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-
-  const diffMs = Date.now() - date.getTime();
-  const diffMinutes = Math.floor(diffMs / 60000);
-  if (diffMinutes < 1) return "Just now";
-  if (diffMinutes < 60) return `${diffMinutes}m ago`;
-
-  const diffHours = Math.floor(diffMinutes / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 7) return `${diffDays}d ago`;
-
-  return date.toLocaleDateString();
-}
 
 export default function InboxScreen() {
   const navigation =
@@ -166,7 +149,44 @@ export default function InboxScreen() {
     refreshNotifications,
     markNotificationRead,
     markAllNotificationsRead,
+    deleteNotification,
+    restoreNotification,
   } = useNotifications();
+
+  /**
+   * Holds the most recently deleted notification so the undo toast can
+   * restore it. Single-slot by design: a new delete replaces this entry,
+   * which means once a toast disappears (or is replaced), the previous
+   * deletion becomes permanent — matching Gmail / Mail's behavior.
+   */
+  const [pendingUndo, setPendingUndo] = useState<NotificationItem | null>(null);
+
+  const handleDeleteNotification = (notification: NotificationItem) => {
+    void deleteNotification(notification.id).catch((err) => {
+      Alert.alert(
+        "Error",
+        err instanceof Error ? err.message : "Could not delete notification.",
+      );
+    });
+    // Capture the full notification snapshot (not just the id) so the undo
+    // path can call restore + re-insert with the original read_at, type,
+    // etc. preserved.
+    setPendingUndo(notification);
+  };
+
+  const handleUndoDelete = () => {
+    const target = pendingUndo;
+    if (!target) return;
+    setPendingUndo(null);
+    void restoreNotification(target).catch((err) => {
+      Alert.alert(
+        "Error",
+        err instanceof Error
+          ? err.message
+          : "Could not restore notification.",
+      );
+    });
+  };
 
   const buildCommunityStub = (notification: NotificationItem) => {
     const communityId =
@@ -263,7 +283,6 @@ export default function InboxScreen() {
       <TopNav />
       <View style={styles.header}>
         <View style={styles.headerRow}>
-          <Text style={styles.title}>Inbox</Text>
           {unreadCount > 0 && (
             <Pressable
               onPress={() =>
@@ -320,8 +339,6 @@ export default function InboxScreen() {
         </View>
 
         <View style={styles.notificationsSection}>
-          <Text style={styles.notificationsSectionTitle}>Notifications</Text>
-
           {loading && (
             <SkeletonList
               count={4}
@@ -376,68 +393,79 @@ export default function InboxScreen() {
                 };
 
                 return (
-                  <Pressable
-                    style={[
-                      styles.notificationCard,
-                      unread && styles.unreadNotificationCard,
-                    ]}
-                    onPress={() => handleNotificationPress(item)}
+                  <SwipeableNotificationCard
+                    onDelete={() => handleDeleteNotification(item)}
                   >
                     <Pressable
-                      disabled={!item.actor?.id}
-                      onPress={() =>
-                        item.actor?.id
-                          ? rootNavigation.navigate("PublicProfile", {
-                              userId: item.actor.id,
-                            })
-                          : undefined
-                      }
                       style={[
-                        styles.avatar,
-                        { backgroundColor: getUserAvatarColor(avatarUser) },
+                        styles.notificationCard,
+                        unread && styles.unreadNotificationCard,
                       ]}
+                      onPress={() => handleNotificationPress(item)}
                     >
-                      {actorAvatarUri ? (
-                        <Image
-                          source={{ uri: actorAvatarUri }}
-                          style={styles.avatarImage}
-                        />
-                      ) : (
-                        <Text style={styles.avatarText}>
-                          {getUserInitials(avatarUser)}
-                        </Text>
-                      )}
-                    </Pressable>
-                    <View style={styles.notificationBody}>
-                      {!!typeLabel && (
-                        <Text style={styles.typeLabel}>{typeLabel}</Text>
-                      )}
-                      <View style={styles.notificationHeader}>
-                        <Text
-                          style={styles.notificationTitle}
-                          numberOfLines={1}
-                        >
-                          {formatNotificationTitle(item)}
-                        </Text>
-                        {unread && <View style={styles.unreadDot} />}
-                      </View>
-                      <Text
-                        style={styles.notificationMessage}
-                        numberOfLines={2}
+                      <Pressable
+                        disabled={!item.actor?.id}
+                        onPress={() =>
+                          item.actor?.id
+                            ? rootNavigation.navigate("PublicProfile", {
+                                userId: item.actor.id,
+                              })
+                            : undefined
+                        }
+                        style={[
+                          styles.avatar,
+                          { backgroundColor: getUserAvatarColor(avatarUser) },
+                        ]}
                       >
-                        {formatNotificationBody(item)}
-                      </Text>
-                      <Text style={styles.notificationTime}>
-                        {formatNotificationTime(item.created_at)}
-                      </Text>
-                    </View>
-                  </Pressable>
+                        {actorAvatarUri ? (
+                          <Image
+                            source={{ uri: actorAvatarUri }}
+                            style={styles.avatarImage}
+                          />
+                        ) : (
+                          <Text style={styles.avatarText}>
+                            {getUserInitials(avatarUser)}
+                          </Text>
+                        )}
+                      </Pressable>
+                      <View style={styles.notificationBody}>
+                        {!!typeLabel && (
+                          <Text style={styles.typeLabel}>{typeLabel}</Text>
+                        )}
+                        <View style={styles.notificationHeader}>
+                          <Text
+                            style={styles.notificationTitle}
+                            numberOfLines={1}
+                          >
+                            {formatNotificationTitle(item)}
+                          </Text>
+                          {unread && <View style={styles.unreadDot} />}
+                        </View>
+                        <Text
+                          style={styles.notificationMessage}
+                          numberOfLines={2}
+                        >
+                          {formatNotificationBody(item)}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  </SwipeableNotificationCard>
                 );
               }}
             />
           )}
         </View>
       </View>
+
+      {/* Bottom-anchored toast that lets the user undo a delete. Absolutely
+       * positioned so it floats above the notifications list without
+       * shifting layout. */}
+      <UndoToast
+        visible={!!pendingUndo}
+        message="Notification deleted"
+        onUndo={handleUndoDelete}
+        onHide={() => setPendingUndo(null)}
+      />
     </View>
   );
 }
@@ -477,15 +505,7 @@ const styles = StyleSheet.create({
   },
   notificationsSection: {
     flex: 1,
-    paddingHorizontal: 12,
-  },
-  notificationsSectionTitle: {
-    color: Colors.dark,
-    fontFamily: Fonts.instrument.semiBold,
-    fontSize: 14,
-    letterSpacing: 0.2,
-    marginBottom: 6,
-    marginTop: 10,
+    paddingTop: 8,
   },
   ctaRow: {
     marginTop: 4,
@@ -520,7 +540,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingBottom: 28,
-    gap: 12,
+    gap: 6,
   },
   stateCard: {
     backgroundColor: "#fff",
@@ -542,16 +562,17 @@ const styles = StyleSheet.create({
   },
   notificationCard: {
     backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     flexDirection: "row",
     gap: 12,
-    borderWidth: 1,
-    borderColor: "#fff",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(0, 0, 0, 0.05)",
   },
   unreadNotificationCard: {
-    borderColor: "rgba(26, 97, 168, 0.18)",
     backgroundColor: "#F8FBFF",
+    borderColor: "rgba(26, 97, 168, 0.18)",
   },
   avatar: {
     width: 42,
@@ -608,11 +629,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#555",
     lineHeight: 19,
-  },
-  notificationTime: {
-    fontFamily: Fonts.instrument.medium,
-    fontSize: 12,
-    color: "#888",
-    marginTop: 2,
   },
 });

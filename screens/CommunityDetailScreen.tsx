@@ -37,6 +37,7 @@ import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "../context/AuthContext";
+import { useCommunityCache } from "../context/CommunityCacheContext";
 import { useCommunityMembershipVersion } from "../context/NotificationsContext";
 import {
   fetchCommunityMembership,
@@ -45,6 +46,7 @@ import {
   normalizeCommunityMembership,
   type CommunityMembershipSnapshot,
 } from "../utils/communityMembership";
+import ActionButton from "../components/ActionButton";
 import Button from "../components/Button";
 import { SkeletonBox } from "../components/Skeleton";
 import type {
@@ -189,6 +191,7 @@ export default function CommunityDetailScreen({ route }: Props) {
     useNavigation<NativeStackNavigationProp<CommunityStackParamList>>();
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
+  const { markCommunityRemoved } = useCommunityCache();
 
   const [community, setCommunity] = useState<CommunityData>(initialCommunity);
   const [fetching, setFetching] = useState(true);
@@ -556,6 +559,11 @@ export default function CommunityDetailScreen({ route }: Props) {
       if (res.ok) {
         setShowDeleteModal(false);
         setDeleteLoading(false);
+        // Surface the deletion to any list screen still holding this
+        // community in its cached state, so the row disappears
+        // immediately when we navigate back rather than lingering until
+        // the next fetch.
+        markCommunityRemoved(community.id);
         const parentRouteNames =
           navigation.getParent()?.getState()?.routeNames ?? [];
         if (parentRouteNames.includes("CommunityList")) {
@@ -691,70 +699,62 @@ export default function CommunityDetailScreen({ route }: Props) {
               style={styles.actionsContainer}
             >
               {isAdmin && (
-                <Pressable
-                  style={styles.actionButton}
+                <ActionButton
+                  label="Edit"
+                  icon={Pencil}
+                  variant="subtle"
                   onPress={() => void handleOpenEditCommunity()}
-                >
-                  <Pencil size={20} color={Colors.dark} strokeWidth={2} />
-                  <Text style={styles.actionLabel}>Edit</Text>
-                </Pressable>
+                />
               )}
               {canViewPrivateCommunityActions && (
-                <Pressable
-                  style={styles.actionButton}
+                <ActionButton
+                  label="Events"
+                  icon={CalendarDays}
+                  variant="subtle"
                   onPress={() => void handleOpenEvents()}
-                >
-                  <CalendarDays size={20} color={Colors.dark} strokeWidth={2} />
-                  <Text style={styles.actionLabel}>Events</Text>
-                </Pressable>
+                />
               )}
-              <Pressable
-                style={styles.actionButton}
+              <ActionButton
+                label="Details"
+                icon={Info}
+                variant="subtle"
                 onPress={() =>
                   navigation.navigate("CommunityInfo", { community })
                 }
-              >
-                <Info size={20} color={Colors.dark} strokeWidth={2} />
-                <Text style={styles.actionLabel}>Details</Text>
-              </Pressable>
+              />
               {isMember && (
-                <Pressable
-                  style={styles.actionButton}
+                <ActionButton
+                  label="Members"
+                  icon={Users}
+                  variant="subtle"
                   onPress={() => void handleOpenMembers()}
-                >
-                  <Users size={20} color={Colors.dark} strokeWidth={2} />
-                  <Text style={styles.actionLabel}>Members</Text>
-                </Pressable>
+                />
               )}
-              <Pressable style={styles.actionButton}>
-                <Share size={20} color={Colors.dark} strokeWidth={2} />
-                <Text style={styles.actionLabel}>Share</Text>
-              </Pressable>
+              <ActionButton
+                label="Share"
+                icon={Share}
+                variant="subtle"
+                onPress={() => setShareSheetOpen(true)}
+              />
               {isOwner && (
-                <Pressable
-                  style={styles.actionButton}
+                <ActionButton
+                  label="Delete"
+                  icon={Trash2}
+                  variant="delete"
                   onPress={async () => {
                     if (await ensureCommunityAccess("owner")) {
                       setShowDeleteModal(true);
                     }
                   }}
-                >
-                  <Trash2 size={20} color="#E53E3E" strokeWidth={2} />
-                  <Text style={[styles.actionLabel, styles.destructiveLabel]}>
-                    Delete
-                  </Text>
-                </Pressable>
+                />
               )}
               {isMember && !isOwner && (
-                <Pressable
-                  style={styles.actionButton}
+                <ActionButton
+                  label="Leave"
+                  icon={LogOut}
+                  variant="delete"
                   onPress={() => setShowLeaveModal(true)}
-                >
-                  <LogOut size={20} color="#E53E3E" strokeWidth={2} />
-                  <Text style={[styles.actionLabel, { color: "#E53E3E" }]}>
-                    Leave
-                  </Text>
-                </Pressable>
+                />
               )}
             </ScrollView>
             {!isMember && !isPendingMember && (
@@ -810,25 +810,23 @@ export default function CommunityDetailScreen({ route }: Props) {
               private.
             </Text>
             <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonSecondary]}
-                onPress={() => setShowLeaveModal(false)}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.modalButtonSecondaryText}>Stay</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonDestructive]}
-                onPress={() => void handleLeave()}
-                activeOpacity={0.7}
-                disabled={leaveLoading}
-              >
-                {leaveLoading ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={styles.modalButtonDestructiveText}>Leave</Text>
-                )}
-              </TouchableOpacity>
+              <View style={styles.modalActionCell}>
+                <Button
+                  label="Stay"
+                  variant="outline"
+                  fullWidth
+                  onPress={() => setShowLeaveModal(false)}
+                />  
+              </View>
+              <View style={styles.modalActionCell}>
+                <Button
+                  label="Leave"
+                  variant="destructive"
+                  fullWidth
+                  onPress={() => void handleLeave()}
+                  disabled={leaveLoading}
+                />
+              </View>
             </View>
           </Pressable>
         </Pressable>
@@ -898,25 +896,29 @@ export default function CommunityDetailScreen({ route }: Props) {
               This action can't be undone.
             </Text>
             <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonSecondary]}
-                onPress={() => setShowDeleteModal(false)}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.modalButtonSecondaryText}>Keep</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonDestructive]}
-                onPress={() => void handleDeleteCommunity()}
-                activeOpacity={0.7}
-                disabled={deleteLoading}
-              >
-                {deleteLoading ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={styles.modalButtonDestructiveText}>Delete</Text>
-                )}
-              </TouchableOpacity>
+              {/* Each Button is wrapped in a `flex: 1` cell so the row
+               * splits evenly between Keep / Delete. The Button itself uses
+               * `fullWidth` to stretch the face + shadow plate to fill its
+               * cell — combining `flex: 1` and `fullWidth` on the same
+               * element fights flexbox basis sizing, so we separate the two
+               * concerns here. */}
+              <View style={styles.modalActionCell}>
+                <Button
+                  label="Keep"
+                  variant="secondary"
+                  fullWidth
+                  onPress={() => setShowDeleteModal(false)}
+                />
+              </View>
+              <View style={styles.modalActionCell}>
+                <Button
+                  label="Delete"
+                  variant="destructive"
+                  fullWidth
+                  onPress={() => void handleDeleteCommunity()}
+                  disabled={deleteLoading}
+                />
+              </View>
             </View>
           </Pressable>
         </Pressable>
@@ -924,9 +926,7 @@ export default function CommunityDetailScreen({ route }: Props) {
 
       <ShareToFriendsSheet
         visible={shareSheetOpen}
-        attachment={
-          shareSheetOpen ? { kind: "community", community } : null
-        }
+        attachment={shareSheetOpen ? { kind: "community", community } : null}
         token={token}
         navigation={navigation as unknown as NavigationProp<ParamListBase>}
         onClose={() => setShareSheetOpen(false)}
@@ -1139,23 +1139,6 @@ const styles = StyleSheet.create({
   actionsScroll: {
     gap: 10,
   },
-  actionButton: {
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 9999,
-    width: 70,
-    height: 70,
-    backgroundColor: "#f9f9f9",
-    gap: 4,
-  },
-  actionLabel: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 10,
-    color: Colors.dark,
-  },
-  destructiveLabel: {
-    color: "#E53E3E",
-  },
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.45)",
@@ -1191,6 +1174,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 10,
     marginTop: 8,
+  },
+  modalActionCell: {
+    flex: 1,
   },
   modalButton: {
     flex: 1,

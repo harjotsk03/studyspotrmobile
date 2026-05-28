@@ -67,6 +67,18 @@ type NotificationsState = {
   refreshNotifications: () => Promise<void>;
   markNotificationRead: (notificationId: string) => Promise<void>;
   markAllNotificationsRead: () => Promise<void>;
+  /**
+   * Soft-deletes a notification on the backend (sets `deleted = true`) and
+   * removes it from the in-memory list. Optimistic: failure rolls back.
+   */
+  deleteNotification: (notificationId: string) => Promise<void>;
+  /**
+   * Counterpart to `deleteNotification` — sets `deleted = false` on the
+   * server and re-inserts the supplied notification snapshot into the
+   * in-memory list. Pass the same object that was just deleted so the
+   * restored row picks up its prior `read_at`/timestamps/etc.
+   */
+  restoreNotification: (notification: NotificationItem) => Promise<void>;
   respondToFriendRequest: (
     friendId: string,
     decision: "accept" | "reject",
@@ -329,6 +341,103 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     }
   }, [notifications, token, unreadCount]);
 
+  const deleteNotification = useCallback(
+    async (notificationId: string) => {
+      if (!token || !notificationId.trim()) return;
+
+      // Capture rollback state up-front so we can restore if the network
+      // call fails. Calling the soft-delete endpoint and updating UI
+      // optimistically keeps the swipe-to-delete gesture feeling instant.
+      const previousNotifications = notifications;
+      const previousUnreadCount = unreadCount;
+      const existing = notifications.find((n) => n.id === notificationId);
+      const wasUnread = Boolean(existing && !existing.read_at);
+
+      setNotifications((prev) => prev.filter((n) => n.id !== notificationId));
+      if (wasUnread) {
+        setUnreadCount((prev) => Math.max(0, prev - 1));
+      }
+
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/api/v1/notifications/${notificationId}/delete`,
+          {
+            method: "PATCH",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/json",
+            },
+          },
+        );
+
+        if (!res.ok) {
+          const json = await res.json().catch(() => null);
+          throw new Error(
+            getResponseError(json, "Failed to delete notification."),
+          );
+        }
+      } catch (err) {
+        setNotifications(previousNotifications);
+        setUnreadCount(previousUnreadCount);
+        throw err;
+      }
+    },
+    [notifications, token, unreadCount],
+  );
+
+  const restoreNotification = useCallback(
+    async (notification: NotificationItem) => {
+      if (!token || !notification?.id) return;
+
+      const previousNotifications = notifications;
+      const previousUnreadCount = unreadCount;
+      const wasUnread = !notification.read_at;
+
+      // Optimistically re-insert the saved notification snapshot. If it's
+      // somehow already in the list (race with a refetch), the filter below
+      // makes the operation idempotent. After insert we re-sort by
+      // created_at (newest first) so the row reappears in its natural slot.
+      setNotifications((prev) => {
+        const withoutDuplicate = prev.filter((n) => n.id !== notification.id);
+        const next = [notification, ...withoutDuplicate];
+        next.sort((a, b) => {
+          const at = new Date(a.created_at ?? 0).getTime();
+          const bt = new Date(b.created_at ?? 0).getTime();
+          return bt - at;
+        });
+        return next;
+      });
+      if (wasUnread) {
+        setUnreadCount((prev) => prev + 1);
+      }
+
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/api/v1/notifications/${notification.id}/restore`,
+          {
+            method: "PATCH",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/json",
+            },
+          },
+        );
+
+        if (!res.ok) {
+          const json = await res.json().catch(() => null);
+          throw new Error(
+            getResponseError(json, "Failed to restore notification."),
+          );
+        }
+      } catch (err) {
+        setNotifications(previousNotifications);
+        setUnreadCount(previousUnreadCount);
+        throw err;
+      }
+    },
+    [notifications, token, unreadCount],
+  );
+
   const respondToFriendRequest = useCallback(
     async (friendId: string, decision: "accept" | "reject") => {
       if (!token || !friendId.trim()) return;
@@ -401,6 +510,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
         refreshNotifications,
         markNotificationRead,
         markAllNotificationsRead,
+        deleteNotification,
+        restoreNotification,
         respondToFriendRequest,
       }}
     >

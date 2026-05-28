@@ -527,6 +527,7 @@ export default function CreateCommunityScreen() {
                 if (nameError) setNameError("");
               }}
               autoCapitalize="words"
+              placeholder="e.g. UBC Computer Science"
               icon={<TypeIcon size={18} color="#999" />}
               error={nameError}
             />

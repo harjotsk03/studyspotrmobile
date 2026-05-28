@@ -51,6 +51,8 @@ import { getSpotSearchText } from "../utils/getSpotSearchText";
 import { getSpotTitle } from "../utils/getSpotTitle";
 import { toNumber } from "../utils/toNumber";
 import type { SpotsStackParamList } from "../types/navigation";
+import Button from "../components/Button";
+import { Filter, LocateIcon, Plus, RefreshCcw } from "lucide-react-native";
 
 const CAROUSEL_GAP = 12;
 const DEFAULT_USER_REGION_DELTA = 0.012;
@@ -411,7 +413,6 @@ export default function SpotsScreen() {
           },
         ]}
       >
-
         <View style={styles.searchRow}>
           <View style={styles.searchField}>
             <Ionicons name="search" size={20} color="#8C8C8C" />
@@ -481,7 +482,23 @@ export default function SpotsScreen() {
           </View>
 
           <View style={styles.toolbarTrailing}>
-            <Pressable
+            <Button
+              size="sm"
+              icon={<Filter size={16} color={Colors.dark} />}
+              variant="secondary"
+              onPress={() => setFiltersOpen(true)}
+            />
+            <Button
+              size="sm"
+              icon={<LocateIcon size={16} color={Colors.dark} />}
+              variant="secondary"
+              onPress={centerOnUserLocation}
+              disabled={!userLocation}
+            />
+            <Button
+              size="sm"
+              label="Add Spot"
+              variant="accent"
               onPress={() => {
                 if (!profile?.userProfile?.id) {
                   Alert.alert(
@@ -492,44 +509,7 @@ export default function SpotsScreen() {
                 }
                 navigation.navigate("CreateSpot");
               }}
-              style={styles.iconActionButton}
-              accessibilityLabel="Add spot"
-            >
-              <Ionicons name="add-circle-outline" size={20} color={Colors.dark} />
-            </Pressable>
-
-            <Pressable
-              onPress={() => setFiltersOpen(true)}
-              style={[
-                styles.iconActionButton,
-                activeFilterCount > 0 && styles.iconActionButtonActive,
-              ]}
-            >
-              <Ionicons
-                name="options-outline"
-                size={18}
-                color={activeFilterCount > 0 ? "#fff" : Colors.dark}
-              />
-              {activeFilterCount > 0 ? (
-                <View style={styles.filterBadge}>
-                  <Text style={styles.filterBadgeLabel}>
-                    {activeFilterCount}
-                  </Text>
-                </View>
-              ) : null}
-            </Pressable>
-
-            <Pressable
-              onPress={centerOnUserLocation}
-              style={[
-                styles.iconActionButton,
-                !userLocation && styles.iconActionButtonDisabled,
-              ]}
-              disabled={!userLocation}
-              accessibilityLabel="My Spot"
-            >
-              <Ionicons name="locate-outline" size={18} color={Colors.dark} />
-            </Pressable>
+            />
           </View>
         </View>
       </View>
@@ -621,37 +601,16 @@ export default function SpotsScreen() {
             </MapView>
           )}
 
-          <Pressable
-            onPress={() => void handleManualRefresh()}
-            style={({ pressed }) => [
-              styles.mapRefreshButton,
-              pressed && styles.mapRefreshButtonPressed,
-            ]}
-            accessibilityRole="button"
-            accessibilityLabel="Refresh spots"
-            disabled={refreshing || spotsLoading}
-          >
-            <Animated.View
-              style={{ transform: [{ rotate: refreshSpin }] }}
-            >
-              <Ionicons
-                name="refresh"
-                size={20}
-                color={Colors.dark}
-              />
-            </Animated.View>
-            <Text style={styles.mapRefreshLabel}>
-              {refreshing || spotsLoading ? "Refreshing" : "Refresh"}
-            </Text>
-            {refreshing || spotsLoading ? (
-              <ActivityIndicator
-                size="small"
-                color={Colors.primary}
-                style={{ marginLeft: 2 }}
-              />
-            ) : null}
-          </Pressable>
-
+          <View style={styles.mapRefreshButtonContainer}>
+            <Button
+              size="sm"
+              label="Refresh"
+              icon={<RefreshCcw size={20} color={Colors.dark} />}
+              variant="secondary"
+              onPress={() => void handleManualRefresh()}
+              loading={refreshing || spotsLoading}
+            />
+          </View>
           <View
             style={[styles.carouselWrapper, { bottom: 6 }]}
             pointerEvents="box-none"
@@ -861,33 +820,10 @@ const styles = StyleSheet.create({
   mapContainer: {
     flex: 1,
   },
-  mapRefreshButton: {
+  mapRefreshButtonContainer : {
     position: "absolute",
     top: 12,
     right: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#E6E6E6",
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 3,
-    zIndex: 5,
-  },
-  mapRefreshButtonPressed: {
-    opacity: 0.7,
-  },
-  mapRefreshLabel: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 13,
-    color: Colors.dark,
   },
   carouselWrapper: {
     position: "absolute",

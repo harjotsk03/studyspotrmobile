@@ -38,6 +38,16 @@ import {
 } from "./context/NotificationsContext";
 import { SearchStateProvider } from "./context/SearchStateContext";
 import { SpotsProvider } from "./context/SpotsContext";
+import {
+  FeedActivityProvider,
+  useFeedActivity,
+} from "./context/FeedActivityContext";
+import { CommunityCacheProvider } from "./context/CommunityCacheContext";
+import {
+  FullScreenOverlayProvider,
+  useFullScreenOverlay,
+} from "./context/FullScreenOverlayContext";
+import SpinningArrowLoader from "./components/SpinningArrowLoader";
 
 import FeedScreen from "./screens/FeedScreen";
 import CommunityScreen from "./screens/CommunityScreen";
@@ -194,6 +204,8 @@ const tabIcons: Record<
 function AppContent() {
   const { profile, isLoading } = useAuth();
   const { unreadCount } = useNotifications();
+  const { feedLoading } = useFeedActivity();
+  const { isOverlayOpen } = useFullScreenOverlay();
 
   if (isLoading) {
     return (
@@ -241,7 +253,19 @@ function AppContent() {
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarIcon: ({ focused, size }) => {
+        tabBarIcon: ({ focused }) => {
+          // Swap the Feed icon for the spinning arrow loader while the feed
+          // is actively fetching, so the tab itself signals that a refresh
+          // (e.g. user tapped the tab again) is in flight.
+          if (route.name === "Feed" && feedLoading) {
+            return (
+              <SpinningArrowLoader
+                size={24}
+                color={focused ? Colors.accent : "#999"}
+                strokeWidth={2.2}
+              />
+            );
+          }
           const Icon = tabIcons[route.name];
           return (
             <Icon
@@ -257,14 +281,20 @@ function AppContent() {
           fontFamily: Fonts.gabarito.medium,
           fontSize: 12,
         },
-        tabBarStyle: {
-          backgroundColor: "#fff",
-          height: 88,
-          borderTopWidth: 1,
-          paddingTop: 10,
-          paddingHorizontal: 8,
-          borderTopColor: "#eee",
-        },
+        // Hide the tab bar while a full-screen overlay (e.g. the reel viewer)
+        // is up. The overlay is rendered in-tree (not a native Modal) so the
+        // only way to make it cover the bottom area is to dynamically retract
+        // the tab bar — and we restore it the instant the overlay closes.
+        tabBarStyle: isOverlayOpen
+          ? { display: "none" }
+          : {
+              backgroundColor: "#fff",
+              height: 88,
+              borderTopWidth: 1,
+              paddingTop: 10,
+              paddingHorizontal: 8,
+              borderTopColor: "#eee",
+            },
       })}
     >
       <Tab.Screen name="Feed" component={FeedScreen} />
@@ -387,12 +417,18 @@ export default function App() {
       <NotificationsProvider>
         <SearchStateProvider>
           <SpotsProvider>
-            <SafeAreaProvider>
-              <NavigationContainer>
-                <StatusBar style="dark" />
-                <AppContent />
-              </NavigationContainer>
-            </SafeAreaProvider>
+            <CommunityCacheProvider>
+              <FeedActivityProvider>
+                <FullScreenOverlayProvider>
+                  <SafeAreaProvider>
+                    <NavigationContainer>
+                      <StatusBar style="dark" />
+                      <AppContent />
+                    </NavigationContainer>
+                  </SafeAreaProvider>
+                </FullScreenOverlayProvider>
+              </FeedActivityProvider>
+            </CommunityCacheProvider>
           </SpotsProvider>
         </SearchStateProvider>
       </NotificationsProvider>

@@ -73,6 +73,8 @@ import { getSpotDescription } from "../utils/getSpotDescription";
 import { getSpotTitle } from "../utils/getSpotTitle";
 import { toNumber } from "../utils/toNumber";
 import type { RootStackParamList, SpotsStackParamList } from "../types/navigation";
+import Button from "../components/Button";
+import { Share2 } from "lucide-react-native/icons";
 
 type Props =
   | NativeStackScreenProps<SpotsStackParamList, "SpotDetail">
@@ -518,40 +520,23 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
   return (
     <View style={styles.screen}>
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <TouchableOpacity
+        <Button
+          size="icon"
+          icon={<ArrowLeft size={22} color={Colors.dark} strokeWidth={2.2} />}
+          variant="secondary"
           onPress={() => navigation.goBack()}
-          style={styles.backButton}
-          activeOpacity={0.7}
-        >
-          <ArrowLeft size={22} color={Colors.dark} strokeWidth={2.2} />
-        </TouchableOpacity>
+        />
         <Text style={styles.headerTitle} numberOfLines={1}>
           {title}
         </Text>
         <View style={styles.headerActions}>
-          {token ? (
-            <TouchableOpacity
-              onPress={() => setShareSheetOpen(true)}
-              style={styles.backButton}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Send this spot to a friend"
-            >
-              <Send size={18} color={Colors.dark} strokeWidth={2.2} />
-            </TouchableOpacity>
-          ) : null}
           {isSpotOwner ? (
-            <TouchableOpacity
+            <Button
+              size="icon"
+              icon={<EllipsisVertical size={20} color={Colors.dark} />}
+              variant="ghost"
               onPress={spotMenu}
-              style={styles.backButton}
-              activeOpacity={0.7}
-            >
-              <EllipsisVertical
-                size={20}
-                color={Colors.dark}
-                strokeWidth={2.2}
-              />
-            </TouchableOpacity>
+            />
           ) : null}
           {!token && !isSpotOwner ? <View style={styles.placeholder} /> : null}
         </View>
@@ -651,14 +636,25 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
             </View>
           ) : null}
 
-          <TouchableOpacity
-            style={styles.primaryReviewCta}
-            onPress={openComposerCreate}
-            activeOpacity={0.85}
-          >
-            <MessageSquarePlus size={20} color="#fff" strokeWidth={2.2} />
-            <Text style={styles.primaryReviewCtaLabel}>Write a review</Text>
-          </TouchableOpacity>
+          <View style={styles.reviewCtaContainer}>
+            <View style={styles.reviewCtaButton}>
+              <Button
+                icon={<MessageSquarePlus size={16} color="#fff" />}
+                label="Write a review"
+                variant="default"
+                size="default"
+                onPress={openComposerCreate}
+              />
+            </View>
+            <View>
+              <Button
+                size="default"
+                icon={<Share2 size={16} color={Colors.dark} />}
+                variant="outline"
+                onPress={() => setShareSheetOpen(true)}
+              />
+            </View>
+          </View>
         </View>
 
         <View style={[styles.detailsCard, styles.detailsCardElevated]}>
@@ -884,20 +880,20 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
 
                   {mine ? (
                     <View style={styles.reviewActions}>
-                      <Pressable
-                        style={[styles.miniBtn, styles.miniBtnOutline]}
+                      <Button
+                        size="sm"
+                        label="Edit"
+                        icon={<Edit3 size={16} color={Colors.dark} />}
+                        variant="secondary"
                         onPress={() => openComposerEdit(r)}
-                      >
-                        <Edit3 size={16} color={Colors.dark} />
-                        <Text style={styles.miniBtnLabel}>Edit</Text>
-                      </Pressable>
-                      <Pressable
-                        style={[styles.miniBtn, styles.miniBtnDangerOutline]}
+                      />
+                      <Button
+                        size="sm"
+                        label="Delete"
+                        icon={<Trash2 size={16} color="#ffffff" />}
+                        variant="destructive"
                         onPress={() => confirmDeleteReview(r)}
-                      >
-                        <Trash2 size={16} color="#B91C1C" />
-                        <Text style={styles.miniBtnLabelDanger}>Delete</Text>
-                      </Pressable>
+                      />
                     </View>
                   ) : null}
                 </View>
@@ -1020,9 +1016,7 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
         visible={shareSheetOpen}
         attachment={shareSheetOpen ? { kind: "spot", spot } : null}
         token={token}
-        navigation={
-          rootNavigation as unknown as NavigationProp<ParamListBase>
-        }
+        navigation={rootNavigation as unknown as NavigationProp<ParamListBase>}
         onClose={() => setShareSheetOpen(false)}
       />
     </View>
@@ -1030,6 +1024,14 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
+  reviewCtaContainer: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 12,
+  },
+  reviewCtaButton: {
+    flex: 1,
+  },
   screen: {
     flex: 1,
     backgroundColor: Colors.light,

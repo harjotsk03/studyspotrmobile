@@ -48,6 +48,7 @@ import {
   spotReviewSpotLabel,
   type SpotReview,
 } from "../utils/spotsApi";
+import Button from "../components/Button";
 
 type ProfileListRow = FeedPost | StudySpot | SpotReview;
 export default function ProfileScreen() {
@@ -708,15 +709,9 @@ export default function ProfileScreen() {
       <Text style={styles.bio}>{user?.bio || "No bio set"}</Text>
 
       <View style={styles.actionButtonsRow}>
-        <TouchableOpacity
-          style={[styles.actionBtn, styles.actionBtnMuted]}
-          activeOpacity={0.85}
-          onPress={() =>
-            navigation.navigate("ProfileSection", { section: "personal" })
-          }
-        >
-          <Text style={styles.actionBtnTextMuted}>Edit profile</Text>
-        </TouchableOpacity>
+        <Button fullWidth label="Edit profile" variant="secondary" onPress={() =>
+          navigation.navigate("ProfileSection", { section: "personal" })
+        } />
       </View>
 
       <ProfileTabsBar

@@ -193,7 +193,7 @@ export default function SpotCard({
 const styles = StyleSheet.create({
   carouselCard: {
     backgroundColor: "#fff",
-    borderRadius: 18,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: "#ECECEC",
     overflow: "hidden",

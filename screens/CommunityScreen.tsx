@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   Modal,
   Pressable,
   RefreshControl,
@@ -8,6 +9,7 @@ import {
   StyleSheet,
   Text,
   View,
+  type LayoutChangeEvent,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -15,6 +17,7 @@ import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "../context/AuthContext";
+import { useCommunityCache } from "../context/CommunityCacheContext";
 import Button from "../components/Button";
 import CommunityCard from "../components/CommunityCard";
 import Input from "../components/Input";
@@ -234,6 +237,7 @@ export default function CommunityScreen() {
   const navigation =
     useNavigation<NativeStackNavigationProp<CommunityStackParamList>>();
   const { token } = useAuth();
+  const { removedCommunityIds } = useCommunityCache();
 
   const [communities, setCommunities] = useState<CommunityData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -248,6 +252,29 @@ export default function CommunityScreen() {
   const [activeTab, setActiveTab] = useState<"communities" | "events">(
     "communities",
   );
+
+  // Drives the sliding pill + text-color crossfade on the
+  // Communities / Events segmented control. 0 = Communities, 1 = Events.
+  // Non-native driver because we animate text color (only animatable in JS).
+  const tabAnim = useRef(new Animated.Value(0)).current;
+  /** Live inner-width of the tab-switch row (minus its 4px padding on each
+   * side). Used to compute the pill's pixel width + travel distance after
+   * layout — before layout we render the pill at width 0 so it's invisible
+   * for the first frame instead of flashing at a wrong position. */
+  const [tabSwitchInnerWidth, setTabSwitchInnerWidth] = useState(0);
+
+  useEffect(() => {
+    Animated.spring(tabAnim, {
+      toValue: activeTab === "events" ? 1 : 0,
+      useNativeDriver: false,
+      bounciness: 4,
+      speed: 16,
+    }).start();
+  }, [activeTab, tabAnim]);
+
+  const handleTabSwitchLayout = (e: LayoutChangeEvent) => {
+    setTabSwitchInnerWidth(e.nativeEvent.layout.width - 8);
+  };
 
   const [events, setEvents] = useState<BrowseEvent[]>([]);
   const [eventsLoading, setEventsLoading] = useState(true);
@@ -396,6 +423,11 @@ export default function CommunityScreen() {
     const normalizedQuery = query.trim().toLowerCase();
 
     return communities.filter((community) => {
+      // Drop communities the viewer has locally deleted this session so
+      // they disappear from the list immediately, without waiting on the
+      // next fetch round-trip.
+      if (removedCommunityIds.has(community.id)) return false;
+
       const matchesQuery =
         !normalizedQuery ||
         [community.name, community.description, community.category]
@@ -414,7 +446,13 @@ export default function CommunityScreen() {
 
       return matchesQuery && matchesCategory && matchesVisibility;
     });
-  }, [categoryFilter, communities, query, visibilityFilter]);
+  }, [
+    categoryFilter,
+    communities,
+    query,
+    visibilityFilter,
+    removedCommunityIds,
+  ]);
 
   const filteredEvents = useMemo(() => {
     const q = eventQuery.trim().toLowerCase();
@@ -450,40 +488,71 @@ export default function CommunityScreen() {
           />
         }
       >
-        <View style={styles.tabSwitchWrap}>
-          <Pressable
-            style={[
-              styles.tabSwitchBtn,
-              activeTab === "communities" && styles.tabSwitchBtnActive,
-            ]}
-            onPress={() => setActiveTab("communities")}
-          >
-            <Text
-              style={[
-                styles.tabSwitchTx,
-                activeTab === "communities" && styles.tabSwitchTxActive,
-              ]}
+        {(() => {
+          // Pre-compute the moving pill's dimensions for this render. Each
+          // tab takes half of the inner row (minus the 4px gap), and the
+          // pill translates by exactly one tab + gap when switching to
+          // Events. Computed inline so changes to the wrap's measured
+          // width re-derive cleanly without an extra memo.
+          const tabWidth = Math.max(0, (tabSwitchInnerWidth - 4) / 2);
+          const pillTranslateX = tabAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, tabWidth + 4],
+          });
+          // Cross-fade the two labels' colors so the text on the
+          // newly-active side fades to white as the pill slides under it,
+          // rather than snapping the moment the user taps.
+          const communitiesColor = tabAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: ["#ffffff", Colors.dark],
+          });
+          const eventsColor = tabAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [Colors.dark, "#ffffff"],
+          });
+
+          return (
+            <View
+              style={styles.tabSwitchWrap}
+              onLayout={handleTabSwitchLayout}
             >
-              Communities
-            </Text>
-          </Pressable>
-          <Pressable
-            style={[
-              styles.tabSwitchBtn,
-              activeTab === "events" && styles.tabSwitchBtnActive,
-            ]}
-            onPress={() => setActiveTab("events")}
-          >
-            <Text
-              style={[
-                styles.tabSwitchTx,
-                activeTab === "events" && styles.tabSwitchTxActive,
-              ]}
-            >
-              Events
-            </Text>
-          </Pressable>
-        </View>
+              {/* Animated pill that slides between the two tabs. Sits
+               * behind the Pressables so taps still hit the buttons. */}
+              {tabWidth > 0 ? (
+                <Animated.View
+                  pointerEvents="none"
+                  style={[
+                    styles.tabSwitchPill,
+                    {
+                      width: tabWidth,
+                      transform: [{ translateX: pillTranslateX }],
+                    },
+                  ]}
+                />
+              ) : null}
+              <Pressable
+                style={styles.tabSwitchBtn}
+                onPress={() => setActiveTab("communities")}
+              >
+                <Animated.Text
+                  style={[styles.tabSwitchTx, { color: communitiesColor }]}
+                >
+                  Communities
+                </Animated.Text>
+              </Pressable>
+              <Pressable
+                style={styles.tabSwitchBtn}
+                onPress={() => setActiveTab("events")}
+              >
+                <Animated.Text
+                  style={[styles.tabSwitchTx, { color: eventsColor }]}
+                >
+                  Events
+                </Animated.Text>
+              </Pressable>
+            </View>
+          );
+        })()}
 
         {activeTab === "communities" ? (
           <View style={styles.communitiesContainer}>
@@ -529,23 +598,15 @@ export default function CommunityScreen() {
               ].map((item) => {
                 const selected = visibilityFilter === item.value;
                 return (
-                  <Pressable
-                    key={item.value}
-                    style={[
-                      styles.visibilityChip,
-                      selected && styles.visibilityChipActive,
-                    ]}
+                  <View key={item.value} style={styles.visibilityCell}>
+                  <Button
+                    fullWidth
+                    label={item.label}
+                    variant={selected ? "default" : "secondary"}
+                    size="sm"
                     onPress={() => setVisibilityFilter(item.value)}
-                  >
-                    <Text
-                      style={[
-                        styles.visibilityChipText,
-                        selected && styles.visibilityChipTextActive,
-                      ]}
-                    >
-                      {item.label}
-                    </Text>
-                  </Pressable>
+                  />
+                  </View>
                 );
               })}
             </View>
@@ -719,6 +780,9 @@ export default function CommunityScreen() {
 }
 
 const styles = StyleSheet.create({
+  visibilityCell: {
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: Colors.light,
@@ -747,29 +811,36 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     flexDirection: "row",
     backgroundColor: "#f9f9f9",
-    borderRadius: 14,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: "#e6e6e6",
     padding: 4,
     gap: 4,
+    // `position: relative` so the absolute pill positions against this
+    // container (the inner padded area).
+    position: "relative",
   },
   tabSwitchBtn: {
     flex: 1,
     minHeight: 40,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 10,
+    borderRadius: 8,
   },
-  tabSwitchBtnActive: {
+  /** Sliding active background. Absolutely positioned so it can travel
+   * independently of the Pressables; sized to half the inner row, with a
+   * top/left of 4 to align with the wrap's `padding: 4`. */
+  tabSwitchPill: {
+    position: "absolute",
+    top: 4,
+    bottom: 4,
+    left: 4,
     backgroundColor: Colors.primary,
+    borderRadius: 6,
   },
   tabSwitchTx: {
     fontFamily: Fonts.gabarito.medium,
     fontSize: 14,
-    color: Colors.dark,
-  },
-  tabSwitchTxActive: {
-    color: "#fff",
   },
   communitiesContainer: {
     paddingHorizontal: 16,

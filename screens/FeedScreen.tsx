@@ -1,7 +1,6 @@
 import { Audio } from "expo-av";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   Animated,
   FlatList,
   Pressable,
@@ -28,11 +27,13 @@ import FeedEndOfFeedCreate from "../components/FeedEndOfFeedCreate";
 import FeedInstaCard, { type MediaRect } from "../components/FeedInstaCard";
 import FullScreenReelViewer from "../components/FullScreenReelViewer";
 import ShareToFriendsSheet from "../components/ShareToFriendsSheet";
+import SpinningArrowLoader from "../components/SpinningArrowLoader";
 import SuggestedUsers from "../components/SuggestedUsers";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import type { UserProfileData } from "../context/AuthContext";
 import { useAuth } from "../context/AuthContext";
+import { useFeedActivity } from "../context/FeedActivityContext";
 import { useNotifications } from "../context/NotificationsContext";
 import type { MainTabsParamList } from "../types/navigation";
 import { fetchFeedFriends, type FeedPost } from "../utils/feedApi";
@@ -117,6 +118,7 @@ export default function FeedScreen() {
   const navigation = useNavigation<FeedTabNavigation>();
   const { unreadCount } = useNotifications();
   const { token, profile } = useAuth();
+  const { setFeedLoading } = useFeedActivity();
   const user = profile?.userProfile;
 
   const [activePostId, setActivePostId] = useState<string | null>(null);
@@ -199,8 +201,23 @@ export default function FeedScreen() {
     void loadInitial();
   }, [loadInitial]);
 
+  // Mirror the feed's busy state into the shared context so the Feed tab
+  // icon can swap to the spinning arrow while a fetch is in flight.
+  useEffect(() => {
+    setFeedLoading(loading || refreshing);
+    return () => {
+      // Ensure the tab icon resets if FeedScreen unmounts mid-fetch.
+      setFeedLoading(false);
+    };
+  }, [loading, refreshing, setFeedLoading]);
+
   const mergePost = useCallback((id: string, merge: Partial<FeedPost>) => {
     setPosts((prev) => prev.map((p) => (p.id === id ? { ...p, ...merge } : p)));
+    // Mirror the merge onto the post powering the full-screen reel viewer so
+    // optimistic updates (e.g. tapping like on the rail) reflect immediately.
+    setFullScreenPost((curr) =>
+      curr && curr.id === id ? { ...curr, ...merge } : curr,
+    );
   }, []);
 
   const replacePost = useCallback((fresh: FeedPost) => {
@@ -427,6 +444,19 @@ export default function FeedScreen() {
 
   return (
     <View style={styles.container}>
+      {/*
+        Wrap everything *except* the full-screen reel viewer in a layer
+        whose pointer events are turned off while the viewer is open.
+        Without this, iOS's underlying UIScrollView (inside the feed
+        FlatList) can claim horizontal touches before our overlay's
+        PanResponder gets to see them — which is why a left-swipe to
+        dismiss the reel from the feed previously did nothing while
+        the same gesture worked from screens with no feed underneath.
+      */}
+      <View
+        style={styles.contentLayer}
+        pointerEvents={fullScreenPost ? "none" : "auto"}
+      >
       {!token ? (
         <>
           <View style={[styles.topHeader, { paddingTop: insets.top + 8 }]}>
@@ -491,6 +521,13 @@ export default function FeedScreen() {
             windowSize={7}
             maxToRenderPerBatch={4}
             initialNumToRender={3}
+            // While the full-screen reel viewer is open, fully disable scroll
+            // & pointer events on the underlying feed. iOS's UIScrollView
+            // (under the hood of FlatList) has a native pan gesture recogniser
+            // that otherwise fights with the reel viewer's swipe-to-dismiss —
+            // notably swallowing horizontal moves so a left-swipe never
+            // claims the JS-side PanResponder.
+            scrollEnabled={!fullScreenPost}
             viewabilityConfig={viewabilityConfig}
             onViewableItemsChanged={onViewableItemsChanged}
             contentContainerStyle={
@@ -532,7 +569,7 @@ export default function FeedScreen() {
             ListEmptyComponent={
               loading ? (
                 <View style={styles.emptyLoadingWrap}>
-                  <ActivityIndicator color={Colors.dark} />
+                  <SpinningArrowLoader size={32} />
                 </View>
               ) : (
                 <View style={styles.emptyWrap}>
@@ -547,10 +584,18 @@ export default function FeedScreen() {
               )
             }
             refreshControl={
+              // We render our own custom orange spinning-arrow overlay
+              // (`TopArrowLoaderOverlay` below), so make the native pull
+              // indicator invisible. The pull gesture still triggers
+              // `onRefresh`; only its built-in spinner is hidden.
+              // iOS uses `tintColor`; Android uses `colors` /
+              // `progressBackgroundColor`.
               <RefreshControl
                 refreshing={refreshing}
                 onRefresh={() => void onRefresh()}
-                tintColor={Colors.dark}
+                tintColor="transparent"
+                colors={["transparent"]}
+                progressBackgroundColor="transparent"
               />
             }
             onEndReached={() => void loadMore()}
@@ -562,7 +607,7 @@ export default function FeedScreen() {
             ListFooterComponent={
               loadingMore ? (
                 <View style={styles.listFooterLoading}>
-                  <ActivityIndicator color={Colors.dark} />
+                  <SpinningArrowLoader size={26} />
                 </View>
               ) : atEndOfFeed ? (
                 <FeedEndOfFeedCreate
@@ -577,7 +622,7 @@ export default function FeedScreen() {
 
           {loading && posts.length === 0 ? (
             <View style={styles.loadingOverlay}>
-              <ActivityIndicator size="large" color={Colors.dark} />
+              <SpinningArrowLoader size={36} />
             </View>
           ) : null}
 
@@ -615,21 +660,9 @@ export default function FeedScreen() {
             }}
           />
 
-          <FullScreenReelViewer
-            visible={Boolean(fullScreenPost)}
-            post={fullScreenPost}
-            fromRect={fullScreenRect}
-            token={token}
-            currentUserId={user?.id}
-            onClose={closeFullScreen}
-            onMergePost={mergePost}
-            onReplacePost={replacePost}
-            onDeleted={handleDeleted}
-            onOpenComments={handleFullScreenOpenComments}
-            onShareWithFriends={handleFullScreenShareWithFriends}
-          />
         </>
       )}
+      </View>
 
       <ShareToFriendsSheet
         visible={Boolean(shareFriendsPost)}
@@ -647,6 +680,25 @@ export default function FeedScreen() {
         onClose={() => setComposerOpen(false)}
         onPosted={handlePosted}
       />
+
+      {/*
+        Rendered LAST and at the outermost level so it lives outside the
+        pointer-events-disabled content layer above; this also keeps it on
+        top of the JSX z-stack regardless of what other overlays mount.
+      */}
+      <FullScreenReelViewer
+        visible={Boolean(fullScreenPost)}
+        post={fullScreenPost}
+        fromRect={fullScreenRect}
+        token={token}
+        currentUserId={user?.id}
+        onClose={closeFullScreen}
+        onMergePost={mergePost}
+        onReplacePost={replacePost}
+        onDeleted={handleDeleted}
+        onOpenComments={handleFullScreenOpenComments}
+        onShareWithFriends={handleFullScreenShareWithFriends}
+      />
     </View>
   );
 }
@@ -655,6 +707,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#fff",
+  },
+  contentLayer: {
+    flex: 1,
   },
   topHeader: {
     flexDirection: "row",

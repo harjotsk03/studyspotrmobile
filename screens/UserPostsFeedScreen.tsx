@@ -172,6 +172,11 @@ export default function UserPostsFeedScreen() {
 
   const mergePost = useCallback((id: string, merge: Partial<FeedPost>) => {
     setPosts((prev) => prev.map((p) => (p.id === id ? { ...p, ...merge } : p)));
+    // Keep the full-screen reel viewer's local copy of the post in sync so
+    // optimistic updates (e.g. tapping like) reflect immediately on its rail.
+    setFullScreenPost((curr) =>
+      curr && curr.id === id ? { ...curr, ...merge } : curr,
+    );
   }, []);
 
   const replacePost = useCallback((fresh: FeedPost) => {
@@ -296,6 +301,16 @@ export default function UserPostsFeedScreen() {
 
   return (
     <View style={styles.container}>
+      {/*
+        Wrap everything *except* the full-screen reel viewer in a layer
+        whose pointer events are turned off while the viewer is open, so
+        the underlying FlatList's native UIScrollView pan gesture can't
+        swallow horizontal touches and block the reel's swipe-to-dismiss.
+      */}
+      <View
+        style={styles.contentLayer}
+        pointerEvents={fullScreenPost ? "none" : "auto"}
+      >
       <View
         style={[
           styles.topHeader,
@@ -435,6 +450,22 @@ export default function UserPostsFeedScreen() {
         }}
       />
 
+      <ShareToFriendsSheet
+        visible={Boolean(shareFriendsPost)}
+        attachment={
+          shareFriendsPost ? { kind: "post", post: shareFriendsPost } : null
+        }
+        token={token}
+        navigation={navigation as NavigationProp<ParamListBase>}
+        onClose={() => setShareFriendsPost(null)}
+      />
+      </View>
+
+      {/*
+        Rendered LAST and at the outermost level so it lives outside the
+        pointer-events-disabled content layer above; this also keeps it on
+        top of the JSX z-stack regardless of what other overlays mount.
+      */}
       <FullScreenReelViewer
         visible={Boolean(fullScreenPost)}
         post={fullScreenPost}
@@ -448,16 +479,6 @@ export default function UserPostsFeedScreen() {
         onOpenComments={handleFullScreenOpenComments}
         onShareWithFriends={handleFullScreenShareWithFriends}
       />
-
-      <ShareToFriendsSheet
-        visible={Boolean(shareFriendsPost)}
-        attachment={
-          shareFriendsPost ? { kind: "post", post: shareFriendsPost } : null
-        }
-        token={token}
-        navigation={navigation as NavigationProp<ParamListBase>}
-        onClose={() => setShareFriendsPost(null)}
-      />
     </View>
   );
 }
@@ -466,6 +487,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#fff",
+  },
+  contentLayer: {
+    flex: 1,
   },
   topHeader: {
     flexDirection: "row",

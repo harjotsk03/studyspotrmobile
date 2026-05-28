@@ -33,6 +33,7 @@ import { API_BASE_URL } from "../constants/Api";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import type { RootStackParamList } from "../types/navigation";
 import ShareToFriendsSheet from "../components/ShareToFriendsSheet";
+import Button from "../components/Button";
 
 // ─── Shared Types ─────────────────────────────────────────────────────────────
 
@@ -143,12 +144,11 @@ function RsvpBadge({ type }: { type: "going" | "pending" }) {
     // Pulse ring fires slightly after the badge settles
     if (type === "going") {
       setTimeout(() => {
-        pulseOpacity.setValue(0.5);
         pulseScale.setValue(0.85);
         Animated.parallel([
           Animated.timing(pulseScale, {
             toValue: 2.6,
-            duration: 600,
+            duration: 300,
             useNativeDriver: true,
           }),
           Animated.timing(pulseOpacity, {
@@ -191,7 +191,7 @@ function RsvpBadge({ type }: { type: "going" | "pending" }) {
         style={[
           badgeStyles.badge,
           isGoing ? badgeStyles.goingBg : badgeStyles.pendingBg,
-          { opacity, transform: [{ scale }, { rotate }, { translateY: ty }] },
+          { opacity, transform: [{ scale }, { translateY: ty }] },
         ]}
       >
         {isGoing && (
@@ -227,6 +227,7 @@ const badgeStyles = StyleSheet.create({
     borderRadius: 20,
     paddingHorizontal: 12,
     paddingVertical: 6,
+    fontFamily: Fonts.instrument.medium,
     gap: 6,
   },
   goingBg: { backgroundColor: "#DCFCE7" },
@@ -245,88 +246,6 @@ const badgeStyles = StyleSheet.create({
   },
   goingText: { color: "#16A34A" },
   pendingText: { color: "#92400E" },
-});
-
-// ─── Footer Button (custom animated press feel) ───────────────────────────────
-
-interface FooterButtonProps {
-  label: string;
-  variant: "join" | "leave" | "cancel";
-  onPress: () => void;
-  loading?: boolean;
-}
-
-function FooterButton({
-  label,
-  variant,
-  onPress,
-  loading = false,
-}: FooterButtonProps) {
-  const pressScale = useRef(new Animated.Value(1)).current;
-
-  const cfg = {
-    join: { bg: Colors.primary, fg: "#fff", border: null },
-    leave: { bg: "#FEF2F2", fg: "#DC2626", border: "#FECACA" },
-    cancel: { bg: "#f8f9fa", fg: "#000000", border: "#000000" },
-  }[variant];
-
-  return (
-    <Animated.View
-      style={[footerBtnStyles.wrap, { transform: [{ scale: pressScale }] }]}
-    >
-      <Pressable
-        style={[
-          footerBtnStyles.btn,
-          { backgroundColor: cfg.bg },
-          cfg.border != null
-            ? { borderWidth: 1.5, borderColor: cfg.border }
-            : null,
-        ]}
-        onPressIn={() => {
-          Animated.spring(pressScale, {
-            toValue: 0.90,
-            useNativeDriver: true,
-            damping: 8,
-            stiffness: 700,
-            mass: 0.4,
-          }).start();
-        }}
-        onPressOut={() => {
-          Animated.spring(pressScale, {
-            toValue: 1,
-            useNativeDriver: true,
-            damping: 5,
-            stiffness: 280,
-            mass: 0.55,
-          }).start();
-        }}
-        onPress={onPress}
-      >
-        {loading ? (
-          <ActivityIndicator color={cfg.fg} size="small" />
-        ) : (
-          <Text style={[footerBtnStyles.label, { color: cfg.fg }]}>
-            {label}
-          </Text>
-        )}
-      </Pressable>
-    </Animated.View>
-  );
-}
-
-const footerBtnStyles = StyleSheet.create({
-  wrap: { flex: 1 },
-  btn: {
-    height: 52,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  label: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 16,
-    letterSpacing: 0.2,
-  },
 });
 
 // ─── Attendee Avatar ──────────────────────────────────────────────────────────
@@ -611,6 +530,11 @@ export default function EventDetailDrawer({
 
   async function fetchDetail(eventId: string) {
     if (!token) return;
+    // Standalone events (no parent community) don't have a community-
+    // scoped GET endpoint, so skip the detail refresh and fall back to
+    // the snapshot data we were opened with. Join/leave still work via
+    // the event-scoped RSVP routes below.
+    if (!communityId) return;
     try {
       const res = await fetch(
         `${API_BASE_URL}/api/v1/communities/${communityId}/events/${eventId}`,
@@ -637,8 +561,13 @@ export default function EventDetailDrawer({
     if (!token || !detailEvent) return;
     setActionLoading(true);
     try {
+      // Use the event-scoped RSVP route — it works for standalone events
+      // (no community) and community-linked events alike, so we don't need
+      // to branch on whether `communityId` is populated. Backend derives
+      // the community context from the event itself and still enforces
+      // private-community membership checks when applicable.
       const res = await fetch(
-        `${API_BASE_URL}/api/v1/communities/${communityId}/events/${detailEvent.id}/join`,
+        `${API_BASE_URL}/api/v1/events/${detailEvent.id}/join`,
         {
           method: "POST",
           headers: {
@@ -751,8 +680,10 @@ export default function EventDetailDrawer({
     if (!token || !detailEvent) return;
     setActionLoading(true);
     try {
+      // Same event-scoped route as join — works for standalone events
+      // as well as community-linked ones.
       const res = await fetch(
-        `${API_BASE_URL}/api/v1/communities/${communityId}/events/${detailEvent.id}/leave`,
+        `${API_BASE_URL}/api/v1/events/${detailEvent.id}/leave`,
         {
           method: "DELETE",
           headers: {
@@ -1091,38 +1022,38 @@ export default function EventDetailDrawer({
                 <Text style={styles.fullShareButtonText}>Share Event</Text>
               </TouchableOpacity>
             ) : isgoing ? (
-              <FooterButton
+              <Button
                 label="Leave Event"
-                variant="leave"
+                variant="destructive"
                 onPress={openLeaveConfirm}
                 loading={actionLoading}
               />
             ) : isPending ? (
-              <FooterButton
+              <Button
                 label="Cancel Request"
-                variant="cancel"
+                variant="secondary"
                 onPress={openLeaveConfirm}
                 loading={actionLoading}
               />
             ) : canJoin ? (
-              <FooterButton
+              <Button
                 label="Join Event"
-                variant="join"
+                variant="default"
                 onPress={() => void handleJoin()}
                 loading={actionLoading}
               />
             ) : awaitingCommunityApproval ? (
               /* Already requested — waiting for admin */
-              <View style={styles.lockedButton}>
-                <Text style={styles.lockedButtonText}>
-                  Community request sent — pending approval
-                </Text>
-              </View>
+              <Button
+                label="Community request sent — pending approval"
+                variant="secondary"
+                onPress={() => {}}
+              />
             ) : (
               /* Private community — not yet a member, offer to request */
-              <FooterButton
+              <Button
                 label="Request to Join Community"
-                variant="join"
+                variant="secondary"
                 onPress={() => void handleJoinCommunity()}
                 loading={communityJoinLoading}
               />
@@ -1130,22 +1061,20 @@ export default function EventDetailDrawer({
           </Animated.View>
 
           {!isPastEvent && (
-            <TouchableOpacity
-              style={styles.shareButton}
-              activeOpacity={0.7}
+            <Button
+              icon={<Share2 size={20} color={Colors.dark} strokeWidth={2} />}
+              variant="outline"
+              size="icon"
               onPress={handleShare}
-            >
-              <Share2 size={20} color={Colors.dark} strokeWidth={2} />
-            </TouchableOpacity>
+            />
           )}
           {canDeleteEvent && (
-            <TouchableOpacity
-              style={[styles.shareButton, styles.deleteEventButton]}
-              activeOpacity={0.7}
+            <Button
+              icon={<Trash2 size={20} color="#DC2626" strokeWidth={2} />}
+              variant="destructive"
+              size="icon"
               onPress={openDeleteConfirm}
-            >
-              <Trash2 size={20} color="#DC2626" strokeWidth={2} />
-            </TouchableOpacity>
+            />
           )}
         </View>
       </Animated.View>
@@ -1176,20 +1105,24 @@ export default function EventDetailDrawer({
             </Text>
 
             <View style={styles.confirmActions}>
-              <FooterButton
-                label="Keep spot"
-                variant="cancel"
-                onPress={() => closeLeaveConfirm()}
-              />
-              <FooterButton
+              <View style={styles.confirmActionsButton}>
+                <Button
+                  label="Keep spot"
+                  variant="outline"
+                  onPress={() => closeLeaveConfirm()}
+                />
+              </View>
+              <View style={styles.confirmActionsButton}>
+              <Button
                 label={isPending ? "Cancel request" : "Leave event"}
-                variant="leave"
+                variant="destructive"
                 onPress={() =>
                   closeLeaveConfirm(() => {
                     void handleLeave();
                   })
                 }
               />
+              </View>
             </View>
           </Animated.View>
         </View>
@@ -1272,6 +1205,9 @@ export default function EventDetailDrawer({
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+  confirmActionsButton: {
+    flex: 1,
+  },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.45)",
