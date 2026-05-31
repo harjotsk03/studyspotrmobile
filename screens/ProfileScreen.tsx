@@ -582,6 +582,7 @@ export default function ProfileScreen() {
   );
 
   const renderReviewRow = ({ item }: { item: SpotReview }) => {
+    console.log("renderReviewRow", item);
     const spotLabel = spotReviewSpotLabel(item);
 
     const photos = spotReviewPhotoUrls(item);

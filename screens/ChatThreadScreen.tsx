@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -18,6 +18,9 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ArrowLeft, Send, X } from "lucide-react-native";
 import SharedAttachmentPreview from "../components/SharedAttachmentPreview";
+import EventDetailDrawer, {
+  type CommunityEvent,
+} from "./EventDetailDrawer";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { useAuth } from "../context/AuthContext";
@@ -104,6 +107,24 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
   const [attachedShare, setAttachedShare] =
     useState<SharedAttachmentRef | null>(null);
   const [socketJoinError, setSocketJoinError] = useState<string | null>(null);
+  /** Local drawer state for taps on shared-event preview cards. Owned here
+   * (not inside `SharedAttachmentPreview`) so we render exactly one drawer
+   * per thread and avoid a circular import between the preview and drawer. */
+  const [openEventDrawer, setOpenEventDrawer] = useState<{
+    event: CommunityEvent;
+    communityId: string;
+  } | null>(null);
+
+  const handleOpenSharedEvent = useCallback(
+    (event: CommunityEvent, communityId: string) => {
+      setOpenEventDrawer({ event, communityId });
+    },
+    [],
+  );
+
+  const handleCloseSharedEvent = useCallback(() => {
+    setOpenEventDrawer(null);
+  }, []);
 
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const loadingOlderRef = useRef(false);
@@ -395,6 +416,7 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
               refData={ref}
               token={token}
               isMine={mine}
+              onPressEvent={handleOpenSharedEvent}
             />
           ) : null}
 
@@ -417,6 +439,7 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
     !sendBusy && (draft.trim().length > 0 || attachedShare !== null);
 
   return (
+    <Fragment>
     <KeyboardAvoidingView
       style={styles.flex}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -484,6 +507,7 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
                 refData={attachedShare}
                 token={token}
                 isMine={false}
+                onPressEvent={handleOpenSharedEvent}
               />
               <TouchableOpacity
                 activeOpacity={0.7}
@@ -530,6 +554,42 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
         </View>
       </View>
     </KeyboardAvoidingView>
+
+    {/* Drawer for tapping shared-event preview cards. Rendered as a sibling
+        of `KeyboardAvoidingView` (not inside it) so the drawer's Modal +
+        Pressables don't interact with the keyboard-avoidance padding —
+        which on iOS could silently steal taps on the drawer's RSVP / share
+        buttons when no keyboard is open. We pass `communityIsPublic: true`
+        as the default — the standalone / community RSVP endpoints enforce
+        membership server-side, so the worst case is a clear error rather
+        than a wrong UI affordance. */}
+    <EventDetailDrawer
+      visible={openEventDrawer !== null}
+      onClose={handleCloseSharedEvent}
+      event={openEventDrawer?.event ?? null}
+      communityId={openEventDrawer?.communityId ?? ""}
+      token={token}
+      communityIsPublic
+      onAttendanceChange={(eventId, newCount, newStatus) => {
+        // Keep the cached event in sync so re-rendering the message bubble's
+        // preview card (or re-opening the drawer) shows the latest count /
+        // status without another network round-trip. We thread the change
+        // back through the same primer used at share time.
+        setOpenEventDrawer((prev) =>
+          prev && prev.event.id === eventId
+            ? {
+                ...prev,
+                event: {
+                  ...prev.event,
+                  attendee_count: newCount,
+                  user_rsvp_status: newStatus,
+                },
+              }
+            : prev,
+        );
+      }}
+    />
+    </Fragment>
   );
 }
 

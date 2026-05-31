@@ -59,6 +59,10 @@ type Props = {
   onClose: () => void;
   /** Called when comment count should change (+1 add, -1 delete). */
   onCommentsDelta: (delta: number) => void;
+  /** When set, the modal scrolls the matching comment into view once the
+   * first page loads and tints it with the brand accent so the user can
+   * immediately see which row the notification referred to. */
+  highlightCommentId?: string | null;
 };
 
 const WINDOW_H = Dimensions.get("window").height;
@@ -161,6 +165,7 @@ export default function FeedCommentsModal({
   commentsCount,
   onClose,
   onCommentsDelta,
+  highlightCommentId,
 }: Props) {
   const insets = useSafeAreaInsets();
   const navigation =
@@ -199,6 +204,19 @@ export default function FeedCommentsModal({
   const listScrollYRef = useRef(0);
   /** Snapshot of `sheetTranslateY` at the moment a drag begins. */
   const dragStartTranslateRef = useRef(0);
+  /** Imperative handle to the comments FlatList, used to scroll a
+   * notification-targeted comment into view once the first page loads. */
+  const listRef = useRef<FlatList<CommentThreadRow>>(null);
+  /**
+   * 1 → fully glowing, 0 → no tint. Drives a brief pulse-in animation when
+   * a `highlightCommentId` row is targeted, then decays to a softer
+   * persistent tint so the row stays visually flagged without being
+   * distracting after the first second.
+   */
+  const highlightAnim = useRef(new Animated.Value(0)).current;
+  /** Tracks whether we've already scrolled-to / pulsed the current target,
+   * so a re-render of `threadRows` doesn't keep re-firing the animation. */
+  const highlightedScrolledForIdRef = useRef<string | null>(null);
 
   const resetLocal = useCallback(() => {
     setComments([]);
@@ -208,7 +226,9 @@ export default function FeedCommentsModal({
     setLoading(false);
     setLoadingMore(false);
     loadingRef.current = false;
-  }, []);
+    highlightedScrolledForIdRef.current = null;
+    highlightAnim.setValue(0);
+  }, [highlightAnim]);
 
   useEffect(() => {
     if (!visible) {
@@ -295,6 +315,63 @@ export default function FeedCommentsModal({
     () => flattenCommentThreads(comments),
     [comments],
   );
+
+  /**
+   * When the modal is opened with a `highlightCommentId` (e.g. coming from
+   * a "liked your comment" / "replied to your comment" notification),
+   * scroll that comment into view and run a brief accent pulse so the user
+   * can immediately spot the row the notification referred to.
+   *
+   * The pulse value drives a tinted background on the matching row only
+   * (see the renderItem block below). It animates 0 → 1 quickly, then
+   * decays to a softer persistent tint of 0.45 so the highlight remains
+   * visible — but unobtrusive — for the rest of the session.
+   */
+  useEffect(() => {
+    if (!visible || loading) return;
+    const targetId = highlightCommentId?.trim();
+    if (!targetId) return;
+    if (highlightedScrolledForIdRef.current === targetId) return;
+
+    const index = threadRows.findIndex((row) => row.comment.id === targetId);
+    if (index === -1) return;
+
+    highlightedScrolledForIdRef.current = targetId;
+
+    // Give the list one frame to lay out before requesting a scroll —
+    // `scrollToIndex` can no-op on a list that hasn't measured its rows
+    // yet on first render.
+    const scrollHandle = setTimeout(() => {
+      try {
+        listRef.current?.scrollToIndex({
+          index,
+          animated: true,
+          viewPosition: 0.3,
+        });
+      } catch {
+        // Rare measurement race: ignore, the row is still highlighted.
+      }
+    }, 80);
+
+    highlightAnim.setValue(0);
+    Animated.sequence([
+      Animated.timing(highlightAnim, {
+        toValue: 1,
+        duration: 320,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: false,
+      }),
+      Animated.delay(1200),
+      Animated.timing(highlightAnim, {
+        toValue: 0.45,
+        duration: 600,
+        easing: Easing.inOut(Easing.cubic),
+        useNativeDriver: false,
+      }),
+    ]).start();
+
+    return () => clearTimeout(scrollHandle);
+  }, [highlightCommentId, threadRows, visible, loading, highlightAnim]);
 
   const toggleCommentLike = useCallback(
     async (c: FeedComment) => {
@@ -679,6 +756,7 @@ export default function FeedCommentsModal({
                 </View>
               ) : (
                 <FlatList
+                  ref={listRef}
                   data={threadRows}
                   keyExtractor={(row) => row.comment.id}
                   style={styles.list}
@@ -686,9 +764,22 @@ export default function FeedCommentsModal({
                   keyboardShouldPersistTaps="handled"
                   onScroll={onListScroll}
                   scrollEventThrottle={16}
+                  // `scrollToIndex` can throw if the target row hasn't been
+                  // measured yet (long threads, fast taps). Fall back to a
+                  // best-effort `scrollToOffset` so the user still lands
+                  // somewhere reasonable instead of a redbox.
+                  onScrollToIndexFailed={(info) => {
+                    listRef.current?.scrollToOffset({
+                      offset: Math.max(0, info.averageItemLength * info.index),
+                      animated: true,
+                    });
+                  }}
                   renderItem={({ item: row }) => {
                     const item = row.comment;
                     const depth = row.depth;
+                    const isHighlighted =
+                      !!highlightCommentId &&
+                      item.id === highlightCommentId;
                     const uid = commentAuthorId(item);
                     const mine = uid && currentUserId && uid === currentUserId;
                     const displayName = commentAuthorDisplayLabel(item);
@@ -711,14 +802,40 @@ export default function FeedCommentsModal({
                     const age = formatCommentAge(item.created_at);
                     const canOpenProfile = Boolean(uid);
 
+                    // For the targeted row, drive the background tint from
+                    // the highlight pulse value so the row briefly glows
+                    // accent-orange when the modal lands on it, then settles
+                    // to a softer persistent tint. Non-target rows skip the
+                    // Animated wrapper to avoid unnecessary re-renders.
+                    const highlightStyle = isHighlighted
+                      ? {
+                          backgroundColor: highlightAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [
+                              "rgba(255, 153, 0, 0)",
+                              "rgba(255, 153, 0, 0.18)",
+                            ],
+                          }),
+                          borderLeftColor: highlightAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [
+                              "rgba(255, 153, 0, 0)",
+                              Colors.accent,
+                            ],
+                          }),
+                        }
+                      : null;
+
                     return (
-                      <View
+                      <Animated.View
                         style={[
                           styles.threadRowWrap,
                           depth > 0 && [
                             styles.threadReplyBranch,
                             { marginLeft: Math.min(depth * 12, 60) },
                           ],
+                          isHighlighted && styles.highlightedRowBase,
+                          highlightStyle,
                         ]}
                       >
                         <Pressable
@@ -806,7 +923,7 @@ export default function FeedCommentsModal({
                             </TouchableOpacity>
                           </View>
                         </Pressable>
-                      </View>
+                      </Animated.View>
                     );
                   }}
                   ListEmptyComponent={
@@ -998,6 +1115,15 @@ const styles = StyleSheet.create({
     paddingLeft: 10,
     borderLeftWidth: 2,
     borderLeftColor: "#ebebeb",
+  },
+  // Static portion of the notification-highlighted row treatment. The
+  // animated background colour + left border colour are applied via the
+  // interpolations in renderItem so only the targeted row is animated.
+  highlightedRowBase: {
+    borderLeftWidth: 3,
+    paddingLeft: 8,
+    borderRadius: 10,
+    marginVertical: 2,
   },
   commentRow: {
     flexDirection: "row",

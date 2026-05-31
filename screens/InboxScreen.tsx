@@ -142,7 +142,6 @@ export default function InboxScreen() {
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const {
     notifications,
-    unreadCount,
     loading,
     refreshing,
     error,
@@ -257,13 +256,29 @@ export default function InboxScreen() {
   const friendRequests = notifications.filter(
     (notification) => notification.type === "friend_request",
   );
+  // Feed-interaction notifications (likes/comments/replies on the current
+  // user's posts) live on their own dedicated screen, opened from the
+  // FeedScreen's heart button. Hide them from the Inbox so the two surfaces
+  // don't double-show the same row.
   const visibleNotifications = notifications.filter(
-    (notification) => notification.type !== "friend_request",
+    (notification) =>
+      notification.type !== "friend_request" &&
+      notification.type !== "liked_your_post" &&
+      notification.type !== "liked_your_comment" &&
+      notification.type !== "commented_on_your_post" &&
+      notification.type !== "replied_to_your_comment",
   );
   const unreadVisibleNotificationIds = visibleNotifications
     .filter((notification) => !notification.read_at)
     .map((notification) => notification.id)
     .join(",");
+  // The context's `unreadCount` includes feed-interaction notifications,
+  // but those don't render on this screen anymore — derive a local count
+  // from the visible subset so the header doesn't show e.g.
+  // "3 unread notifications" while the list looks empty.
+  const visibleUnreadCount = visibleNotifications.filter(
+    (notification) => !notification.read_at,
+  ).length;
 
   useEffect(() => {
     if (!unreadVisibleNotificationIds) return;
@@ -283,7 +298,7 @@ export default function InboxScreen() {
       <TopNav />
       <View style={styles.header}>
         <View style={styles.headerRow}>
-          {unreadCount > 0 && (
+          {visibleUnreadCount > 0 && (
             <Pressable
               onPress={() =>
                 void markAllNotificationsRead().catch((err) => {
@@ -300,9 +315,10 @@ export default function InboxScreen() {
             </Pressable>
           )}
         </View>
-        {unreadCount > 0 && (
+        {visibleUnreadCount > 0 && (
           <Text style={styles.unreadText}>
-            {unreadCount} unread notification{unreadCount === 1 ? "" : "s"}
+            {visibleUnreadCount} unread notification
+            {visibleUnreadCount === 1 ? "" : "s"}
           </Text>
         )}
       </View>

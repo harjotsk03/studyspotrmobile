@@ -54,9 +54,100 @@ const inFlightSpot = new Map<string, Promise<StudySpot | null>>();
 const inFlightCommunity = new Map<string, Promise<CommunityData | null>>();
 const inFlightEvent = new Map<string, Promise<CommunityEvent | null>>();
 
-/** Composite key so event caches don't collide across communities. */
+/** Composite key so event caches don't collide across communities. Standalone
+ * events share a separate namespace (`__solo__`) so their entries don't
+ * stomp on community-scoped ones with the same eventId. */
 function eventCacheKey(communityId: string, eventId: string): string {
-  return `${communityId}/${eventId}`;
+  const cid = (communityId ?? "").trim();
+  return `${cid || "__solo__"}/${eventId}`;
+}
+
+/** Sender-side cache priming. When a user shares an event they already have
+ * the full event object in memory — write it into the cache so the chat
+ * composer's preview card and the post-send message bubble both render
+ * immediately, even if the receiver's flat `/events/:id` endpoint isn't
+ * available yet on the backend. (Receivers still rely on the network fetch.)
+ *
+ * Cheap and safe: subsequent fetches see the cache hit and skip the network. */
+export function primeSharedAttachmentEventCache(
+  event: CommunityEvent | null | undefined,
+  communityId: string | null | undefined,
+): void {
+  if (!event || typeof event.id !== "string" || !event.id) return;
+  const key = eventCacheKey(communityId ?? "", event.id);
+  eventCache.set(key, event);
+}
+
+/** Per-key listeners so live previews can react to external cache patches
+ * (e.g. an RSVP succeeded in the drawer that opened on top of this card —
+ * we want the bubble's attendee count to follow without remounting). */
+const eventListeners = new Map<string, Set<(e: CommunityEvent) => void>>();
+
+function notifyEventListeners(key: string, next: CommunityEvent): void {
+  const set = eventListeners.get(key);
+  if (!set) return;
+  set.forEach((cb) => {
+    try {
+      cb(next);
+    } catch {
+      // Listener exceptions must never break other subscribers.
+    }
+  });
+}
+
+function subscribeToEventCache(
+  communityId: string,
+  eventId: string,
+  cb: (e: CommunityEvent) => void,
+): () => void {
+  const key = eventCacheKey(communityId, eventId);
+  let set = eventListeners.get(key);
+  if (!set) {
+    set = new Set();
+    eventListeners.set(key, set);
+  }
+  set.add(cb);
+  return () => {
+    const s = eventListeners.get(key);
+    if (!s) return;
+    s.delete(cb);
+    if (s.size === 0) eventListeners.delete(key);
+  };
+}
+
+/** Patch the cached entry for a previously-seen event (e.g. after an RSVP
+ * succeeds inside the chat-opened drawer). Without this, the next render of
+ * the preview — even just scrolling the chat list — would re-read the
+ * stale cache entry with `user_rsvp_status: null` and the drawer would
+ * pop up showing "Join Event" again for an event the user already joined.
+ *
+ * No-op if we've never seen this event; we don't want to manufacture a
+ * partial cache entry that later collides with a real fetch. */
+export function patchSharedAttachmentEventCache(
+  communityId: string | null | undefined,
+  eventId: string,
+  patch: Partial<CommunityEvent>,
+): void {
+  if (!eventId) return;
+  const key = eventCacheKey(communityId ?? "", eventId);
+  const current = eventCache.get(key);
+  if (!current || current === "missing") return;
+  const merged = { ...current, ...patch };
+  eventCache.set(key, merged);
+  notifyEventListeners(key, merged);
+}
+
+/** Drop the cached entry so the next render of a preview will hit the
+ * network again. Use when we don't have a fully-applied patch handy
+ * (e.g. delete, or "I'm not sure what changed — re-pull"). */
+export function invalidateSharedAttachmentEventCache(
+  communityId: string | null | undefined,
+  eventId: string,
+): void {
+  if (!eventId) return;
+  const key = eventCacheKey(communityId ?? "", eventId);
+  eventCache.delete(key);
+  inFlightEvent.delete(key);
 }
 
 async function fetchCommunityById(
@@ -86,23 +177,17 @@ async function fetchCommunityById(
   }
 }
 
-async function fetchEventById(
+async function fetchEventByUrl(
   token: string,
-  communityId: string,
-  eventId: string,
+  url: string,
 ): Promise<CommunityEvent | null> {
   try {
-    const res = await fetch(
-      `${API_BASE_URL}/api/v1/communities/${encodeURIComponent(
-        communityId,
-      )}/events/${encodeURIComponent(eventId)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-        },
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
       },
-    );
+    });
     if (!res.ok) return null;
     const json: unknown = await res.json().catch(() => null);
     if (!json || typeof json !== "object") return null;
@@ -114,6 +199,35 @@ async function fetchEventById(
   } catch {
     return null;
   }
+}
+
+async function fetchEventById(
+  token: string,
+  communityId: string,
+  eventId: string,
+): Promise<CommunityEvent | null> {
+  const cid = (communityId ?? "").trim();
+  // Community-scoped events use the nested endpoint; standalone events
+  // (communityId omitted in the share token) hit the flat event endpoint
+  // added alongside the standalone join/leave/rsvp routes.
+  const url = cid
+    ? `${API_BASE_URL}/api/v1/communities/${encodeURIComponent(
+        cid,
+      )}/events/${encodeURIComponent(eventId)}`
+    : `${API_BASE_URL}/api/v1/events/${encodeURIComponent(eventId)}`;
+  const direct = await fetchEventByUrl(token, url);
+  if (direct) return direct;
+  // Defensive fallback: if a sender labelled an event community-scoped but
+  // the community-scoped GET 404s (e.g. event was detached, or the share
+  // token's `communityId` is stale), try the standalone endpoint before
+  // giving up. Cheap and saves a broken preview card.
+  if (cid) {
+    return fetchEventByUrl(
+      token,
+      `${API_BASE_URL}/api/v1/events/${encodeURIComponent(eventId)}`,
+    );
+  }
+  return null;
 }
 
 function loadPost(token: string, id: string): Promise<FeedPost | null> {
@@ -243,12 +357,19 @@ type Props = {
    * the preview reads well against either the primary blue (mine) or
    * white (theirs) chat bubble. */
   isMine: boolean;
+  /** Optional override for event taps. When provided, we hand the resolved
+   * event + communityId up to the parent so it can render `EventDetailDrawer`
+   * itself (avoids the circular import of pulling the drawer in here and
+   * keeps a single drawer instance per screen). When omitted, we fall back
+   * to navigating into `CommunityEvents` with `openEventId`. */
+  onPressEvent?: (event: CommunityEvent, communityId: string) => void;
 };
 
 export default function SharedAttachmentPreview({
   refData,
   token,
   isMine,
+  onPressEvent,
 }: Props) {
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -263,6 +384,20 @@ export default function SharedAttachmentPreview({
   // array without TypeScript narrowing complaints inside the async closure.
   const eventCommunityId =
     refData.kind === "event" ? refData.communityId : null;
+
+  // Subscribe this card to live cache patches for its specific event so
+  // RSVPs that happened in a drawer over this same screen flow back in
+  // without remounting. Only relevant for events; other kinds are
+  // immutable enough that revalidation on remount is fine.
+  useEffect(() => {
+    if (refData.kind !== "event") return;
+    const unsubscribe = subscribeToEventCache(
+      eventCommunityId ?? "",
+      refData.id,
+      (next) => setEvent(next),
+    );
+    return unsubscribe;
+  }, [refData.kind, refData.id, eventCommunityId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -302,12 +437,14 @@ export default function SharedAttachmentPreview({
         setLoading(false);
         return;
       }
-      // event
-      if (!token || !eventCommunityId) {
+      // event — `eventCommunityId` is "" for standalone events, which is
+      // intentional: loadEvent routes to the flat /events/:id endpoint in
+      // that case. We only bail when there's no auth token at all.
+      if (!token) {
         if (!cancelled) setLoading(false);
         return;
       }
-      const e = await loadEvent(token, eventCommunityId, refData.id);
+      const e = await loadEvent(token, eventCommunityId ?? "", refData.id);
       if (cancelled) return;
       setEvent(e);
       setLoading(false);
@@ -606,19 +743,27 @@ export default function SharedAttachmentPreview({
   const evAttendees =
     typeof event.attendee_count === "number" ? event.attendee_count : null;
 
+  const handleOpenEvent = () => {
+    if (onPressEvent) {
+      onPressEvent(event, eventCommunityIdForNav);
+      return;
+    }
+    // Fallback for callers that don't host a drawer themselves: open the
+    // community events list and let it auto-open the matching event.
+    navigation.navigate("CommunityEvents", {
+      communityId: eventCommunityIdForNav,
+      communityName: "",
+      isAdmin: false,
+      communityIsPublic: true,
+      openEventId: event.id,
+    });
+  };
+
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`Open event ${evTitle}`}
-      onPress={() =>
-        navigation.navigate("CommunityEvents", {
-          communityId: eventCommunityIdForNav,
-          communityName: "",
-          isAdmin: false,
-          communityIsPublic: true,
-          openEventId: event.id,
-        })
-      }
+      onPress={handleOpenEvent}
       style={({ pressed }) => [
         styles.card,
         themeCard,

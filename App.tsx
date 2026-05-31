@@ -1,4 +1,4 @@
-import { View } from "react-native";
+import { Image, StyleSheet, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { NavigationContainer } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
@@ -36,6 +36,7 @@ import {
   NotificationsProvider,
   useNotifications,
 } from "./context/NotificationsContext";
+import { FeedInteractionsProvider } from "./context/FeedInteractionsContext";
 import { SearchStateProvider } from "./context/SearchStateContext";
 import { SpotsProvider } from "./context/SpotsContext";
 import {
@@ -65,6 +66,7 @@ import ProfileSectionScreen, {
   type ProfileStackParamList,
 } from "./screens/ProfileSectionScreen";
 import FeedPostDetailScreen from "./screens/FeedPostDetailScreen";
+import FeedInteractionsScreen from "./screens/FeedInteractionsScreen";
 import UserPostsFeedScreen from "./screens/UserPostsFeedScreen";
 import InboxScreen from "./screens/InboxScreen";
 import FriendRequestsScreen from "./screens/FriendRequestsScreen";
@@ -201,6 +203,24 @@ const tabIcons: Record<
   Profile: User,
 };
 
+/**
+ * Sizing for the avatar-as-tab-icon. We hide the "Profile" label when a
+ * photo is present (see Profile Tab.Screen options below) and inflate the
+ * avatar to fill the space the label vacates — that way the bottom nav
+ * feels balanced rather than top-heavy with a tiny icon over an empty
+ * label slot.
+ */
+const PROFILE_AVATAR_SIZE = 28;
+const tabAvatarStyles = StyleSheet.create({
+  avatar: {
+    width: PROFILE_AVATAR_SIZE,
+    height: PROFILE_AVATAR_SIZE,
+    borderRadius: PROFILE_AVATAR_SIZE / 2,
+    borderWidth: 1.5,
+    backgroundColor: "#eee",
+  },
+});
+
 function AppContent() {
   const { profile, isLoading } = useAuth();
   const { unreadCount } = useNotifications();
@@ -249,6 +269,16 @@ function AppContent() {
     );
   }
 
+  // When the signed-in user has a profile photo we swap the generic
+  // `User` icon on the Profile tab for their avatar. Keeps the bottom
+  // nav personal at a glance, and falls back to the icon when no photo
+  // is set so the tab always renders something.
+  const profilePhotoRaw = profile?.userProfile?.profile_photo;
+  const profilePhotoUri =
+    typeof profilePhotoRaw === "string" && profilePhotoRaw.trim().length > 0
+      ? encodeURI(profilePhotoRaw.trim())
+      : "";
+
   const tabs = (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -263,6 +293,23 @@ function AppContent() {
                 size={24}
                 color={focused ? Colors.accent : "#999"}
                 strokeWidth={2.2}
+              />
+            );
+          }
+          if (route.name === "Profile" && profilePhotoUri) {
+            // Match the 24px icon footprint exactly so spacing in the tab
+            // bar doesn't shift when the avatar replaces the icon. A 1.5px
+            // ring (accent when focused, neutral when not) gives the same
+            // focused/unfocused affordance the other tabs get via colour.
+            return (
+              <Image
+                source={{ uri: profilePhotoUri }}
+                style={[
+                  tabAvatarStyles.avatar,
+                  {
+                    borderColor: focused ? Colors.accent : "transparent",
+                  },
+                ]}
               />
             );
           }
@@ -289,7 +336,7 @@ function AppContent() {
           ? { display: "none" }
           : {
               backgroundColor: "#fff",
-              height: 88,
+              height: 80,
               borderTopWidth: 1,
               paddingTop: 10,
               paddingHorizontal: 8,
@@ -297,13 +344,20 @@ function AppContent() {
             },
       })}
     >
-      <Tab.Screen name="Feed" component={FeedScreen} />
-      <Tab.Screen name="Community" component={CommunityStackScreen} />
-      <Tab.Screen name="Spots" component={SpotsStackScreen} />
+      <Tab.Screen name="Feed" component={FeedScreen} options={{
+        tabBarLabel: "",
+      }} />
+      <Tab.Screen name="Community" component={CommunityStackScreen} options={{
+        tabBarLabel: "",
+      }} />
+      <Tab.Screen name="Spots" component={SpotsStackScreen} options={{
+        tabBarLabel: "",
+      }} />
       <Tab.Screen
         name="Inbox"
         component={InboxStackScreen}
         options={{
+          tabBarLabel: "",
           tabBarBadge:
             unreadCount > 0
               ? unreadCount > 99
@@ -312,7 +366,17 @@ function AppContent() {
               : undefined,
         }}
       />
-      <Tab.Screen name="Profile" component={ProfileStackScreen} />
+      <Tab.Screen
+        name="Profile"
+        component={ProfileStackScreen}
+        options={{
+          // When the user has a profile photo, drop the "Profile" label
+          // so the bigger avatar can sit on its own. Without a photo the
+          // generic User icon stays alongside the label like every other
+          // tab.
+          tabBarLabel: "",
+        }}
+      />
     </Tab.Navigator>
   );
 
@@ -334,6 +398,10 @@ function AppContent() {
         <RootStack.Screen
           name="FeedPostDetail"
           component={FeedPostDetailScreen}
+        />
+        <RootStack.Screen
+          name="FeedInteractions"
+          component={FeedInteractionsScreen}
         />
         <RootStack.Screen
           name="UserPostsFeed"
@@ -415,22 +483,24 @@ export default function App() {
   return (
     <AuthProvider>
       <NotificationsProvider>
-        <SearchStateProvider>
-          <SpotsProvider>
-            <CommunityCacheProvider>
-              <FeedActivityProvider>
-                <FullScreenOverlayProvider>
-                  <SafeAreaProvider>
-                    <NavigationContainer>
-                      <StatusBar style="dark" />
-                      <AppContent />
-                    </NavigationContainer>
-                  </SafeAreaProvider>
-                </FullScreenOverlayProvider>
-              </FeedActivityProvider>
-            </CommunityCacheProvider>
-          </SpotsProvider>
-        </SearchStateProvider>
+        <FeedInteractionsProvider>
+          <SearchStateProvider>
+            <SpotsProvider>
+              <CommunityCacheProvider>
+                <FeedActivityProvider>
+                  <FullScreenOverlayProvider>
+                    <SafeAreaProvider>
+                      <NavigationContainer>
+                        <StatusBar style="dark" />
+                        <AppContent />
+                      </NavigationContainer>
+                    </SafeAreaProvider>
+                  </FullScreenOverlayProvider>
+                </FeedActivityProvider>
+              </CommunityCacheProvider>
+            </SpotsProvider>
+          </SearchStateProvider>
+        </FeedInteractionsProvider>
       </NotificationsProvider>
     </AuthProvider>
   );

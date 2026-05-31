@@ -36,7 +36,12 @@ export type MainTabsParamList = {
 export type RootStackParamList = {
   MainTabs: NavigatorScreenParams<MainTabsParamList> | undefined;
   PublicProfile: { userId: string };
-  FeedPostDetail: { post: FeedPost };
+  FeedPostDetail: {
+    post: FeedPost;
+    openComments?: boolean;
+    highlightCommentId?: string | null;
+  };
+  FeedInteractions: undefined;
   SpotViewer: { spot: StudySpot };
   UserPostsFeed: UserPostsFeedParams;
 } & Pick<

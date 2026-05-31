@@ -8,11 +8,14 @@
  *   Examples:  `[[share:post:8c7d…]]`
  *              `[[share:spot:42a1…]]`
  *              `[[share:community:b7e3…]]`
- *              `[[share:event:<communityId>:<eventId>]]`
+ *              `[[share:event:<eventId>]]`                  (standalone event)
+ *              `[[share:event:<communityId>:<eventId>]]`    (community-scoped)
  *
- * Events are nested under communities on the API side, so the event token
- * carries both ids (communityId first, eventId second). All other kinds
- * are flat single-id resources.
+ * Events can either be standalone or nested under a community. When a
+ * community context exists we keep both ids in the token (communityId first,
+ * eventId second) so the receiver can hit the community-scoped GET; otherwise
+ * we ship just the eventId and the receiver falls back to the standalone
+ * event endpoint. All other kinds are flat single-id resources.
  *
  * Kept deliberately small so it survives the existing `body: string` chat
  * schema without server changes. The receiver pulls the message,
@@ -41,7 +44,12 @@ const SHARE_TOKEN_RE_GLOBAL = new RegExp(SHARE_TOKEN_RE.source, "g");
 
 export function encodeShareToken(ref: SharedAttachmentRef): string {
   if (ref.kind === "event") {
-    return `[[share:event:${ref.communityId}:${ref.id}]]`;
+    // Standalone events have no community context — emit a single-id token so
+    // the receiver doesn't see a malformed `[[share:event::<id>]]` and can
+    // still load the preview via the standalone event endpoint.
+    const cid = (ref.communityId ?? "").trim();
+    if (cid) return `[[share:event:${cid}:${ref.id}]]`;
+    return `[[share:event:${ref.id}]]`;
   }
   return `[[share:${ref.kind}:${ref.id}]]`;
 }
@@ -67,10 +75,14 @@ export function extractShareFromBody(body: string): {
   let ref: SharedAttachmentRef | null = null;
 
   if (kind === "event") {
-    // Event tokens MUST have both ids; treat malformed tokens as plain text
-    // so we don't render a broken preview card.
-    if (!match[3]) return { ref: null, text: body };
-    ref = { kind: "event", communityId: match[2], id: match[3] };
+    // Two valid shapes:
+    //   `[[share:event:<communityId>:<eventId>]]` — community-scoped event
+    //   `[[share:event:<eventId>]]`               — standalone event
+    if (match[3]) {
+      ref = { kind: "event", communityId: match[2], id: match[3] };
+    } else {
+      ref = { kind: "event", communityId: "", id: match[2] };
+    }
   } else {
     ref = { kind, id: match[2] };
   }
@@ -126,7 +138,9 @@ export function describeBodyForPreview(body: string): string {
     const kind = m[1] as SharedAttachmentKind;
     const ref: SharedAttachmentRef =
       kind === "event"
-        ? { kind: "event", communityId: m[2], id: m[3] ?? "" }
+        ? m[3]
+          ? { kind: "event", communityId: m[2], id: m[3] }
+          : { kind: "event", communityId: "", id: m[2] }
         : { kind, id: m[2] };
     summaries.push(summarizeSharedAttachment(ref));
     return "";

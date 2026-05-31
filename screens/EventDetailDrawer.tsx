@@ -33,6 +33,7 @@ import { API_BASE_URL } from "../constants/Api";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import type { RootStackParamList } from "../types/navigation";
 import ShareToFriendsSheet from "../components/ShareToFriendsSheet";
+import { patchSharedAttachmentEventCache } from "../components/SharedAttachmentPreview";
 import Button from "../components/Button";
 
 // ─── Shared Types ─────────────────────────────────────────────────────────────
@@ -530,31 +531,50 @@ export default function EventDetailDrawer({
 
   async function fetchDetail(eventId: string) {
     if (!token) return;
-    // Standalone events (no parent community) don't have a community-
-    // scoped GET endpoint, so skip the detail refresh and fall back to
-    // the snapshot data we were opened with. Join/leave still work via
-    // the event-scoped RSVP routes below.
-    if (!communityId) return;
-    try {
-      const res = await fetch(
+    // Try the community-scoped GET first when we know the community, then
+    // fall back to the flat `/events/:id` endpoint so standalone events
+    // (no parent community) also pick up fresh `user_rsvp_status` /
+    // `attendee_count` from the backend when the drawer opens. Without
+    // this, re-opening the drawer for an event you already RSVPed to —
+    // from anywhere that snapshot data is stale (e.g. a chat preview
+    // cache) — would keep showing "Join Event" until app restart.
+    const urls: string[] = [];
+    if (communityId) {
+      urls.push(
         `${API_BASE_URL}/api/v1/communities/${communityId}/events/${eventId}`,
-        {
+      );
+    }
+    urls.push(`${API_BASE_URL}/api/v1/events/${eventId}`);
+
+    for (const url of urls) {
+      try {
+        const res = await fetch(url, {
           headers: {
             Authorization: `Bearer ${token}`,
             Accept: "application/json",
           },
-        },
-      );
-      const json = await res.json();
-      if (res.ok) {
-        const fetched: CommunityEvent = json.event ?? json;
+        });
+        if (!res.ok) continue;
+        const json = await res.json().catch(() => null);
+        if (!json || typeof json !== "object") continue;
+        const fetched: CommunityEvent =
+          ((json as Record<string, unknown>).event as CommunityEvent) ??
+          (json as CommunityEvent);
+        if (!fetched || typeof fetched !== "object" || !fetched.id) continue;
         setDetailEvent((prev) => ({ ...prev, ...fetched }));
         setRsvpStatus(fetched.user_rsvp_status ?? null);
         setAttendeeCount(fetched.attendee_count ?? 0);
+        // Keep the chat-preview cache in lock-step so the next render of
+        // the shared-attachment card (or the drawer reopen) doesn't fall
+        // back to stale snapshot data.
+        patchSharedAttachmentEventCache(communityId, eventId, fetched);
+        return;
+      } catch {
+        // Try the next URL.
       }
-    } catch {
-      // keep snapshot data
     }
+    // All endpoints fell through — keep snapshot data so the user still
+    // sees whatever we opened with.
   }
 
   async function handleJoin() {
@@ -573,18 +593,30 @@ export default function EventDetailDrawer({
           headers: {
             Authorization: `Bearer ${token}`,
             Accept: "application/json",
+            "Content-Type": "application/json",
           },
+          // Some backend middleware (and a few proxies) reject POSTs with no
+          // body — send an empty JSON object so the standalone /events/:id
+          // route always reaches the handler with a parsed payload.
+          body: JSON.stringify({}),
         },
       );
-      const json = await res.json();
+      const json = await res.json().catch(() => null);
       if (res.ok) {
         const newStatus: RsvpStatus =
-          json.rsvp?.status ?? json.status ?? "going";
+          json?.rsvp?.status ?? json?.status ?? "going";
         const newCount =
           newStatus === "going" ? attendeeCount + 1 : attendeeCount;
 
         // Celebrate!
         burstParticles();
+
+        // Sync the shared-attachment cache so re-opening the drawer from a
+        // chat preview shows "Leave Event" instead of stale "Join Event".
+        patchSharedAttachmentEventCache(communityId, detailEvent.id, {
+          user_rsvp_status: newStatus,
+          attendee_count: newCount,
+        });
 
         animateFooterSwap(() => {
           setRsvpStatus(newStatus);
@@ -594,9 +626,18 @@ export default function EventDetailDrawer({
         });
       } else {
         setActionLoading(false);
+        const msg =
+          (json && typeof json === "object" && typeof json.error === "string"
+            ? json.error
+            : null) ?? `Could not RSVP (HTTP ${res.status}).`;
+        Alert.alert("Couldn't join event", msg);
       }
-    } catch {
+    } catch (err) {
       setActionLoading(false);
+      Alert.alert(
+        "Couldn't join event",
+        err instanceof Error ? err.message : "Network error. Please try again.",
+      );
     }
   }
 
@@ -697,6 +738,12 @@ export default function EventDetailDrawer({
           0,
           attendeeCount - (rsvpStatus === "going" ? 1 : 0),
         );
+        // Sync the shared-attachment cache so re-opening from chat shows
+        // "Join Event" again (and not the stale "Leave Event").
+        patchSharedAttachmentEventCache(communityId, detailEvent.id, {
+          user_rsvp_status: null,
+          attendee_count: newCount,
+        });
         animateFooterSwap(() => {
           setRsvpStatus(null);
           setAttendeeCount(newCount);
@@ -705,9 +752,19 @@ export default function EventDetailDrawer({
         });
       } else {
         setActionLoading(false);
+        const json = await res.json().catch(() => null);
+        const msg =
+          (json && typeof json === "object" && typeof json.error === "string"
+            ? json.error
+            : null) ?? `Could not leave (HTTP ${res.status}).`;
+        Alert.alert("Couldn't leave event", msg);
       }
-    } catch {
+    } catch (err) {
       setActionLoading(false);
+      Alert.alert(
+        "Couldn't leave event",
+        err instanceof Error ? err.message : "Network error. Please try again.",
+      );
     }
   }
 
@@ -1197,6 +1254,13 @@ export default function EventDetailDrawer({
         token={token}
         navigation={navigation as unknown as NavigationProp<ParamListBase>}
         onClose={() => setShareSheetOpen(false)}
+        // Once the user actually shares the event (picks a friend / heads to
+        // their inbox), close the drawer too so it isn't sitting open behind
+        // the chat thread when they come back.
+        onShared={() => {
+          setShareSheetOpen(false);
+          onClose();
+        }}
       />
     </Modal>
   );

@@ -28,6 +28,7 @@ import { communityShareDraftForMessage } from "../utils/communityShareDraft";
 import { eventShareDraftForMessage } from "../utils/eventShareDraft";
 import { feedPostShareDraftForMessage } from "../utils/feedPostShareDraft";
 import { spotShareDraftForMessage } from "../utils/spotShareDraft";
+import { primeSharedAttachmentEventCache } from "./SharedAttachmentPreview";
 import type { FeedPost } from "../utils/feedApi";
 import type { StudySpot } from "../context/SpotsContext";
 import type { CommunityData } from "../screens/CommunityDetailScreen";
@@ -56,6 +57,15 @@ type Props = {
   token: string | null;
   navigation: NavigationProp<ParamListBase>;
   onClose: () => void;
+  /**
+   * Fired when the user actually commits to sharing — i.e. picks a friend
+   * (or hits "see all conversations"), and we're about to navigate away to
+   * a chat thread. Distinct from `onClose`, which fires for *every* dismiss
+   * (including the user just backing out of the sheet). Use this to also
+   * close any parent drawer/modal the share sheet was opened from, so the
+   * user isn't left with the parent hanging around behind the chat screen.
+   */
+  onShared?: () => void;
 };
 
 /** Recent chats on the horizontal “quick send” rail. */
@@ -166,6 +176,7 @@ export default function ShareToFriendsSheet({
   token,
   navigation,
   onClose,
+  onShared,
 }: Props) {
   const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<"quick" | "full">("quick");
@@ -215,10 +226,25 @@ export default function ShareToFriendsSheet({
       ? "Tap a friend to open the chat — your share is drafted. Use"
       : `Tap a friend to open the chat — your ${subject} share is drafted. Use`;
 
+  // Pre-fill the receiver-style preview cache with whatever the sender
+  // already has on hand. Right now we only do this for events because the
+  // backend's standalone `/api/v1/events/:id` GET may not exist on every
+  // deploy yet, and without this prime the sender would see a broken
+  // "Event unavailable" card in their own composer / sent bubble. Cheap to
+  // run; subsequent shares of the same event just overwrite with fresher
+  // data.
+  const primeCacheForAttachment = useCallback((target: ShareTarget) => {
+    if (target.kind === "event") {
+      primeSharedAttachmentEventCache(target.event, target.communityId);
+    }
+  }, []);
+
   const handlePick = useCallback(
     (c: ChatConversation) => {
       if (!attachment) return;
+      primeCacheForAttachment(attachment);
       onClose();
+      onShared?.();
       requestAnimationFrame(() => {
         navigateToInboxChatThread(navigation, {
           conversationId: c.id,
@@ -227,13 +253,15 @@ export default function ShareToFriendsSheet({
         });
       });
     },
-    [attachment, navigation, draft, onClose],
+    [attachment, navigation, draft, onClose, onShared, primeCacheForAttachment],
   );
 
   const goMessages = useCallback(() => {
+    if (attachment) primeCacheForAttachment(attachment);
     onClose();
+    onShared?.();
     requestAnimationFrame(() => navigateToInboxMessagesList(navigation));
-  }, [navigation, onClose]);
+  }, [attachment, navigation, onClose, onShared, primeCacheForAttachment]);
 
   const quickFriends = useMemo(
     () => conversations.slice(0, QUICK_SEND_LIMIT),
