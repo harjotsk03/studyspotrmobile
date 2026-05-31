@@ -313,6 +313,16 @@ export default function CommunityEventsScreen({ route }: Props) {
   const fetchEvents = useCallback(
     async (isRefresh = false) => {
       if (!token) return;
+      // Standalone-event entry point (opened from a shared chat preview with
+      // no community context). Skip the community-scoped list fetch; the
+      // openEventId effect below loads the single event directly so the
+      // drawer can still open over an empty list.
+      if (!communityId) {
+        setLoading(false);
+        setRefreshing(false);
+        setEvents([]);
+        return;
+      }
       if (isRefresh) setRefreshing(true);
       else setLoading(true);
       setError("");
@@ -344,6 +354,9 @@ export default function CommunityEventsScreen({ route }: Props) {
   const validateCommunityAccess = useCallback(
     async (opts?: { alertOnDenied?: boolean }) => {
       if (!token) return true;
+      // No community to validate against when arriving from a standalone
+      // shared event — bypass membership checks entirely.
+      if (!communityId) return true;
       try {
         const membership = await fetchCommunityMembership(token, communityId);
         const nextCanCreate = isCommunityAdminOrOwner(membership);
@@ -398,33 +411,47 @@ export default function CommunityEventsScreen({ route }: Props) {
     // Otherwise fetch the single event directly so we can open the drawer
     // even when it lives outside the current filter (e.g. shared past
     // event while user is on "Upcoming").
+    //
+    // We try the community-scoped endpoint first when we know the community,
+    // then fall back to the flat `/events/:id` endpoint (which also covers
+    // standalone events shared without a community context).
     let cancelled = false;
     (async () => {
-      try {
-        const res = await fetch(
+      const urls: string[] = [];
+      if (communityId) {
+        urls.push(
           `${API_BASE_URL}/api/v1/communities/${communityId}/events/${openEventId}`,
-          {
+        );
+      }
+      urls.push(`${API_BASE_URL}/api/v1/events/${openEventId}`);
+
+      for (const url of urls) {
+        if (cancelled) return;
+        try {
+          const res = await fetch(url, {
             headers: {
               Authorization: `Bearer ${token}`,
               Accept: "application/json",
             },
-          },
-        );
-        if (!res.ok) return;
-        const json: unknown = await res.json().catch(() => null);
-        if (!json || typeof json !== "object" || cancelled) return;
-        const raw =
-          (json as Record<string, unknown>).event ??
-          (json as Record<string, unknown>);
-        const ev = raw as CommunityEvent | null;
-        if (!ev || typeof ev !== "object" || !ev.id) return;
-        consumedOpenEventIdRef.current = openEventId;
-        setSelectedEvent(ev);
-        setDrawerOpen(true);
-      } catch {
-        // Silent — leaves the user on the events list, which is still a
-        // valid landing surface.
+          });
+          if (!res.ok) continue;
+          const json: unknown = await res.json().catch(() => null);
+          if (!json || typeof json !== "object" || cancelled) continue;
+          const raw =
+            (json as Record<string, unknown>).event ??
+            (json as Record<string, unknown>);
+          const ev = raw as CommunityEvent | null;
+          if (!ev || typeof ev !== "object" || !ev.id) continue;
+          consumedOpenEventIdRef.current = openEventId;
+          setSelectedEvent(ev);
+          setDrawerOpen(true);
+          return;
+        } catch {
+          // Try the next URL.
+        }
       }
+      // Silent — leaves the user on the events list, which is still a
+      // valid landing surface.
     })();
 
     return () => {

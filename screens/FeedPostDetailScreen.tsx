@@ -13,7 +13,19 @@ import { Colors } from "../constants/Colors";
 import { useAuth } from "../context/AuthContext";
 import type { FeedPost } from "../utils/feedApi";
 
-export type FeedPostDetailParams = { post: FeedPost };
+export type FeedPostDetailParams = {
+  post: FeedPost;
+  /** When true, the comments modal opens automatically once the screen
+   * mounts. Used by the feed-interactions screen so tapping a "commented
+   * on your post" / "replied to your comment" notification lands the user
+   * directly in the comment thread. */
+  openComments?: boolean;
+  /** When set, the auto-opened comments modal scrolls this comment into
+   * view and highlights it in the brand accent so the user can see which
+   * comment a "liked your comment" / "replied to your comment"
+   * notification was referring to. */
+  highlightCommentId?: string | null;
+};
 
 type Props = NativeStackScreenProps<
   { FeedPostDetail: FeedPostDetailParams },
@@ -28,7 +40,11 @@ type Props = NativeStackScreenProps<
  * all behave identically to the feed — there's just one post in view.
  */
 export default function FeedPostDetailScreen({ navigation, route }: Props) {
-  const { post: initialPost } = route.params;
+  const {
+    post: initialPost,
+    openComments: openCommentsInitially,
+    highlightCommentId,
+  } = route.params;
   const { token, profile } = useAuth();
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
@@ -37,7 +53,9 @@ export default function FeedPostDetailScreen({ navigation, route }: Props) {
   // Mirror the feed's local post state so likes/comments/etc. update in
   // place after a server round-trip, without us needing to refetch.
   const [post, setPost] = useState<FeedPost>(initialPost);
-  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(
+    Boolean(openCommentsInitially),
+  );
   const [shareSheetOpen, setShareSheetOpen] = useState(false);
   const [fullScreenPost, setFullScreenPost] = useState<FeedPost | null>(null);
   const [fullScreenRect, setFullScreenRect] = useState<MediaRect | null>(null);
@@ -140,6 +158,7 @@ export default function FeedPostDetailScreen({ navigation, route }: Props) {
         token={token}
         currentUserId={currentUserId}
         commentsCount={post.comments_count ?? 0}
+        highlightCommentId={highlightCommentId ?? null}
         onClose={() => setCommentsOpen(false)}
         onCommentsDelta={(delta) => {
           setPost((prev) => ({

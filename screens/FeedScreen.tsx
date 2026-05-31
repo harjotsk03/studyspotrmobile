@@ -19,6 +19,7 @@ import {
   type ParamListBase,
 } from "@react-navigation/native";
 import type { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Heart, PlusSquare } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FeedCommentsModal from "../components/FeedCommentsModal";
@@ -34,8 +35,11 @@ import { Fonts } from "../constants/Fonts";
 import type { UserProfileData } from "../context/AuthContext";
 import { useAuth } from "../context/AuthContext";
 import { useFeedActivity } from "../context/FeedActivityContext";
-import { useNotifications } from "../context/NotificationsContext";
-import type { MainTabsParamList } from "../types/navigation";
+import { useFeedInteractions } from "../context/FeedInteractionsContext";
+import type {
+  MainTabsParamList,
+  RootStackParamList,
+} from "../types/navigation";
 import { fetchFeedFriends, type FeedPost } from "../utils/feedApi";
 
 type FeedTabNavigation = BottomTabNavigationProp<MainTabsParamList, "Feed">;
@@ -116,7 +120,9 @@ export default function FeedScreen() {
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
   const navigation = useNavigation<FeedTabNavigation>();
-  const { unreadCount } = useNotifications();
+  const { unreadCount } = useFeedInteractions();
+  const rootNavigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { token, profile } = useAuth();
   const { setFeedLoading } = useFeedActivity();
   const user = profile?.userProfile;
@@ -489,16 +495,11 @@ export default function FeedScreen() {
                 <PlusSquare size={26} color={Colors.dark} strokeWidth={2} />
               </Pressable>
               <Pressable
-                onPress={() =>
-                  navigation.navigate({
-                    name: "Inbox",
-                    params: { screen: "InboxHome" },
-                  })
-                }
+                onPress={() => rootNavigation.navigate("FeedInteractions")}
                 hitSlop={10}
                 style={styles.topIconBtn}
                 accessibilityRole="button"
-                accessibilityLabel="Activity and notifications"
+                accessibilityLabel="Feed activity"
               >
                 <Heart size={26} color={Colors.dark} strokeWidth={2} />
                 {unreadCount > 0 ? (

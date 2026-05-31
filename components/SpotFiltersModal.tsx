@@ -1,17 +1,41 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import {
   Animated,
   Dimensions,
   Easing,
+  Keyboard,
   Modal,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  Coffee,
+  Map,
+  MapPin,
+  Presentation,
+  RotateCcw,
+  Star,
+  Users,
+  Wifi,
+  X,
+  Zap,
+} from "lucide-react-native";
+import Button from "./Button";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 
@@ -52,17 +76,20 @@ export function countActiveFilters(filters: SpotFiltersValue) {
 
 type AmenityKey = keyof SpotFiltersValue["amenities"];
 
-const AMENITY_OPTIONS: {
-  key: AmenityKey;
-  label: string;
-  icon: keyof typeof Ionicons.glyphMap;
-}[] = [
-  { key: "wifi", label: "Wi-Fi", icon: "wifi" },
-  { key: "outlets", label: "Outlets", icon: "flash-outline" },
-  { key: "foodDrink", label: "Food & Drinks", icon: "cafe-outline" },
-  { key: "whiteboards", label: "Whiteboards", icon: "easel-outline" },
-  { key: "groupWork", label: "Group Friendly", icon: "people-outline" },
-];
+type LucideIcon = ComponentType<{
+  size?: number;
+  color?: string;
+  strokeWidth?: number;
+}>;
+
+const AMENITY_OPTIONS: { key: AmenityKey; label: string; Icon: LucideIcon }[] =
+  [
+    { key: "wifi", label: "Wi-Fi", Icon: Wifi },
+    { key: "outlets", label: "Outlets", Icon: Zap },
+    { key: "foodDrink", label: "Food & Drinks", Icon: Coffee },
+    { key: "whiteboards", label: "Whiteboards", Icon: Presentation },
+    { key: "groupWork", label: "Group Friendly", Icon: Users },
+  ];
 
 const RATING_OPTIONS = [
   { value: 3, label: "3+" },
@@ -72,6 +99,12 @@ const RATING_OPTIONS = [
 ];
 
 const SCREEN_HEIGHT = Dimensions.get("window").height;
+
+/** Match the comments modal thresholds so the gesture feels the same
+ * everywhere — drag down ~110px or flick >0.7 px/ms to dismiss. */
+const DISMISS_DRAG_DISTANCE = 110;
+const DISMISS_FLICK_VELOCITY = 0.7;
+const DISMISS_FLICK_MIN_DISTANCE = 12;
 
 type Props = {
   visible: boolean;
@@ -95,48 +128,150 @@ export default function SpotFiltersModal({
 
   const translateY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropOpacity = useRef(new Animated.Value(0)).current;
+  /** Live scroll offset of the filters list — gates the drag-to-dismiss
+   * gesture so vertical scrolling inside the sheet still works. */
+  const scrollYRef = useRef(0);
+  /** Snapshot of `translateY` at the moment a drag begins. */
+  const dragStartTranslateRef = useRef(0);
+  /** Prevents re-entrant close calls when the user flick-dismisses in the
+   * middle of an already-running exit animation. */
+  const closingRef = useRef(false);
 
-  useEffect(() => {
-    if (visible) {
-      setMounted(true);
-      translateY.setValue(SCREEN_HEIGHT);
-      backdropOpacity.setValue(0);
-      Animated.parallel([
-        Animated.timing(translateY, {
-          toValue: 0,
-          duration: 320,
-          easing: Easing.bezier(0.22, 1, 0.36, 1),
-          useNativeDriver: true,
-        }),
-        Animated.timing(backdropOpacity, {
-          toValue: 1,
-          duration: 220,
-          easing: Easing.out(Easing.quad),
-          useNativeDriver: true,
-        }),
-      ]).start();
-    } else if (mounted) {
+  const enter = useCallback(() => {
+    closingRef.current = false;
+    translateY.setValue(SCREEN_HEIGHT);
+    backdropOpacity.setValue(0);
+    Animated.parallel([
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 320,
+        easing: Easing.bezier(0.22, 1, 0.36, 1),
+        useNativeDriver: true,
+      }),
+      Animated.timing(backdropOpacity, {
+        toValue: 1,
+        duration: 220,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [translateY, backdropOpacity]);
+
+  /** Animate the sheet closed, then call `onClose`. `flickVelocity` (px/ms)
+   * shortens the exit when the user actively flicked downward, so the
+   * dismiss feels like a continuation of their swipe. */
+  const dismiss = useCallback(
+    (flickVelocity?: number) => {
+      if (closingRef.current) return;
+      closingRef.current = true;
+      Keyboard.dismiss();
+
+      const flicked = typeof flickVelocity === "number" && flickVelocity > 0;
+      const sheetDuration = flicked ? 180 : 240;
+      const fadeDuration = flicked ? 150 : 200;
+
       Animated.parallel([
         Animated.timing(translateY, {
           toValue: SCREEN_HEIGHT,
-          duration: 240,
-          easing: Easing.in(Easing.cubic),
+          duration: sheetDuration,
+          easing: flicked ? Easing.out(Easing.quad) : Easing.in(Easing.cubic),
           useNativeDriver: true,
         }),
         Animated.timing(backdropOpacity, {
           toValue: 0,
-          duration: 200,
+          duration: fadeDuration,
           easing: Easing.in(Easing.quad),
           useNativeDriver: true,
         }),
       ]).start(({ finished }) => {
+        closingRef.current = false;
         if (finished) {
           setMounted(false);
+          onClose();
         }
       });
+    },
+    [translateY, backdropOpacity, onClose],
+  );
+
+  const springBack = useCallback(() => {
+    Animated.spring(translateY, {
+      toValue: 0,
+      friction: 8,
+      tension: 120,
+      useNativeDriver: true,
+    }).start();
+    Animated.timing(backdropOpacity, {
+      toValue: 1,
+      duration: 160,
+      useNativeDriver: true,
+    }).start();
+  }, [translateY, backdropOpacity]);
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true);
+      enter();
+    } else if (mounted) {
+      dismiss();
     }
+    // We deliberately exclude `mounted` from the dep array — the effect's
+    // job is to react to `visible`, not bounce when we toggle our own
+    // mount latch inside `dismiss`. The other deps are stable callbacks.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
+
+  const onScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      scrollYRef.current = e.nativeEvent.contentOffset.y;
+    },
+    [],
+  );
+
+  const dragPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        // Only claim the gesture when the user is at the top of the
+        // inner scroll AND is dragging clearly downward — otherwise the
+        // list handles its own vertical scrolling.
+        onMoveShouldSetPanResponderCapture: (_evt, g) => {
+          if (closingRef.current) return false;
+          const downward = g.dy > 4;
+          const verticalDominant = Math.abs(g.dy) > Math.abs(g.dx) * 1.2;
+          const atTop = scrollYRef.current <= 0;
+          return downward && verticalDominant && atTop;
+        },
+        onPanResponderGrant: () => {
+          translateY.stopAnimation((v) => {
+            dragStartTranslateRef.current = v;
+          });
+        },
+        onPanResponderMove: (_evt, g) => {
+          const next = Math.max(0, dragStartTranslateRef.current + g.dy);
+          translateY.setValue(next);
+          // Dim the backdrop in lockstep so the dismiss intent reads
+          // immediately, without waiting for release.
+          const fade = Math.max(0, 1 - next / SCREEN_HEIGHT);
+          backdropOpacity.setValue(fade);
+        },
+        onPanResponderRelease: (_evt, g) => {
+          const flick =
+            g.vy > DISMISS_FLICK_VELOCITY &&
+            g.dy > DISMISS_FLICK_MIN_DISTANCE;
+          const slow = g.dy > DISMISS_DRAG_DISTANCE;
+          if (flick || slow) {
+            dismiss(flick ? g.vy : undefined);
+          } else {
+            springBack();
+          }
+        },
+        onPanResponderTerminate: () => {
+          springBack();
+        },
+        onPanResponderTerminationRequest: () => false,
+      }),
+    [translateY, backdropOpacity, dismiss, springBack],
+  );
 
   if (!mounted) return null;
 
@@ -165,43 +300,69 @@ export default function SpotFiltersModal({
       transparent
       animationType="none"
       statusBarTranslucent
-      onRequestClose={onClose}
+      onRequestClose={() => dismiss()}
     >
       <View style={styles.root}>
         <Animated.View
           pointerEvents="none"
           style={[styles.backdrop, { opacity: backdropOpacity }]}
         />
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        {/* Tappable backdrop sits between the dim layer and the sheet so
+            tapping outside still dismisses. */}
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={() => dismiss()}
+          accessibilityRole="button"
+          accessibilityLabel="Close filters"
+        />
         <Animated.View
           style={[
             styles.sheet,
             { paddingBottom: Math.max(insets.bottom, 16) + 8 },
             { transform: [{ translateY }] },
           ]}
-          onStartShouldSetResponder={() => true}
+          {...dragPanResponder.panHandlers}
         >
-          <View style={styles.handle} />
+          {/* Grabber sits above the header so it visually anchors the
+              drag affordance — matches the comments modal pattern. */}
+          <View style={styles.grabberWrap} pointerEvents="none">
+            <View style={styles.grabber} />
+          </View>
 
           <View style={styles.header}>
-            <Text style={styles.title}>Filters</Text>
-            <Text style={styles.subtitle}>
-              {activeCount > 0
-                ? `${activeCount} active`
-                : "Refine your spots"}
-            </Text>
+            <View style={styles.headerSide} />
+            <View style={styles.headerCenter}>
+              <Text style={styles.title}>Filters</Text>
+              {activeCount > 0 ? (
+                <View style={styles.countPill}>
+                  <Text style={styles.countPillText}>{activeCount}</Text>
+                </View>
+              ) : null}
+            </View>
+            <Pressable
+              onPress={() => dismiss()}
+              hitSlop={12}
+              style={styles.headerSide}
+              accessibilityRole="button"
+              accessibilityLabel="Close filters"
+            >
+              <X size={22} color={Colors.dark} strokeWidth={2.2} />
+            </Pressable>
           </View>
 
           <ScrollView
             style={styles.scroll}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
+            onScroll={onScroll}
+            scrollEventThrottle={16}
+            keyboardShouldPersistTaps="handled"
           >
             <Section title="Distance">
               <View style={styles.chipsRow}>
                 <FilterChip
                   label="Within 10 km"
-                  icon="location-outline"
+                  Icon={MapPin}
                   active={value.nearbyOnly}
                   disabled={!hasUserLocation}
                   onPress={() =>
@@ -210,7 +371,7 @@ export default function SpotFiltersModal({
                 />
                 <FilterChip
                   label="On the map"
-                  icon="map-outline"
+                  Icon={Map}
                   active={value.mapReadyOnly}
                   onPress={() =>
                     onChange({
@@ -227,15 +388,13 @@ export default function SpotFiltersModal({
               ) : null}
             </Section>
 
-            <View style={styles.divider} />
-
             <Section title="Minimum rating">
               <View style={styles.chipsRow}>
                 {RATING_OPTIONS.map((option) => (
                   <FilterChip
                     key={option.value}
                     label={option.label}
-                    icon="star"
+                    Icon={Star}
                     active={value.minRating === option.value}
                     onPress={() => setMinRating(option.value)}
                   />
@@ -243,15 +402,13 @@ export default function SpotFiltersModal({
               </View>
             </Section>
 
-            <View style={styles.divider} />
-
             <Section title="Amenities">
               <View style={styles.chipsRow}>
                 {AMENITY_OPTIONS.map((option) => (
                   <FilterChip
                     key={option.key}
                     label={option.label}
-                    icon={option.icon}
+                    Icon={option.Icon}
                     active={value.amenities[option.key]}
                     onPress={() => toggleAmenity(option.key)}
                   />
@@ -260,43 +417,36 @@ export default function SpotFiltersModal({
             </Section>
           </ScrollView>
 
-          <Pressable
-            disabled={activeCount === 0}
-            style={({ pressed }) => [
-              styles.action,
-              activeCount === 0 && styles.actionDisabled,
-              pressed && activeCount > 0 && styles.actionPressed,
-            ]}
-            onPress={onReset}
-          >
-            <Ionicons
-              name="refresh-outline"
-              size={20}
-              color={activeCount === 0 ? "#B5B5B5" : Colors.dark}
+          <View style={styles.footer}>
+            <Button
+              label="Reset"
+              variant="outline"
+              size="default"
+              disabled={activeCount === 0}
+              icon={
+                <RotateCcw
+                  size={18}
+                  color={activeCount === 0 ? "#B5B5B5" : Colors.dark}
+                  strokeWidth={2.2}
+                />
+              }
+              onPress={onReset}
+              haptic="light"
+              style={styles.footerSecondary}
             />
-            <Text
-              style={[
-                styles.actionText,
-                activeCount === 0 && styles.actionTextDisabled,
-              ]}
-            >
-              Reset Filters
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={({ pressed }) => [
-              styles.applyBtn,
-              pressed && styles.applyBtnPressed,
-            ]}
-            onPress={onClose}
-          >
-            <Text style={styles.applyText}>
-              {activeCount > 0
-                ? `Show Results (${activeCount})`
-                : "Show Results"}
-            </Text>
-          </Pressable>
+            <Button
+              label={
+                activeCount > 0
+                  ? `Show results (${activeCount})`
+                  : "Show results"
+              }
+              variant="accent"
+              size="default"
+              onPress={() => dismiss()}
+              haptic="medium"
+              style={styles.footerPrimary}
+            />
+          </View>
         </Animated.View>
       </View>
     </Modal>
@@ -320,13 +470,13 @@ function Section({
 
 function FilterChip({
   label,
-  icon,
+  Icon,
   active,
   disabled,
   onPress,
 }: {
   label: string;
-  icon: keyof typeof Ionicons.glyphMap;
+  Icon: LucideIcon;
   active: boolean;
   disabled?: boolean;
   onPress: () => void;
@@ -335,13 +485,18 @@ function FilterChip({
     <Pressable
       onPress={onPress}
       disabled={disabled}
-      style={[
+      style={({ pressed }) => [
         styles.chip,
         active && styles.chipActive,
         disabled && styles.chipDisabled,
+        pressed && !disabled && styles.chipPressed,
       ]}
     >
-      <Ionicons name={icon} size={15} color={active ? "#fff" : Colors.dark} />
+      <Icon
+        size={15}
+        color={active ? "#fff" : Colors.dark}
+        strokeWidth={2.2}
+      />
       <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>
         {label}
       </Text>
@@ -360,38 +515,72 @@ const styles = StyleSheet.create({
   },
   sheet: {
     backgroundColor: "#fff",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingTop: 8,
-    paddingHorizontal: 8,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    paddingTop: 4,
+    paddingHorizontal: 4,
     maxHeight: "88%",
+    // Soft shadow above the sheet's rounded top edge so the elevation
+    // feels in line with the rest of the app's bottom sheets.
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: -4 },
+    elevation: 14,
   },
-  handle: {
-    alignSelf: "center",
+  grabberWrap: {
+    alignItems: "center",
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  grabber: {
     width: 40,
     height: 4,
     borderRadius: 2,
-    backgroundColor: "#E0E0E0",
-    marginBottom: 8,
+    backgroundColor: "#DDD",
   },
   header: {
-    paddingHorizontal: 12,
-    paddingTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingTop: 6,
     paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F0F0F0",
-    marginBottom: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#eee",
+  },
+  headerSide: {
+    width: 44,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerCenter: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
   },
   title: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 18,
+    fontFamily: Fonts.gabarito.bold,
+    fontSize: 19,
     color: Colors.dark,
   },
-  subtitle: {
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 13,
-    color: "#888",
-    marginTop: 2,
+  // Little count pill next to the title — accent-tinted so the page
+  // matches the app's brand without needing a long subtitle.
+  countPill: {
+    minWidth: 22,
+    height: 22,
+    paddingHorizontal: 8,
+    borderRadius: 11,
+    backgroundColor: Colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  countPillText: {
+    fontFamily: Fonts.gabarito.bold,
+    fontSize: 12,
+    color: "#fff",
   },
   scroll: {
     flexGrow: 0,
@@ -401,16 +590,17 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
   },
   section: {
-    paddingHorizontal: 12,
-    paddingVertical: 14,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 4,
   },
   sectionTitle: {
     fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 14,
+    fontSize: 12,
     color: "#888",
     textTransform: "uppercase",
-    letterSpacing: 0.6,
-    marginBottom: 10,
+    letterSpacing: 0.8,
+    marginBottom: 12,
   },
   chipsRow: {
     flexDirection: "row",
@@ -422,15 +612,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
     paddingHorizontal: 14,
-    paddingVertical: 9,
+    paddingVertical: 10,
     borderRadius: 999,
-    borderWidth: 1,
+    borderWidth: 1.25,
     borderColor: "#E6E6E6",
     backgroundColor: "#fff",
   },
+  chipPressed: {
+    opacity: 0.7,
+  },
   chipActive: {
-    backgroundColor: Colors.dark,
-    borderColor: Colors.dark,
+    // Brand accent for the active state — matches the heart badge, the
+    // tab focus ring, and the primary CTAs across the app.
+    backgroundColor: Colors.accent,
+    borderColor: Colors.accent,
   },
   chipDisabled: {
     opacity: 0.45,
@@ -449,47 +644,23 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#888",
   },
-  divider: {
-    height: 1,
-    backgroundColor: "#F4F4F4",
-    marginHorizontal: 12,
-  },
-  action: {
+  footer: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 16,
-    borderRadius: 12,
-    marginTop: 6,
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 4,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#eee",
+    marginTop: 8,
   },
-  actionPressed: {
-    backgroundColor: "#F5F5F5",
+  footerSecondary: {
+    flexBasis: 130,
+    flexGrow: 0,
+    flexShrink: 0,
   },
-  actionDisabled: {
-    opacity: 0.6,
-  },
-  actionText: {
-    fontFamily: Fonts.gabarito.medium,
-    fontSize: 16,
-    color: Colors.dark,
-  },
-  actionTextDisabled: {
-    color: "#B5B5B5",
-  },
-  applyBtn: {
-    marginTop: 6,
-    paddingVertical: 14,
-    alignItems: "center",
-    borderRadius: 12,
-    backgroundColor: Colors.dark,
-  },
-  applyBtnPressed: {
-    opacity: 0.85,
-  },
-  applyText: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 15,
-    color: "#fff",
+  footerPrimary: {
+    flex: 1,
   },
 });
