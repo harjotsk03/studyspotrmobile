@@ -149,6 +149,14 @@ export default function SpotsScreen() {
   const refreshSpinAnim = useRef(new Animated.Value(0)).current;
   const refreshSpinLoopRef = useRef<Animated.CompositeAnimation | null>(null);
 
+  // Sliding pill animation for the Map / List toggle
+  const pillTranslateX = useRef(new Animated.Value(0)).current;
+  const pillWidthAnim = useRef(new Animated.Value(0)).current;
+  const toggleLayouts = useRef<{
+    map: { x: number; width: number } | null;
+    list: { x: number; width: number } | null;
+  }>({ map: null, list: null });
+
   const handleManualRefresh = useCallback(async () => {
     if (refreshing) return;
     setRefreshing(true);
@@ -187,6 +195,29 @@ export default function SpotsScreen() {
     inputRange: [0, 1],
     outputRange: ["0deg", "360deg"],
   });
+
+  // Animate the toggle pill whenever viewMode changes.
+  useEffect(() => {
+    const target = toggleLayouts.current[viewMode];
+    if (!target) return;
+
+    Animated.parallel([
+      Animated.spring(pillTranslateX, {
+        toValue: target.x,
+        useNativeDriver: false,
+        damping: 20,
+        stiffness: 250,
+        mass: 0.8,
+      }),
+      Animated.spring(pillWidthAnim, {
+        toValue: target.width,
+        useNativeDriver: false,
+        damping: 20,
+        stiffness: 250,
+        mass: 0.8,
+      }),
+    ]).start();
+  }, [viewMode, pillTranslateX, pillWidthAnim]);
 
   const trimmedQuery = searchQuery.trim().toLowerCase();
   const hasActiveSearch = trimmedQuery.length > 0;
@@ -436,12 +467,28 @@ export default function SpotsScreen() {
 
         <View style={styles.toolbarRow}>
           <View style={styles.viewToggle}>
+            {/* Animated sliding pill */}
+            <Animated.View
+              style={[
+                styles.pillIndicator,
+                {
+                  transform: [{ translateX: pillTranslateX }],
+                  width: pillWidthAnim,
+                },
+              ]}
+            />
+
             <Pressable
               onPress={() => setViewMode("map")}
-              style={[
-                styles.viewToggleButton,
-                viewMode === "map" && styles.viewToggleButtonActive,
-              ]}
+              onLayout={(e) => {
+                const { x, width: w } = e.nativeEvent.layout;
+                toggleLayouts.current.map = { x, width: w };
+                if (viewMode === "map") {
+                  pillTranslateX.setValue(x);
+                  pillWidthAnim.setValue(w);
+                }
+              }}
+              style={styles.viewToggleButton}
             >
               <Ionicons
                 name="map"
@@ -460,10 +507,15 @@ export default function SpotsScreen() {
 
             <Pressable
               onPress={() => setViewMode("list")}
-              style={[
-                styles.viewToggleButton,
-                viewMode === "list" && styles.viewToggleButtonActive,
-              ]}
+              onLayout={(e) => {
+                const { x, width: w } = e.nativeEvent.layout;
+                toggleLayouts.current.list = { x, width: w };
+                if (viewMode === "list") {
+                  pillTranslateX.setValue(x);
+                  pillWidthAnim.setValue(w);
+                }
+              }}
+              style={styles.viewToggleButton}
             >
               <Ionicons
                 name="list"
@@ -746,6 +798,14 @@ const styles = StyleSheet.create({
   viewToggleLabelActive: {
     color: "#fff",
   },
+  pillIndicator: {
+    position: "absolute",
+    top: 4,
+    bottom: 4,
+    left: 0,
+    borderRadius: 999,
+    backgroundColor: Colors.dark,
+  },
   iconActionButton: {
     width: 40,
     height: 40,
@@ -820,7 +880,7 @@ const styles = StyleSheet.create({
   mapContainer: {
     flex: 1,
   },
-  mapRefreshButtonContainer : {
+  mapRefreshButtonContainer: {
     position: "absolute",
     top: 12,
     right: 14,

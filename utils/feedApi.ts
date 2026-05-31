@@ -433,6 +433,67 @@ export async function unlikeFeedPost(
   return parseFeedPost(post);
 }
 
+export type FeedLiker = {
+  user_id: string;
+  liked_at: string;
+  user: FeedAuthor | null;
+};
+
+export type FeedLikersPage = {
+  likers: FeedLiker[];
+  next_cursor: string | null;
+};
+
+function parseFeedLiker(raw: unknown): FeedLiker | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const user_id = typeof o.user_id === "string" ? o.user_id.trim() : "";
+  if (!user_id) return null;
+  return {
+    user_id,
+    liked_at: typeof o.liked_at === "string" ? o.liked_at : new Date().toISOString(),
+    user: parseAuthor(o.user),
+  };
+}
+
+function parseFeedLikersPage(data: unknown): FeedLikersPage {
+  if (!data || typeof data !== "object") return { likers: [], next_cursor: null };
+  const o = data as Record<string, unknown>;
+  const likers: FeedLiker[] = [];
+  if (Array.isArray(o.likers)) {
+    for (const l of o.likers) {
+      const p = parseFeedLiker(l);
+      if (p) likers.push(p);
+    }
+  }
+  const cursor =
+    typeof o.next_cursor === "string" && o.next_cursor.trim()
+      ? o.next_cursor.trim()
+      : null;
+  return { likers, next_cursor: cursor };
+}
+
+export async function fetchFeedPostLikers(
+  token: string,
+  postId: string,
+  opts?: { limit?: number; cursor?: string | null },
+): Promise<FeedLikersPage> {
+  const limit = Math.min(Math.max(opts?.limit ?? 50, 1), 100);
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (opts?.cursor) params.set("cursor", opts.cursor);
+
+  const res = await fetch(
+    `${FEED_API_BASE}/posts/${encodeURIComponent(postId)}/likers?${params}`,
+    { headers: authHeaders(token) },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(apiError(json, `Could not load likers (${res.status})`));
+  }
+  return parseFeedLikersPage(json);
+}
+
+
 export type FeedComment = {
   id: string;
   content: string;

@@ -34,6 +34,7 @@ import {
 } from "../utils/feedApi";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import FeedPostOptionsSheet from "./FeedPostOptionsSheet";
+import FeedLikersModal from "./FeedLikersModal";
 
 type Props = {
   post: FeedPost;
@@ -112,18 +113,19 @@ export default function FeedInstaCard({
   const prevPostIdRef = useRef(post.id);
   const prevViewerLikedRef = useRef(post.viewer_has_liked);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [likersOpen, setLikersOpen] = useState(false);
 
   const media = post.media[0];
   const author = post.author;
   const displayName = feedAuthorDisplayName(author);
   const initialsUser = author
     ? {
-        id: author.id,
-        first_name: author.first_name ?? undefined,
-        last_name: author.last_name ?? undefined,
-        username: author.username ?? undefined,
-        name: displayName,
-      }
+      id: author.id,
+      first_name: author.first_name ?? undefined,
+      last_name: author.last_name ?? undefined,
+      username: author.username ?? undefined,
+      name: displayName,
+    }
     : { id: post.author_id, name: displayName };
   const avatarColor = getUserAvatarColor(initialsUser);
   const initials = getUserInitials(initialsUser);
@@ -457,10 +459,17 @@ export default function FeedInstaCard({
 
       <View style={styles.metaWrap}>
         {post.like_count > 0 ? (
-          <Text style={styles.likeCount}>
-            {formatCount(post.like_count)}{" "}
-            {post.like_count === 1 ? "like" : "likes"}
-          </Text>
+          <Pressable
+            onPress={() => setLikersOpen(true)}
+            hitSlop={6}
+            accessibilityRole="button"
+            accessibilityLabel={`View ${post.like_count} ${post.like_count === 1 ? 'like' : 'likes'}`}
+          >
+            <Text style={styles.likeCount}>
+              {formatCount(post.like_count)}{" "}
+              {post.like_count === 1 ? "like" : "likes"}
+            </Text>
+          </Pressable>
         ) : null}
 
         {post.caption ? (
@@ -494,6 +503,14 @@ export default function FeedInstaCard({
         }
         onDeleteConfirmed={confirmDeletePost}
         onReportConfirmed={confirmReportPost}
+      />
+      <FeedLikersModal
+        visible={likersOpen}
+        postId={likersOpen ? post.id : null}
+        likeCount={post.like_count}
+        token={token}
+        currentUserId={currentUserId}
+        onClose={() => setLikersOpen(false)}
       />
     </View>
   );
