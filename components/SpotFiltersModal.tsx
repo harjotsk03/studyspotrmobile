@@ -15,17 +15,13 @@ import {
   Modal,
   PanResponder,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Coffee,
-  Map,
   MapPin,
   Presentation,
   RotateCcw,
@@ -100,11 +96,15 @@ const RATING_OPTIONS = [
 
 const SCREEN_HEIGHT = Dimensions.get("window").height;
 
-/** Match the comments modal thresholds so the gesture feels the same
- * everywhere — drag down ~110px or flick >0.7 px/ms to dismiss. */
-const DISMISS_DRAG_DISTANCE = 110;
-const DISMISS_FLICK_VELOCITY = 0.7;
-const DISMISS_FLICK_MIN_DISTANCE = 12;
+/** Intentionally very forgiving thresholds so the filters sheet feels
+ * effortless to dismiss — any noticeable downward swipe closes it. The
+ * comments modal stays stricter because it sits over a list the user
+ * actively scrolls; this sheet doesn't, so we don't need that guardrail.
+ *   • Drag 40 px down                → close
+ *   • Flick downward at 0.2 px/ms+   → close (after only 5 px of travel) */
+const DISMISS_DRAG_DISTANCE = 40;
+const DISMISS_FLICK_VELOCITY = 0.2;
+const DISMISS_FLICK_MIN_DISTANCE = 5;
 
 type Props = {
   visible: boolean;
@@ -128,9 +128,6 @@ export default function SpotFiltersModal({
 
   const translateY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropOpacity = useRef(new Animated.Value(0)).current;
-  /** Live scroll offset of the filters list — gates the drag-to-dismiss
-   * gesture so vertical scrolling inside the sheet still works. */
-  const scrollYRef = useRef(0);
   /** Snapshot of `translateY` at the moment a drag begins. */
   const dragStartTranslateRef = useRef(0);
   /** Prevents re-entrant close calls when the user flick-dismisses in the
@@ -221,26 +218,38 @@ export default function SpotFiltersModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
-  const onScroll = useCallback(
-    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-      scrollYRef.current = e.nativeEvent.contentOffset.y;
-    },
-    [],
-  );
-
   const dragPanResponder = useMemo(
-    () =>
-      PanResponder.create({
-        // Only claim the gesture when the user is at the top of the
-        // inner scroll AND is dragging clearly downward — otherwise the
-        // list handles its own vertical scrolling.
-        onMoveShouldSetPanResponderCapture: (_evt, g) => {
-          if (closingRef.current) return false;
-          const downward = g.dy > 4;
-          const verticalDominant = Math.abs(g.dy) > Math.abs(g.dx) * 1.2;
-          const atTop = scrollYRef.current <= 0;
-          return downward && verticalDominant && atTop;
-        },
+    () => {
+      // Conditions for taking ownership of a touch: a tiny bit of
+      // downward travel that's not predominantly horizontal. This is
+      // intentionally sensitive — the user wants empty white space on
+      // the sheet to drag the sheet down just as easily as a button.
+      const shouldClaim = (
+        _evt: unknown,
+        g: { dy: number; dx: number },
+      ) => {
+        if (closingRef.current) return false;
+        const downward = g.dy > 1;
+        const mostlyVertical = Math.abs(g.dy) > Math.abs(g.dx) * 0.4;
+        return downward && mostlyVertical;
+      };
+
+      return PanResponder.create({
+        // Capture phase: fires when a child Pressable (chip / X / button)
+        // is the current responder — lets us steal the gesture from it
+        // mid-press once the user has clearly started swiping down.
+        onMoveShouldSetPanResponderCapture: shouldClaim,
+        // Bubble phase: fires when NO descendant has claimed the touch
+        // (e.g. the user pressed on plain white space in the sheet's
+        // body). Without this handler RN doesn't reliably invoke the
+        // capture variant for un-claimed touches, which is why the
+        // drag previously only worked starting on buttons / text.
+        onMoveShouldSetPanResponder: shouldClaim,
+        // Explicitly opt out of start-phase claiming so tap-to-toggle on
+        // chips, the X header button, and the footer CTAs still works
+        // — we only claim once the finger has actually moved.
+        onStartShouldSetPanResponder: () => false,
+        onStartShouldSetPanResponderCapture: () => false,
         onPanResponderGrant: () => {
           translateY.stopAnimation((v) => {
             dragStartTranslateRef.current = v;
@@ -269,7 +278,8 @@ export default function SpotFiltersModal({
           springBack();
         },
         onPanResponderTerminationRequest: () => false,
-      }),
+      });
+    },
     [translateY, backdropOpacity, dismiss, springBack],
   );
 
@@ -350,13 +360,13 @@ export default function SpotFiltersModal({
             </Pressable>
           </View>
 
-          <ScrollView
-            style={styles.scroll}
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
-            onScroll={onScroll}
-            scrollEventThrottle={16}
-            keyboardShouldPersistTaps="handled"
+          <View
+            style={styles.body}
+            // Prevent Android view flattening so plain white space inside
+            // the body is guaranteed to be present in the native view
+            // tree — this is critical for the drag-down gesture to fire
+            // when the user touches an empty area between chip groups.
+            collapsable={false}
           >
             <Section title="Distance">
               <View style={styles.chipsRow}>
@@ -367,17 +377,6 @@ export default function SpotFiltersModal({
                   disabled={!hasUserLocation}
                   onPress={() =>
                     onChange({ ...value, nearbyOnly: !value.nearbyOnly })
-                  }
-                />
-                <FilterChip
-                  label="On the map"
-                  Icon={Map}
-                  active={value.mapReadyOnly}
-                  onPress={() =>
-                    onChange({
-                      ...value,
-                      mapReadyOnly: !value.mapReadyOnly,
-                    })
                   }
                 />
               </View>
@@ -415,31 +414,19 @@ export default function SpotFiltersModal({
                 ))}
               </View>
             </Section>
-          </ScrollView>
+          </View>
 
           <View style={styles.footer}>
             <Button
               label="Reset"
               variant="outline"
               size="default"
-              disabled={activeCount === 0}
-              icon={
-                <RotateCcw
-                  size={18}
-                  color={activeCount === 0 ? "#B5B5B5" : Colors.dark}
-                  strokeWidth={2.2}
-                />
-              }
+              icon={<RotateCcw size={18} strokeWidth={2.2} />}
               onPress={onReset}
               haptic="light"
-              style={styles.footerSecondary}
             />
             <Button
-              label={
-                activeCount > 0
-                  ? `Show results (${activeCount})`
-                  : "Show results"
-              }
+              label={"Show results"}
               variant="accent"
               size="default"
               onPress={() => dismiss()}
@@ -582,10 +569,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#fff",
   },
-  scroll: {
-    flexGrow: 0,
-  },
-  scrollContent: {
+  body: {
     paddingTop: 4,
     paddingBottom: 4,
   },
