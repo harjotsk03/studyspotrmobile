@@ -75,6 +75,15 @@ function formatNotificationTitle(notification: NotificationItem) {
       : "You've been accepted into a community";
   }
 
+  if (notification.type === "event_invite") {
+    if (actorName && communityName) {
+      return `${actorName} invited you to an event in ${communityName}`;
+    }
+    if (actorName) return `${actorName} invited you to an event`;
+    if (communityName) return `Event invite in ${communityName}`;
+    return "You've been invited to an event";
+  }
+
   if (actorName && communityName) {
     return `${actorName} in ${communityName}`;
   }
@@ -106,12 +115,17 @@ function formatNotificationBody(notification: NotificationItem) {
     return "Tap to open the community.";
   }
 
+  if (notification.type === "event_invite") {
+    return "Tap to view the event and RSVP.";
+  }
+
   return "You have a new update.";
 }
 
 function formatNotificationTypeLabel(type?: string | null) {
   if (type === "community_join_request") return "Community request";
   if (type === "accepted_to_community") return "Community";
+  if (type === "event_invite") return "Event invite";
   return "";
 }
 
@@ -233,6 +247,42 @@ export default function InboxScreen() {
     rootNavigation.navigate("PublicProfile", { userId });
   };
 
+  const openEventInvite = (notification: NotificationItem) => {
+    const metadata = (notification.metadata ?? {}) as Record<string, unknown>;
+    const rawEventId = metadata.event_id;
+    const eventId =
+      typeof rawEventId === "string" && rawEventId.trim().length > 0
+        ? rawEventId.trim()
+        : null;
+
+    // Metadata may also carry the community id, but the canonical source
+    // is the notification row's own community_id / hydrated community
+    // object. Prefer those, then fall back to metadata.
+    const rawMetaCommunityId = metadata.community_id;
+    const communityId =
+      notification.community?.id ??
+      notification.community_id ??
+      (typeof rawMetaCommunityId === "string" && rawMetaCommunityId.trim()
+        ? rawMetaCommunityId.trim()
+        : null);
+
+    if (!eventId || !communityId) return;
+
+    // The `CommunityEvents` screen already knows how to auto-open the
+    // `EventDetailDrawer` for a given event id (`openEventId`), and
+    // refreshes the user's role + community membership on focus, so we
+    // don't need to plumb those through here. Default to the permissive
+    // values so the screen doesn't kick a non-member invitee out before
+    // its own membership check resolves.
+    rootNavigation.navigate("CommunityEvents", {
+      communityId,
+      communityName: notification.community?.name ?? "",
+      isAdmin: false,
+      communityIsPublic: true,
+      openEventId: eventId,
+    });
+  };
+
   const handleNotificationPress = (notification: NotificationItem) => {
     if (!notification.read_at) {
       void markNotificationRead(notification.id).catch((err) => {
@@ -251,6 +301,8 @@ export default function InboxScreen() {
       openCommunityDetail(notification);
     } else if (notification.type === "friend_request_accepted") {
       openActorProfile(notification);
+    } else if (notification.type === "event_invite") {
+      openEventInvite(notification);
     }
   };
   const friendRequests = notifications.filter(

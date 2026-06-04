@@ -3,15 +3,32 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  LayoutAnimation,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
+  UIManager,
   View,
+  type NativeSyntheticEvent,
+  type StyleProp,
+  type TextLayoutEventData,
+  type TextStyle,
 } from "react-native";
+
+// LayoutAnimation needs an opt-in on Android. Doing this once at module
+// load is enough for the whole app; without it the description
+// expand/collapse would still work on iOS but snap on Android.
+if (
+  Platform.OS === "android" &&
+  UIManager.setLayoutAnimationEnabledExperimental
+) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import {
@@ -130,6 +147,81 @@ export type CommunityStackParamList = {
 type Props = NativeStackScreenProps<CommunityStackParamList, "CommunityDetail">;
 
 const ICON_SIZE = 72;
+
+const DESCRIPTION_COLLAPSED_LINES = 2;
+
+/**
+ * Renders a body of text clamped to `DESCRIPTION_COLLAPSED_LINES` lines.
+ * A hidden mirror is rendered alongside it so we can count the real
+ * number of lines the text would occupy without truncation; only then
+ * is the "See more…" / "Hide" toggle shown. Expanding/collapsing is
+ * animated via `LayoutAnimation` so the surrounding layout reflows
+ * smoothly.
+ */
+function ExpandableDescription({
+  text,
+  textStyle,
+}: {
+  text: string;
+  textStyle: StyleProp<TextStyle>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [needsTruncation, setNeedsTruncation] = useState(false);
+  const measuredRef = useRef(false);
+
+  const handleMeasure = useCallback(
+    (e: NativeSyntheticEvent<TextLayoutEventData>) => {
+      if (measuredRef.current) return;
+      measuredRef.current = true;
+      if (e.nativeEvent.lines.length > DESCRIPTION_COLLAPSED_LINES) {
+        setNeedsTruncation(true);
+      }
+    },
+    [],
+  );
+
+  const toggle = useCallback(() => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setExpanded((prev) => !prev);
+  }, []);
+
+  if (!text) return null;
+
+  return (
+    <View>
+      <Text
+        style={textStyle}
+        numberOfLines={expanded ? undefined : DESCRIPTION_COLLAPSED_LINES}
+      >
+        {text}
+      </Text>
+      <Text
+        style={[textStyle, styles.descriptionMeasurer]}
+        onTextLayout={handleMeasure}
+        pointerEvents="none"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+      >
+        {text}
+      </Text>
+      {needsTruncation && (
+        <Pressable
+          onPress={toggle}
+          hitSlop={8}
+          style={styles.descriptionToggle}
+          accessibilityRole="button"
+          accessibilityLabel={
+            expanded ? "Hide description" : "Show full description"
+          }
+        >
+          <Text style={styles.descriptionToggleText}>
+            {expanded ? "Hide" : "See more…"}
+          </Text>
+        </Pressable>
+      )}
+    </View>
+  );
+}
 
 function CommunityDetailSkeleton() {
   return (
@@ -661,7 +753,10 @@ export default function CommunityDetailScreen({ route }: Props) {
           </View>
 
           <Text style={styles.name}>{community.name}</Text>
-          <Text style={styles.description}>{community.description}</Text>
+          <ExpandableDescription
+            text={community.description ?? ""}
+            textStyle={styles.description}
+          />
 
           <View style={styles.metaRow}>
             {!!community.category && (
@@ -780,7 +875,10 @@ export default function CommunityDetailScreen({ route }: Props) {
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>About</Text>
-          <Text style={styles.sectionBody}>{community.description}</Text>
+          <ExpandableDescription
+            text={community.description ?? ""}
+            textStyle={styles.sectionBody}
+          />
         </View>
 
         <View style={[styles.section, { marginBottom: 40 }]}>
@@ -1049,6 +1147,23 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: Colors.dark,
     lineHeight: 22,
+  },
+  descriptionToggle: {
+    marginTop: 4,
+    alignSelf: "flex-start",
+    paddingVertical: 2,
+  },
+  descriptionToggleText: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 14,
+    color: Colors.accent,
+  },
+  descriptionMeasurer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    opacity: 0,
   },
   moreMembers: {
     fontFamily: Fonts.instrument.medium,

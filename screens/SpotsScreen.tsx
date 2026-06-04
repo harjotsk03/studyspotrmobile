@@ -8,7 +8,6 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
-  Easing,
   FlatList,
   Platform,
   Pressable,
@@ -19,8 +18,9 @@ import {
   TextInput,
   useWindowDimensions,
   View,
+  type LayoutChangeEvent,
 } from "react-native";
-import MapView, { Marker } from "react-native-maps";
+import MapView, { Marker, type Region } from "react-native-maps";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import SpotCard from "../components/SpotCard";
 import SpotFiltersModal, {
@@ -52,7 +52,18 @@ import { getSpotTitle } from "../utils/getSpotTitle";
 import { toNumber } from "../utils/toNumber";
 import type { SpotsStackParamList } from "../types/navigation";
 import Button from "../components/Button";
-import { Filter, LocateIcon, Plus, RefreshCcw } from "lucide-react-native";
+import {
+  Coffee,
+  Filter,
+  LocateIcon,
+  MapPin,
+  Presentation,
+  Star,
+  Users,
+  Wifi,
+  X,
+  Zap,
+} from "lucide-react-native";
 
 const CAROUSEL_GAP = 12;
 const DEFAULT_USER_REGION_DELTA = 0.012;
@@ -118,6 +129,13 @@ export default function SpotsScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const { width } = useWindowDimensions();
   const mapRef = useRef<MapView | null>(null);
+  // Ref to the list-view FlatList so we can scroll it back to the top when
+  // filters change. The ref object itself is stable across renders so it
+  // safely lives inside the `listLayer` useMemo below.
+  const listRef = useRef<FlatList<StudySpot> | null>(null);
+  // Skip the very first render so the camera-fit / scroll-to-top effect
+  // only fires on subsequent filter mutations.
+  const didMountRef = useRef(false);
   const previousSearchValue = useRef("");
   const navigation =
     useNavigation<NativeStackNavigationProp<SpotsStackParamList>>();
@@ -141,21 +159,24 @@ export default function SpotsScreen() {
     useState<SpotFiltersValue>(DEFAULT_SPOT_FILTERS);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [mapCarouselHeight, setMapCarouselHeight] = useState(0);
   const [userLocation, setUserLocation] = useState<{
     latitude: number;
     longitude: number;
   } | null>(null);
+  // Tracks whether the visible map region is currently centered on the
+  // user. Drives the recenter button's variant — it shifts from
+  // `secondary` (subtle, off-white) to `default` (Colors.primary blue)
+  // the moment the user pans/taps away, so they always know it's
+  // actionable. Initial value is true because we either start at the
+  // user's location or at the fallback region until permission resolves.
+  const [isMapCenteredOnUser, setIsMapCenteredOnUser] = useState(true);
+  const silentRefreshInFlightRef = useRef(false);
 
-  const refreshSpinAnim = useRef(new Animated.Value(0)).current;
-  const refreshSpinLoopRef = useRef<Animated.CompositeAnimation | null>(null);
-
-  // Sliding pill animation for the Map / List toggle
-  const pillTranslateX = useRef(new Animated.Value(0)).current;
-  const pillWidthAnim = useRef(new Animated.Value(0)).current;
-  const toggleLayouts = useRef<{
-    map: { x: number; width: number } | null;
-    list: { x: number; width: number } | null;
-  }>({ map: null, list: null });
+  // Same slider model as CommunityScreen: 0 = map, 1 = list.
+  // JS driver because text color interpolation is JS-only.
+  const tabAnim = useRef(new Animated.Value(0)).current;
+  const [tabSwitchInnerWidth, setTabSwitchInnerWidth] = useState(0);
 
   const handleManualRefresh = useCallback(async () => {
     if (refreshing) return;
@@ -167,57 +188,37 @@ export default function SpotsScreen() {
     }
   }, [refreshing, refetchSpots]);
 
-  // Spin the map's refresh icon while a refetch is in progress.
+  // Keep spots fresh in the background without requiring user action.
+  // This silently re-fetches every 5s and updates whichever view is open.
   useEffect(() => {
-    const isBusy = refreshing || spotsLoading;
-    if (isBusy) {
-      refreshSpinAnim.setValue(0);
-      const loop = Animated.loop(
-        Animated.timing(refreshSpinAnim, {
-          toValue: 1,
-          duration: 900,
-          easing: Easing.linear,
-          useNativeDriver: true,
-        }),
-      );
-      refreshSpinLoopRef.current = loop;
-      loop.start();
-      return () => {
-        loop.stop();
-        refreshSpinLoopRef.current = null;
-      };
-    }
-    refreshSpinAnim.stopAnimation();
-    refreshSpinAnim.setValue(0);
-  }, [refreshing, spotsLoading, refreshSpinAnim]);
+    const intervalId = setInterval(() => {
+      if (silentRefreshInFlightRef.current || refreshing) return;
+      silentRefreshInFlightRef.current = true;
+      void refetchSpots().finally(() => {
+        silentRefreshInFlightRef.current = false;
+      });
+    }, 5000);
 
-  const refreshSpin = refreshSpinAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0deg", "360deg"],
-  });
+    return () => clearInterval(intervalId);
+  }, [refetchSpots, refreshing]);
 
-  // Animate the toggle pill whenever viewMode changes.
+  // Animate the toggle pill whenever the effective mode changes.
+  // We use effective mode (not raw `viewMode`) so when search forces list
+  // mode, the control visuals stay truthful.
   useEffect(() => {
-    const target = toggleLayouts.current[viewMode];
-    if (!target) return;
+    const forcedList = searchQuery.trim().length > 0;
+    Animated.spring(tabAnim, {
+      toValue: forcedList || viewMode === "list" ? 1 : 0,
+      useNativeDriver: false,
+      bounciness: 4,
+      speed: 16,
+    }).start();
+  }, [viewMode, searchQuery, tabAnim]);
 
-    Animated.parallel([
-      Animated.spring(pillTranslateX, {
-        toValue: target.x,
-        useNativeDriver: false,
-        damping: 20,
-        stiffness: 250,
-        mass: 0.8,
-      }),
-      Animated.spring(pillWidthAnim, {
-        toValue: target.width,
-        useNativeDriver: false,
-        damping: 20,
-        stiffness: 250,
-        mass: 0.8,
-      }),
-    ]).start();
-  }, [viewMode, pillTranslateX, pillWidthAnim]);
+  const handleToggleLayout = (e: LayoutChangeEvent) => {
+    // mirror CommunityScreen: total width minus horizontal padding (4 on each side)
+    setTabSwitchInnerWidth(e.nativeEvent.layout.width - 8);
+  };
 
   const trimmedQuery = searchQuery.trim().toLowerCase();
   const hasActiveSearch = trimmedQuery.length > 0;
@@ -326,7 +327,11 @@ export default function SpotsScreen() {
     [filteredSpots],
   );
 
-  const centerOnUserLocation = () => {
+  // useCallback so the captured reference is stable across renders.
+  // The memoized `mapLayer` below has this in its deps array, so any time
+  // `userLocation` actually changes we want a fresh closure — but on a
+  // map<->list toggle nothing in the deps changes and the layer is reused.
+  const centerOnUserLocation = useCallback(() => {
     if (!userLocation || !mapRef.current) {
       return;
     }
@@ -338,7 +343,33 @@ export default function SpotsScreen() {
       latitudeDelta: DEFAULT_USER_REGION_DELTA,
       longitudeDelta: DEFAULT_USER_REGION_DELTA,
     });
-  };
+  }, [userLocation]);
+
+  // MapView calls this every time the visible region settles (after a
+  // pan, a pinch, or a programmatic animateToRegion / fitToCoordinates).
+  // We compare the new center to the user's location and flip
+  // `isMapCenteredOnUser` accordingly so the recenter button can switch
+  // between secondary (already centered) and primary (off-center → tap
+  // to recenter). `userLocation` changes once (on permission grant) so
+  // including it in deps doesn't meaningfully churn the memoized
+  // `mapLayer` below.
+  const handleRegionChangeComplete = useCallback(
+    (region: Region) => {
+      if (!userLocation) {
+        setIsMapCenteredOnUser(false);
+        return;
+      }
+      const distance = calculateDistanceKm(userLocation, {
+        latitude: region.latitude,
+        longitude: region.longitude,
+      });
+      // ~200m tolerance — close enough that the visible map still shows
+      // the user. Anything beyond that and the recenter button announces
+      // itself in primary blue.
+      setIsMapCenteredOnUser(distance < 0.2);
+    },
+    [userLocation],
+  );
 
   useEffect(() => {
     if (
@@ -360,7 +391,7 @@ export default function SpotsScreen() {
 
   const cardWidth = Math.min(width * 0.78, 320);
 
-  const focusSpotOnMap = (spot: StudySpot) => {
+  const focusSpotOnMap = useCallback((spot: StudySpot) => {
     const coords = getSpotCoordinates(spot);
     setActiveSpotId(spot.id);
 
@@ -373,16 +404,19 @@ export default function SpotsScreen() {
       latitudeDelta: 0.015,
       longitudeDelta: 0.015,
     });
-  };
+  }, []);
 
-  const requestViewOnMap = (spot: StudySpot) => {
-    if (searchQuery.length > 0) {
-      setSearchQuery("");
-    }
-    setActiveSpotId(spot.id);
-    setPendingFocusSpotId(spot.id);
-    setViewMode("map");
-  };
+  const requestViewOnMap = useCallback(
+    (spot: StudySpot) => {
+      if (searchQuery.length > 0) {
+        setSearchQuery("");
+      }
+      setActiveSpotId(spot.id);
+      setPendingFocusSpotId(spot.id);
+      setViewMode("map");
+    },
+    [searchQuery.length, setViewMode],
+  );
 
   useEffect(() => {
     if (
@@ -407,32 +441,354 @@ export default function SpotsScreen() {
     return () => clearTimeout(timeoutId);
   }, [pendingFocusSpotId, effectiveViewMode, filteredSpots]);
 
-  const renderSpotCard = (spot: StudySpot, compact = false) => {
-    const coords = getSpotCoordinates(spot);
-    const distanceLabel =
-      coords && userLocation
-        ? formatDistance(calculateDistanceKm(userLocation, coords))
-        : null;
-    const metaLabel =
-      distanceLabel ?? (coords ? "Tap to focus on map" : "No coordinates yet");
+  // ── Live mirrors for the filter-change effect ─────────────────────────
+  // We want the effect below to fire ONLY when `filters` changes, not on
+  // every silent 5s refetch that mutates `spots` (and therefore
+  // `mapSpots`/`filteredSpots`). To do that we mirror the values the
+  // effect needs into refs that update on every render, and depend only
+  // on `filters` in the dep array.
+  const effectiveViewModeRef = useRef(effectiveViewMode);
+  effectiveViewModeRef.current = effectiveViewMode;
+  const mapSpotsRef = useRef(mapSpots);
+  mapSpotsRef.current = mapSpots;
+  const userLocationRef = useRef(userLocation);
+  userLocationRef.current = userLocation;
+  const mapCarouselHeightRef = useRef(mapCarouselHeight);
+  mapCarouselHeightRef.current = mapCarouselHeight;
 
-    return (
-      <SpotCard
-        spot={spot}
-        metaLabel={metaLabel}
-        hasCoordinates={Boolean(coords)}
-        compact={compact}
-        active={activeSpotId === spot.id}
-        width={compact ? cardWidth : undefined}
-        showViewOnMap={effectiveViewMode === "list" && Boolean(coords)}
-        onPress={() => {
-          setActiveSpotId(spot.id);
-          navigation.navigate("SpotDetail", { spot });
-        }}
-        onViewOnMap={() => requestViewOnMap(spot)}
-      />
-    );
+  // React to filter changes:
+  //   • List view → smoothly scroll back to the top so the user lands on
+  //     the most relevant (closest / highest-rated) match after refining.
+  //   • Map view  → re-fit the camera around every filtered spot that
+  //     sits within 50km of the user, so the new result set is fully
+  //     visible without manual panning. User location is included in the
+  //     fit so they can always orient themselves.
+  useEffect(() => {
+    // Skip the initial mount — only fire on real filter mutations.
+    if (!didMountRef.current) {
+      didMountRef.current = true;
+      return;
+    }
+
+    if (effectiveViewModeRef.current === "list") {
+      listRef.current?.scrollToOffset({ offset: 0, animated: true });
+      return;
+    }
+
+    if (Platform.OS === "web") return;
+    const ref = mapRef.current;
+    if (!ref) return;
+
+    const RADIUS_KM = 50;
+    const currentMapSpots = mapSpotsRef.current;
+    const currentUserLocation = userLocationRef.current;
+
+    const candidateCoords = currentMapSpots
+      .map((spot) => {
+        const coords = getSpotCoordinates(spot);
+        if (!coords) return null;
+        if (
+          currentUserLocation &&
+          calculateDistanceKm(currentUserLocation, coords) > RADIUS_KM
+        ) {
+          return null;
+        }
+        return coords;
+      })
+      .filter(
+        (c): c is { latitude: number; longitude: number } => c !== null,
+      );
+
+    if (candidateCoords.length === 0) return;
+
+    const coordsForFit = currentUserLocation
+      ? [currentUserLocation, ...candidateCoords]
+      : candidateCoords;
+
+    if (coordsForFit.length === 1) {
+      ref.animateToRegion({
+        ...coordsForFit[0],
+        latitudeDelta: DEFAULT_USER_REGION_DELTA * 2,
+        longitudeDelta: DEFAULT_USER_REGION_DELTA * 2,
+      });
+      return;
+    }
+
+    // Leave enough room at the bottom for the spot carousel so no card
+    // ends up obscuring a marker we just zoomed to.
+    ref.fitToCoordinates(coordsForFit, {
+      edgePadding: {
+        top: 80,
+        right: 40,
+        bottom: mapCarouselHeightRef.current + 40,
+        left: 40,
+      },
+      animated: true,
+    });
+  }, [filters]);
+
+  // `showViewOnMap` is now keyed off `compact` instead of `effectiveViewMode`.
+  // The carousel cards always pass `compact=true`, the list cards never do,
+  // so the behavior is identical to the previous check — but the renderer
+  // no longer depends on which mode the screen is in, which means the
+  // memoized layers below don't get invalidated on toggle.
+  const renderSpotCard = useCallback(
+    (spot: StudySpot, compact = false) => {
+      const coords = getSpotCoordinates(spot);
+      const distanceLabel =
+        coords && userLocation
+          ? formatDistance(calculateDistanceKm(userLocation, coords))
+          : null;
+      const metaLabel =
+        distanceLabel ??
+        (coords ? "Tap to focus on map" : "No coordinates yet");
+
+      return (
+        <SpotCard
+          spot={spot}
+          metaLabel={metaLabel}
+          hasCoordinates={Boolean(coords)}
+          compact={compact}
+          active={activeSpotId === spot.id}
+          width={compact ? cardWidth : undefined}
+          showViewOnMap={!compact && Boolean(coords)}
+          onPress={() => {
+            setActiveSpotId(spot.id);
+            navigation.navigate("SpotDetail", { spot });
+          }}
+          onViewOnMap={() => requestViewOnMap(spot)}
+        />
+      );
+    },
+    [activeSpotId, cardWidth, navigation, requestViewOnMap, userLocation],
+  );
+
+  // ── Active-filter chip row ────────────────────────────────────────────
+  // Render a one-line, horizontally-scrollable summary of every filter the
+  // user currently has on. Each chip taps to remove just that one filter
+  // (the user can still hit "Reset" inside the modal to clear all).
+  //
+  // The descriptors are computed via `useMemo` keyed on `filters` so the
+  // chip array (and therefore the chip row's children references) is
+  // stable across unrelated re-renders.
+  const clearFilterByKey = useCallback(
+    (key: string) => {
+      setFilters((current) => {
+        if (key === "nearbyOnly") {
+          return { ...current, nearbyOnly: false };
+        }
+        if (key === "mapReadyOnly") {
+          return { ...current, mapReadyOnly: false };
+        }
+        if (key === "minRating") {
+          return { ...current, minRating: 0 };
+        }
+        if (key.startsWith("amenity:")) {
+          const amenityKey = key.slice(
+            "amenity:".length,
+          ) as keyof SpotFiltersValue["amenities"];
+          return {
+            ...current,
+            amenities: { ...current.amenities, [amenityKey]: false },
+          };
+        }
+        return current;
+      });
+    },
+    [],
+  );
+
+  type ActiveChip = {
+    key: string;
+    label: string;
+    Icon: typeof MapPin;
   };
+
+  const activeFilterChips = useMemo<ActiveChip[]>(() => {
+    const chips: ActiveChip[] = [];
+    if (filters.nearbyOnly) {
+      chips.push({ key: "nearbyOnly", label: "Within 10 km", Icon: MapPin });
+    }
+    if (filters.mapReadyOnly) {
+      chips.push({ key: "mapReadyOnly", label: "On map", Icon: MapPin });
+    }
+    if (filters.minRating > 0) {
+      chips.push({
+        key: "minRating",
+        label: `${filters.minRating}+ stars`,
+        Icon: Star,
+      });
+    }
+    if (filters.amenities.wifi) {
+      chips.push({ key: "amenity:wifi", label: "Wi-Fi", Icon: Wifi });
+    }
+    if (filters.amenities.outlets) {
+      chips.push({ key: "amenity:outlets", label: "Outlets", Icon: Zap });
+    }
+    if (filters.amenities.foodDrink) {
+      chips.push({
+        key: "amenity:foodDrink",
+        label: "Food & Drinks",
+        Icon: Coffee,
+      });
+    }
+    if (filters.amenities.whiteboards) {
+      chips.push({
+        key: "amenity:whiteboards",
+        label: "Whiteboards",
+        Icon: Presentation,
+      });
+    }
+    if (filters.amenities.groupWork) {
+      chips.push({
+        key: "amenity:groupWork",
+        label: "Group Friendly",
+        Icon: Users,
+      });
+    }
+    return chips;
+  }, [filters]);
+
+  // The map subtree (MapView + markers + recenter button + bottom carousel)
+  // is wrapped in useMemo with deps that intentionally DO NOT include
+  // `viewMode`/`effectiveViewMode`. When the user flips the segmented
+  // control React sees the SAME element reference here and skips the entire
+  // reconciliation of MapView, every Marker, and the carousel FlatList.
+  // The hidden layer is taken out of layout via `display: 'none'` below,
+  // so it costs nothing visually either.
+  const mapLayer = useMemo(
+    () => (
+      <View style={styles.mapContainer}>
+        {Platform.OS === "web" ? (
+          <View style={styles.centeredState}>
+            <Text style={styles.stateText}>
+              Map view is only available on iOS and Android.
+            </Text>
+          </View>
+        ) : (
+          <MapView
+            ref={mapRef}
+            style={StyleSheet.absoluteFill}
+            customMapStyle={MINIMAL_MAP_STYLE}
+            initialRegion={{
+              latitude: userLocation?.latitude ?? 37.78825,
+              longitude: userLocation?.longitude ?? -122.4324,
+              latitudeDelta: DEFAULT_USER_REGION_DELTA,
+              longitudeDelta: DEFAULT_USER_REGION_DELTA,
+            }}
+            showsUserLocation
+            showsMyLocationButton={false}
+            showsPointsOfInterest={false}
+            showsCompass={false}
+            showsBuildings={false}
+            showsTraffic={false}
+            showsIndoors={false}
+            toolbarEnabled={false}
+            onRegionChangeComplete={handleRegionChangeComplete}
+          >
+            {mapSpots.map((spot) => {
+              const coords = getSpotCoordinates(spot);
+              if (!coords) {
+                return null;
+              }
+
+              return (
+                <Marker
+                  key={spot.id}
+                  coordinate={coords}
+                  anchor={{ x: 0.5, y: 1 }}
+                  title={getSpotTitle(spot)}
+                  description={getSpotDescription(spot)}
+                  onPress={() => {
+                    setActiveSpotId(spot.id);
+                    navigation.navigate("SpotDetail", { spot });
+                  }}
+                >
+                  <SpotMapPin
+                    rating={getSpotScore(spot)}
+                    selected={activeSpotId === spot.id}
+                  />
+                </Marker>
+              );
+            })}
+          </MapView>
+        )}
+
+        <View
+          style={[styles.carouselWrapper, { bottom: 6 }]}
+          pointerEvents="box-none"
+          onLayout={(e) => setMapCarouselHeight(e.nativeEvent.layout.height)}
+        >
+          <FlatList
+            data={mapSpots}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.carouselContent}
+            ItemSeparatorComponent={() => (
+              <View style={{ width: CAROUSEL_GAP }} />
+            )}
+            renderItem={({ item }) => renderSpotCard(item, true)}
+            ListEmptyComponent={
+              <View style={[styles.emptyMapState, { width: width - 40 }]}>
+                <Text style={styles.stateText}>
+                  {filteredSpots.length
+                    ? "These spots don't have map coordinates yet."
+                    : "No spots match your search right now."}
+                </Text>
+              </View>
+            }
+          />
+        </View>
+      </View>
+    ),
+    [
+      activeSpotId,
+      filteredSpots.length,
+      handleRegionChangeComplete,
+      mapCarouselHeight,
+      mapSpots,
+      navigation,
+      renderSpotCard,
+      userLocation,
+      width,
+    ],
+  );
+
+  // Same idea for the list. Toggling map<->list does not invalidate this
+  // memo, so the FlatList and every visible SpotCard inside it are reused
+  // by reference and React performs zero reconciliation work on toggle.
+  const listLayer = useMemo(
+    () => (
+      <FlatList
+        ref={listRef}
+        data={filteredSpots}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={[
+          styles.listContent,
+          { paddingBottom: tabBarHeight + 24 },
+        ]}
+        ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+        renderItem={({ item }) => renderSpotCard(item)}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void handleManualRefresh()}
+            tintColor={Colors.primary}
+            colors={[Colors.primary]}
+          />
+        }
+        ListEmptyComponent={
+          <View style={styles.emptyListState}>
+            <Text style={styles.stateText}>
+              No spots match your search right now.
+            </Text>
+          </View>
+        }
+      />
+    ),
+    [filteredSpots, handleManualRefresh, refreshing, renderSpotCard, tabBarHeight],
+  );
 
   return (
     <View style={styles.screen}>
@@ -466,72 +822,63 @@ export default function SpotsScreen() {
         </View>
 
         <View style={styles.toolbarRow}>
-          <View style={styles.viewToggle}>
-            {/* Animated sliding pill */}
-            <Animated.View
-              style={[
-                styles.pillIndicator,
-                {
-                  transform: [{ translateX: pillTranslateX }],
-                  width: pillWidthAnim,
-                },
-              ]}
-            />
+          {(() => {
+            const tabWidth = Math.max(0, (tabSwitchInnerWidth - 4) / 2);
+            const pillTranslateX = tabAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0, tabWidth + 4],
+            });
+            const mapTextColor = tabAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: ["#ffffff", Colors.dark],
+            });
+            const listTextColor = tabAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [Colors.dark, "#ffffff"],
+            });
 
-            <Pressable
-              onPress={() => setViewMode("map")}
-              onLayout={(e) => {
-                const { x, width: w } = e.nativeEvent.layout;
-                toggleLayouts.current.map = { x, width: w };
-                if (viewMode === "map") {
-                  pillTranslateX.setValue(x);
-                  pillWidthAnim.setValue(w);
-                }
-              }}
-              style={styles.viewToggleButton}
-            >
-              <Ionicons
-                name="map"
-                size={16}
-                color={viewMode === "map" ? "#fff" : Colors.dark}
-              />
-              <Text
-                style={[
-                  styles.viewToggleLabel,
-                  viewMode === "map" && styles.viewToggleLabelActive,
-                ]}
-              >
-                Map
-              </Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => setViewMode("list")}
-              onLayout={(e) => {
-                const { x, width: w } = e.nativeEvent.layout;
-                toggleLayouts.current.list = { x, width: w };
-                if (viewMode === "list") {
-                  pillTranslateX.setValue(x);
-                  pillWidthAnim.setValue(w);
-                }
-              }}
-              style={styles.viewToggleButton}
-            >
-              <Ionicons
-                name="list"
-                size={16}
-                color={viewMode === "list" ? "#fff" : Colors.dark}
-              />
-              <Text
-                style={[
-                  styles.viewToggleLabel,
-                  viewMode === "list" && styles.viewToggleLabelActive,
-                ]}
-              >
-                List
-              </Text>
-            </Pressable>
-          </View>
+            // Mirror of CommunityScreen's Communities/Events toggle: a
+            // single gray wrap with a blue primary pill that slides
+            // between two text-only `Pressable`s. Text color crossfades
+            // via interpolation on the same `tabAnim` value so the
+            // whole control is driven by exactly one animated node.
+            return (
+              <View style={styles.tabSwitchWrap} onLayout={handleToggleLayout}>
+                {tabWidth > 0 ? (
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[
+                      styles.tabSwitchPill,
+                      {
+                        width: tabWidth,
+                        transform: [{ translateX: pillTranslateX }],
+                      },
+                    ]}
+                  />
+                ) : null}
+                <Pressable
+                  style={styles.tabSwitchBtn}
+                  onPress={() => setViewMode("map")}
+                >
+                  <Animated.Text
+                    style={[styles.tabSwitchTx, { color: mapTextColor }]}
+                  >
+                    Map
+                  </Animated.Text>
+                </Pressable>
+                <Pressable
+                  style={styles.tabSwitchBtn}
+                  onPress={() => setViewMode("list")}
+                >
+                  <Animated.Text
+                    style={[styles.tabSwitchTx, { color: listTextColor }]}
+                  >
+                    List
+                  </Animated.Text>
+                </Pressable>
+              </View>
+            );
+          })()}
 
           <View style={styles.toolbarTrailing}>
             <Button
@@ -539,13 +886,6 @@ export default function SpotsScreen() {
               icon={<Filter size={16} color={Colors.dark} />}
               variant="secondary"
               onPress={() => setFiltersOpen(true)}
-            />
-            <Button
-              size="sm"
-              icon={<LocateIcon size={16} color={Colors.dark} />}
-              variant="secondary"
-              onPress={centerOnUserLocation}
-              disabled={!userLocation}
             />
             <Button
               size="sm"
@@ -565,6 +905,28 @@ export default function SpotsScreen() {
           </View>
         </View>
       </View>
+
+      {activeFilterChips.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.activeFiltersRow}
+          style={styles.activeFiltersWrap}
+        >
+          {activeFilterChips.map(({ key, label, Icon }) => (
+            <Pressable
+              key={key}
+              onPress={() => clearFilterByKey(key)}
+              style={styles.activeFilterChip}
+              hitSlop={6}
+            >
+              <Icon size={12} color="#ffffff" strokeWidth={2.4} />
+              <Text style={styles.activeFilterChipLabel}>{label}</Text>
+              <X size={12} color="#ffffff" strokeWidth={2.6} />
+            </Pressable>
+          ))}
+        </ScrollView>
+      ) : null}
 
       <SpotFiltersModal
         visible={filtersOpen}
@@ -597,124 +959,55 @@ export default function SpotsScreen() {
             <Text style={styles.retryButtonLabel}>Retry</Text>
           </Pressable>
         </View>
-      ) : effectiveViewMode === "map" ? (
-        <View style={styles.mapContainer}>
-          {Platform.OS === "web" ? (
-            <View style={styles.centeredState}>
-              <Text style={styles.stateText}>
-                Map view is only available on iOS and Android.
-              </Text>
-            </View>
-          ) : (
-            <MapView
-              ref={mapRef}
-              style={StyleSheet.absoluteFill}
-              customMapStyle={MINIMAL_MAP_STYLE}
-              initialRegion={{
-                latitude: userLocation?.latitude ?? 37.78825,
-                longitude: userLocation?.longitude ?? -122.4324,
-                latitudeDelta: DEFAULT_USER_REGION_DELTA,
-                longitudeDelta: DEFAULT_USER_REGION_DELTA,
-              }}
-              showsUserLocation
-              showsMyLocationButton={false}
-              showsPointsOfInterest={false}
-              showsCompass={false}
-              showsBuildings={false}
-              showsTraffic={false}
-              showsIndoors={false}
-              toolbarEnabled={false}
+      ) : (
+        // Both layers stay mounted (so MapView is never re-initialized).
+        // We hide the inactive one with `display: 'none'` which removes it
+        // from RN's layout/paint pipeline — no fade, no opacity animation,
+        // no JS-driven per-frame work on toggle. Because each layer's JSX
+        // comes from `useMemo` above with deps that exclude `viewMode`,
+        // React reuses the exact same element references on toggle and
+        // skips reconciliation of every Marker / SpotCard underneath.
+        <View style={styles.contentArea}>
+          <View
+            style={[
+              StyleSheet.absoluteFill,
+              effectiveViewMode === "map" ? null : styles.hiddenLayer,
+            ]}
+          >
+            {mapLayer}
+            {/* Recenter button lives OUTSIDE the memoized mapLayer so its
+                variant can flip on region changes without invalidating
+                MapView/markers. The wrapper's absolute positioning keeps
+                it pinned just above the spot carousel. */}
+            <View
+              style={[
+                styles.mapRecenterButtonContainer,
+                { bottom: mapCarouselHeight + 12 },
+              ]}
             >
-              {mapSpots.map((spot) => {
-                const coords = getSpotCoordinates(spot);
-                if (!coords) {
-                  return null;
+              <Button
+                size="sm"
+                icon={
+                  <LocateIcon
+                    size={16}
+                    color={isMapCenteredOnUser ? Colors.dark : "#ffffff"}
+                  />
                 }
-
-                return (
-                  <Marker
-                    key={spot.id}
-                    coordinate={coords}
-                    anchor={{ x: 0.5, y: 1 }}
-                    title={getSpotTitle(spot)}
-                    description={getSpotDescription(spot)}
-                    onPress={() => {
-                      setActiveSpotId(spot.id);
-                      navigation.navigate("SpotDetail", { spot });
-                    }}
-                  >
-                    <SpotMapPin
-                      rating={getSpotScore(spot)}
-                      selected={activeSpotId === spot.id}
-                    />
-                  </Marker>
-                );
-              })}
-            </MapView>
-          )}
-
-          <View style={styles.mapRefreshButtonContainer}>
-            <Button
-              size="sm"
-              label="Refresh"
-              icon={<RefreshCcw size={20} color={Colors.dark} />}
-              variant="secondary"
-              onPress={() => void handleManualRefresh()}
-              loading={refreshing || spotsLoading}
-            />
+                variant={isMapCenteredOnUser ? "secondary" : "default"}
+                onPress={centerOnUserLocation}
+                disabled={!userLocation}
+              />
+            </View>
           </View>
           <View
-            style={[styles.carouselWrapper, { bottom: 6 }]}
-            pointerEvents="box-none"
+            style={[
+              StyleSheet.absoluteFill,
+              effectiveViewMode === "list" ? null : styles.hiddenLayer,
+            ]}
           >
-            <FlatList
-              data={mapSpots}
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              keyExtractor={(item) => item.id}
-              contentContainerStyle={styles.carouselContent}
-              ItemSeparatorComponent={() => (
-                <View style={{ width: CAROUSEL_GAP }} />
-              )}
-              renderItem={({ item }) => renderSpotCard(item, true)}
-              ListEmptyComponent={
-                <View style={[styles.emptyMapState, { width: width - 40 }]}>
-                  <Text style={styles.stateText}>
-                    {filteredSpots.length
-                      ? "These spots don't have map coordinates yet."
-                      : "No spots match your search right now."}
-                  </Text>
-                </View>
-              }
-            />
+            {listLayer}
           </View>
         </View>
-      ) : (
-        <FlatList
-          data={filteredSpots}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={[
-            styles.listContent,
-            { paddingBottom: tabBarHeight + 24 },
-          ]}
-          ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
-          renderItem={({ item }) => renderSpotCard(item)}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => void handleManualRefresh()}
-              tintColor={Colors.primary}
-              colors={[Colors.primary]}
-            />
-          }
-          ListEmptyComponent={
-            <View style={styles.emptyListState}>
-              <Text style={styles.stateText}>
-                No spots match your search right now.
-              </Text>
-            </View>
-          }
-        />
       )}
     </View>
   );
@@ -771,40 +1064,72 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  viewToggle: {
-    flexDirection: "row",
-    backgroundColor: "#fff",
-    borderRadius: 999,
-    padding: 4,
-    borderWidth: 1,
-    borderColor: "#E6E6E6",
+  // ── Active filter chips ──────────────────────────────────────────────
+  // A horizontally-scrollable row that appears just under the toolbar
+  // whenever any filter is on. Each chip is an accent-tinted pill with
+  // its own X — tapping the chip removes only that filter.
+  activeFiltersWrap: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+    flexGrow: 0,
   },
-  viewToggleButton: {
+  activeFiltersRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingRight: 16,
+  },
+  activeFilterChip: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    backgroundColor: Colors.accent,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 999,
   },
-  viewToggleButtonActive: {
-    backgroundColor: Colors.dark,
-  },
-  viewToggleLabel: {
+  activeFilterChipLabel: {
+    color: "#ffffff",
     fontFamily: Fonts.gabarito.medium,
-    fontSize: 13,
-    color: Colors.dark,
+    fontSize: 12,
   },
-  viewToggleLabelActive: {
-    color: "#fff",
+  // ── Map / List segmented toggle ────────────────────────────────────────
+  // Ported directly from CommunityScreen's Communities/Events toggle so
+  // both surfaces look + animate identically. Only addition is `flex: 1`
+  // so the control fills the available toolbar space alongside the
+  // trailing Filter / Add Spot buttons.
+  tabSwitchWrap: {
+    flex: 1,
+    flexDirection: "row",
+    backgroundColor: "#f9f9f9",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#e6e6e6",
+    padding: 4,
+    gap: 4,
+    position: "relative",
   },
-  pillIndicator: {
+  tabSwitchBtn: {
+    flex: 1,
+    // Sized so the segmented control's total height (2px borders + 8px
+    // wrap padding + 28px button) equals 38px, matching the layout
+    // footprint of the adjacent `<Button size="sm" />` filter button
+    // (paddingV 8*2 + icon 16 + border 1.25*2 + 4 PRESS_DEPTH = 38.5).
+    minHeight: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+  },
+  tabSwitchPill: {
     position: "absolute",
     top: 4,
     bottom: 4,
-    left: 0,
-    borderRadius: 999,
-    backgroundColor: Colors.dark,
+    left: 4,
+    backgroundColor: Colors.primary,
+    borderRadius: 6,
+  },
+  tabSwitchTx: {
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 14,
   },
   iconActionButton: {
     width: 40,
@@ -877,13 +1202,19 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.gabarito.medium,
     fontSize: 15,
   },
+  contentArea: {
+    flex: 1,
+  },
+  hiddenLayer: {
+    display: "none",
+  },
   mapContainer: {
     flex: 1,
   },
-  mapRefreshButtonContainer: {
+  mapRecenterButtonContainer: {
     position: "absolute",
-    top: 12,
-    right: 14,
+    right: 12,
+    zIndex: 5,
   },
   carouselWrapper: {
     position: "absolute",

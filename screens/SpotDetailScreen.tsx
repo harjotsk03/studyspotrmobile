@@ -69,6 +69,7 @@ import {
   spotReviewViewerUserId,
   type SpotReview,
 } from "../utils/spotsApi";
+import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import { getSpotDescription } from "../utils/getSpotDescription";
 import { getSpotTitle } from "../utils/getSpotTitle";
 import { toNumber } from "../utils/toNumber";
@@ -801,6 +802,20 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
                 typeof r.rating === "number" ? r.rating : Number(r.rating) || 0;
               const dateLbl = formatReviewDate(r.created_at);
 
+              // Build the same shape every other screen feeds to the
+              // shared avatar utilities (PublicProfileScreen, FeedPostCard,
+              // CommunityMembersScreen, etc.) so the initials + color are
+              // computed consistently across the app — handling
+              // "First Last" → "FL", single-word names, username/email
+              // fallback, and a deterministic background color per user.
+              const avatarUser = {
+                id: rUserId || r.user?.id || undefined,
+                first_name: r.user?.first_name ?? undefined,
+                last_name: r.user?.last_name ?? undefined,
+                username: r.user?.username ?? undefined,
+                name: rn,
+              };
+
               return (
                 <View
                   key={spotReviewPrimaryId(r) ?? `rev-${idx}`}
@@ -833,9 +848,14 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
                             style={styles.reviewerAvatar}
                           />
                         ) : (
-                          <View style={styles.reviewerAvatarFallback}>
+                          <View
+                            style={[
+                              styles.reviewerAvatarFallback,
+                              { backgroundColor: getUserAvatarColor(avatarUser) },
+                            ]}
+                          >
                             <Text style={styles.reviewerInitial}>
-                              {rn.charAt(0).toUpperCase()}
+                              {getUserInitials(avatarUser)}
                             </Text>
                           </View>
                         )}
@@ -1505,14 +1525,13 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: Colors.accent + "28",
     alignItems: "center",
     justifyContent: "center",
   },
   reviewerInitial: {
     fontFamily: Fonts.gabarito.bold,
     fontSize: 17,
-    color: Colors.dark,
+    color: "#fff",
   },
   reviewerTextCol: {
     flexShrink: 1,

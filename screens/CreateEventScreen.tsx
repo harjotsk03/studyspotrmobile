@@ -12,6 +12,7 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -31,6 +32,7 @@ import {
   ClockIcon,
   LinkIcon,
   MapPinIcon,
+  Plus,
   Users2Icon,
   FileTextIcon,
   TypeIcon,
@@ -234,7 +236,15 @@ export default function CreateEventScreen({ route }: Props) {
 
   // Type section
   const [typeOpen, setTypeOpen] = useState(true);
-  const [eventType, setEventType] = useState<EventType>("other");
+  const [eventTypes, setEventTypes] = useState<string[]>([]);
+  const [customEventTypes, setCustomEventTypes] = useState<string[]>([]);
+  const [customEventTypeInput, setCustomEventTypeInput] = useState("");
+  const [typeError, setTypeError] = useState("");
+  // Drives the "Other" input/+ row's slide-fade animation. 0 = hidden,
+  // 1 = visible. Height is JS-driven (useNativeDriver: false) so opacity
+  // and translateY stay in lockstep with the height interpolation.
+  const otherTypeAnim = useRef(new Animated.Value(0)).current;
+  const isOtherTypeSelected = eventTypes.includes("other");
 
   // Date & Time section
   const [dateTimeOpen, setDateTimeOpen] = useState(true);
@@ -330,6 +340,52 @@ export default function CreateEventScreen({ route }: Props) {
     setter((v) => !v);
   };
 
+  // ── Event types: multi-select + custom ───────────────────────────────────
+
+  useEffect(() => {
+    Animated.timing(otherTypeAnim, {
+      toValue: isOtherTypeSelected ? 1 : 0,
+      duration: 240,
+      easing: Easing.bezier(0.22, 1, 0.36, 1),
+      useNativeDriver: false,
+    }).start();
+  }, [isOtherTypeSelected, otherTypeAnim]);
+
+  const toggleEventType = (t: string) => {
+    setEventTypes((prev) =>
+      prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t],
+    );
+    if (typeError) setTypeError("");
+  };
+
+  const addCustomEventType = () => {
+    const trimmed = customEventTypeInput.trim();
+    if (!trimmed) return;
+    const lower = trimmed.toLowerCase();
+    // Don't add duplicates of either a built-in or an existing custom —
+    // case-insensitive so "Trivia" and "trivia" collapse to the same pill.
+    const duplicate =
+      EVENT_TYPES.some((c) => c.toLowerCase() === lower) ||
+      customEventTypes.some((c) => c.toLowerCase() === lower);
+    if (duplicate) {
+      setCustomEventTypeInput("");
+      return;
+    }
+    setCustomEventTypes((prev) => [...prev, trimmed]);
+    setEventTypes((prev) => [...prev, trimmed]);
+    setCustomEventTypeInput("");
+    if (typeError) setTypeError("");
+  };
+
+  const formatTypeLabel = (t: string) => {
+    if (!t) return t;
+    // Built-in types are stored lowercase ("study"); show them title-cased.
+    // Custom types are stored as the user typed them — leave them as-is.
+    return EVENT_TYPES.includes(t as EventType)
+      ? t.charAt(0).toUpperCase() + t.slice(1)
+      : t;
+  };
+
   // ── Date picker ──────────────────────────────────────────────────────────
 
   const openPicker = (target: PickerTarget) => {
@@ -416,6 +472,13 @@ export default function CreateEventScreen({ route }: Props) {
       setTitleError("");
     }
 
+    if (eventTypes.length === 0) {
+      setTypeError("Select at least one event type.");
+      valid = false;
+    } else {
+      setTypeError("");
+    }
+
     if (!startDate || !startTime) {
       setStartError("Start date and time are required.");
       valid = false;
@@ -493,7 +556,7 @@ export default function CreateEventScreen({ route }: Props) {
           body: JSON.stringify({
             title: title.trim(),
             description: description.trim() || undefined,
-            type: eventType,
+            type: eventTypes.join(", "),
             start_time: startISO,
             end_time: endISO,
             is_online: isOnline,
@@ -653,27 +716,128 @@ export default function CreateEventScreen({ route }: Props) {
               onToggle={() => toggle(setTypeOpen)}
             />
             {typeOpen && (
-              <View style={styles.chipsGrid}>
-                {EVENT_TYPES.map((t) => {
-                  const selected = eventType === t;
-                  return (
-                    <Pressable
-                      key={t}
-                      style={[styles.chip, selected && styles.chipSelected]}
-                      onPress={() => setEventType(t)}
-                    >
-                      <Text
-                        style={[
-                          styles.chipText,
-                          selected && styles.chipTextSelected,
-                        ]}
+              <>
+                <View style={styles.chipsGrid}>
+                  {EVENT_TYPES.filter((t) => t !== "other").map((t) => {
+                    const selected = eventTypes.includes(t);
+                    return (
+                      <Pressable
+                        key={t}
+                        style={[styles.chip, selected && styles.chipSelected]}
+                        onPress={() => toggleEventType(t)}
                       >
-                        {t.charAt(0).toUpperCase() + t.slice(1)}
-                      </Text>
+                        <Text
+                          style={[
+                            styles.chipText,
+                            selected && styles.chipTextSelected,
+                          ]}
+                        >
+                          {formatTypeLabel(t)}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                  {customEventTypes.map((t) => {
+                    const selected = eventTypes.includes(t);
+                    return (
+                      <Pressable
+                        key={`custom:${t}`}
+                        style={[
+                          styles.chip,
+                          selected && styles.chipSelected,
+                          // Faded look while toggled off — communicates
+                          // "you added this and turned it off" while
+                          // keeping it tappable to re-enable, per the
+                          // same spec as community categories.
+                          !selected && styles.chipCustomDisabled,
+                        ]}
+                        onPress={() => toggleEventType(t)}
+                      >
+                        <Text
+                          style={[
+                            styles.chipText,
+                            selected && styles.chipTextSelected,
+                          ]}
+                        >
+                          {formatTypeLabel(t)}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                  <Pressable
+                    key="other"
+                    style={[
+                      styles.chip,
+                      isOtherTypeSelected && styles.chipSelected,
+                    ]}
+                    onPress={() => toggleEventType("other")}
+                  >
+                    <Text
+                      style={[
+                        styles.chipText,
+                        isOtherTypeSelected && styles.chipTextSelected,
+                      ]}
+                    >
+                      Other
+                    </Text>
+                  </Pressable>
+                </View>
+
+                {/* Slide + fade-in row for typing a custom event type.
+                    Height is animated so the layout doesn't reserve
+                    space when hidden, and pointerEvents is gated so
+                    the input can't be focused-into while collapsed. */}
+                <Animated.View
+                  pointerEvents={isOtherTypeSelected ? "auto" : "none"}
+                  style={{
+                    opacity: otherTypeAnim,
+                    transform: [
+                      {
+                        translateY: otherTypeAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [-8, 0],
+                        }),
+                      },
+                    ],
+                    height: otherTypeAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0, 56],
+                    }),
+                    overflow: "hidden",
+                  }}
+                >
+                  <View style={styles.customTypeRow}>
+                    <TextInput
+                      style={styles.customTypeInput}
+                      value={customEventTypeInput}
+                      onChangeText={setCustomEventTypeInput}
+                      placeholder="Add your own event type"
+                      placeholderTextColor="#999"
+                      returnKeyType="done"
+                      autoCapitalize="words"
+                      onSubmitEditing={addCustomEventType}
+                      editable={isOtherTypeSelected}
+                    />
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.customTypeAddBtn,
+                        !customEventTypeInput.trim() &&
+                          styles.customTypeAddBtnDisabled,
+                        pressed && styles.customTypeAddBtnPressed,
+                      ]}
+                      disabled={!customEventTypeInput.trim()}
+                      onPress={addCustomEventType}
+                      accessibilityRole="button"
+                      accessibilityLabel="Add custom event type"
+                    >
+                      <Plus size={20} color="#fff" strokeWidth={2.6} />
                     </Pressable>
-                  );
-                })}
-              </View>
+                  </View>
+                </Animated.View>
+                {!!typeError && (
+                  <Text style={styles.errorText}>{typeError}</Text>
+                )}
+              </>
             )}
           </View>
 
@@ -1083,6 +1247,41 @@ const styles = StyleSheet.create({
   chipTextSelected: {
     color: Colors.dark,
     fontFamily: Fonts.gabarito.medium,
+  },
+  chipCustomDisabled: {
+    opacity: 0.55,
+  },
+  customTypeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 12,
+  },
+  customTypeInput: {
+    flex: 1,
+    height: 44,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    backgroundColor: "#fff",
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14,
+    color: Colors.dark,
+  },
+  customTypeAddBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: Colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  customTypeAddBtnDisabled: {
+    backgroundColor: "#ccc",
+  },
+  customTypeAddBtnPressed: {
+    opacity: 0.8,
   },
   modalBackdrop: {
     flex: 1,

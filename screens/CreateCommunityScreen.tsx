@@ -1,6 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
+  Animated,
+  Easing,
   Image,
   KeyboardAvoidingView,
   Modal,
@@ -10,6 +12,7 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -27,6 +30,7 @@ import {
   GraduationCapIcon,
   ImageIcon,
   LockIcon,
+  Plus,
   TagIcon,
   TypeIcon,
 } from "lucide-react-native";
@@ -243,9 +247,54 @@ export default function CreateCommunityScreen() {
   // Step 1
   const [communityType, setCommunityType] = useState<CommunityType | "">("");
   const [communityTypeError, setCommunityTypeError] = useState("");
-  const [category, setCategory] = useState("");
+  // Multi-select: each tap toggles a category in/out of `categories`. The
+  // built-in set comes from CATEGORIES; user-added customs live in
+  // `customCategories` so they persist as visible options for this
+  // session even when toggled off.
+  const [categories, setCategories] = useState<string[]>([]);
+  const [customCategories, setCustomCategories] = useState<string[]>([]);
+  const [customCategoryInput, setCustomCategoryInput] = useState("");
   const [isPublic, setIsPublic] = useState(true);
   const [categoryError, setCategoryError] = useState("");
+  // Drives the "Other" input/+ row's slide-fade animation. 0 = hidden,
+  // 1 = visible. Height is JS-driven (useNativeDriver: false), and
+  // opacity/translateY ride the same value so everything stays in lockstep.
+  const otherInputAnim = useRef(new Animated.Value(0)).current;
+  const isOtherSelected = categories.includes("Other");
+  useEffect(() => {
+    Animated.timing(otherInputAnim, {
+      toValue: isOtherSelected ? 1 : 0,
+      duration: 240,
+      easing: Easing.bezier(0.22, 1, 0.36, 1),
+      useNativeDriver: false,
+    }).start();
+  }, [isOtherSelected, otherInputAnim]);
+
+  const toggleCategory = (cat: string) => {
+    setCategories((prev) =>
+      prev.includes(cat) ? prev.filter((c) => c !== cat) : [...prev, cat],
+    );
+    if (categoryError) setCategoryError("");
+  };
+
+  const addCustomCategory = () => {
+    const trimmed = customCategoryInput.trim();
+    if (!trimmed) return;
+    const lower = trimmed.toLowerCase();
+    // Don't add duplicates of either a built-in or an existing custom —
+    // case-insensitive so "Music" and "music" collapse to the same pill.
+    const duplicate =
+      CATEGORIES.some((c) => c.toLowerCase() === lower) ||
+      customCategories.some((c) => c.toLowerCase() === lower);
+    if (duplicate) {
+      setCustomCategoryInput("");
+      return;
+    }
+    setCustomCategories((prev) => [...prev, trimmed]);
+    setCategories((prev) => [...prev, trimmed]);
+    setCustomCategoryInput("");
+    if (categoryError) setCategoryError("");
+  };
 
   // Step 2
   const [avatarAsset, setAvatarAsset] = useState<ImageAsset | null>(null);
@@ -266,7 +315,7 @@ export default function CreateCommunityScreen() {
     icon: community.icon ?? community.avatar_url,
     banner_url: community.banner_url,
     color: community.color ?? Colors.accent,
-    category: community.category ?? category,
+    category: community.category ?? categories.join(", "),
     is_public: community.is_public ?? isPublic,
     user_role: community.user_role ?? "owner",
     memberAvatars: [],
@@ -315,8 +364,8 @@ export default function CreateCommunityScreen() {
     } else {
       setCommunityTypeError("");
     }
-    if (!category) {
-      setCategoryError("Please choose a category.");
+    if (categories.length === 0) {
+      setCategoryError("Please choose at least one category.");
       valid = false;
     } else {
       setCategoryError("");
@@ -370,7 +419,10 @@ export default function CreateCommunityScreen() {
         name.trim(),
         description.trim(),
         isPublic,
-        category,
+        // The backend API still accepts a single `category` string; join
+        // multi-selected entries with ", " so the existing payload shape
+        // stays unchanged for the server.
+        categories.join(", "),
         communityType,
       );
 
@@ -480,19 +532,42 @@ export default function CreateCommunityScreen() {
         style={[styles.topBar, { paddingTop: insets.top + 8 }]}
         pointerEvents="box-none"
       >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-          onPress={handleHeaderBack}
-          disabled={loading}
-          style={({ pressed }) => [
-            styles.backIconButton,
-            pressed && styles.backIconButtonPressed,
-          ]}
-          hitSlop={10}
-        >
-          <ArrowLeftIcon size={22} color={Colors.dark} strokeWidth={2.2} />
-        </Pressable>
+        {step === 0 ? (
+          // Step 1 of the wizard — the back arrow exits the entire flow,
+          // so we keep the discreet circular icon to avoid front-loading
+          // a "Back" affordance that's actually a "Cancel".
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            onPress={handleHeaderBack}
+            disabled={loading}
+            style={({ pressed }) => [
+              styles.backIconButton,
+              pressed && styles.backIconButtonPressed,
+            ]}
+            hitSlop={10}
+          >
+            <ArrowLeftIcon size={22} color={Colors.dark} strokeWidth={2.2} />
+          </Pressable>
+        ) : (
+          // Steps 2 & 3 — back goes to the previous step within the
+          // wizard, so we surface it as a labeled accent pill so users
+          // notice they CAN walk backwards without losing progress.
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to previous step"
+            onPress={handleHeaderBack}
+            disabled={loading}
+            style={({ pressed }) => [
+              styles.backPillButton,
+              pressed && styles.backIconButtonPressed,
+            ]}
+            hitSlop={10}
+          >
+            <ArrowLeftIcon size={20} color={Colors.accent} strokeWidth={2.4} />
+            <Text style={styles.backPillLabel}>Back</Text>
+          </Pressable>
+        )}
       </View>
 
       <ScrollView
@@ -616,16 +691,17 @@ export default function CreateCommunityScreen() {
               <Text style={styles.sectionLabel}>Category</Text>
             </View>
             <View style={styles.chipsGrid}>
-              {CATEGORIES.map((cat) => {
-                const selected = category === cat;
+              {/* Built-in chips first (everything except "Other"), then
+                  user-added customs, then "Other" last — so when the user
+                  hits + on the custom input the new pill slides in
+                  *immediately before* the Other chip. */}
+              {CATEGORIES.filter((c) => c !== "Other").map((cat) => {
+                const selected = categories.includes(cat);
                 return (
                   <Pressable
                     key={cat}
                     style={[styles.chip, selected && styles.chipSelected]}
-                    onPress={() => {
-                      setCategory(cat);
-                      if (categoryError) setCategoryError("");
-                    }}
+                    onPress={() => toggleCategory(cat)}
                   >
                     <Text
                       style={[
@@ -638,7 +714,103 @@ export default function CreateCommunityScreen() {
                   </Pressable>
                 );
               })}
+              {customCategories.map((cat) => {
+                const selected = categories.includes(cat);
+                return (
+                  <Pressable
+                    key={`custom:${cat}`}
+                    style={[
+                      styles.chip,
+                      selected && styles.chipSelected,
+                      // Faded look while turned off — communicates
+                      // "you added this and toggled it off" while keeping
+                      // it visible (and tappable to re-enable) for this
+                      // session, per the spec.
+                      !selected && styles.chipCustomDisabled,
+                    ]}
+                    onPress={() => toggleCategory(cat)}
+                  >
+                    <Text
+                      style={[
+                        styles.chipText,
+                        selected && styles.chipTextSelected,
+                      ]}
+                    >
+                      {cat}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+              <Pressable
+                key="Other"
+                style={[
+                  styles.chip,
+                  isOtherSelected && styles.chipSelected,
+                ]}
+                onPress={() => toggleCategory("Other")}
+              >
+                <Text
+                  style={[
+                    styles.chipText,
+                    isOtherSelected && styles.chipTextSelected,
+                  ]}
+                >
+                  Other
+                </Text>
+              </Pressable>
             </View>
+
+            {/* Slide + fade-in row for typing a custom category. Height
+                is animated so the layout doesn't reserve space when
+                hidden, and pointerEvents is gated so the input can't be
+                focused-into while collapsed. */}
+            <Animated.View
+              pointerEvents={isOtherSelected ? "auto" : "none"}
+              style={{
+                opacity: otherInputAnim,
+                transform: [
+                  {
+                    translateY: otherInputAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [-8, 0],
+                    }),
+                  },
+                ],
+                height: otherInputAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0, 56],
+                }),
+                overflow: "hidden",
+              }}
+            >
+              <View style={styles.customCategoryRow}>
+                <TextInput
+                  style={styles.customCategoryInput}
+                  value={customCategoryInput}
+                  onChangeText={setCustomCategoryInput}
+                  placeholder="Add your own category"
+                  placeholderTextColor="#999"
+                  returnKeyType="done"
+                  autoCapitalize="words"
+                  onSubmitEditing={addCustomCategory}
+                  editable={isOtherSelected}
+                />
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.customCategoryAddBtn,
+                    !customCategoryInput.trim() &&
+                      styles.customCategoryAddBtnDisabled,
+                    pressed && styles.customCategoryAddBtnPressed,
+                  ]}
+                  disabled={!customCategoryInput.trim()}
+                  onPress={addCustomCategory}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add custom category"
+                >
+                  <Plus size={20} color="#fff" strokeWidth={2.6} />
+                </Pressable>
+              </View>
+            </Animated.View>
             {!!categoryError && (
               <Text style={styles.errorText}>{categoryError}</Text>
             )}
@@ -811,6 +983,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#eee",
   },
+  // Labeled accent pill shown on the non-first wizard steps so the
+  // "you can walk back" affordance reads loud and clear instead of being
+  // a tiny grey arrow.
+  backPillButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 6,
+    height: 40,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    backgroundColor: "#fff",
+    borderWidth: 1.25,
+    borderColor: Colors.accent,
+  },
+  backPillLabel: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 15,
+    color: Colors.accent,
+  },
   backIconButtonPressed: {
     opacity: 0.75,
   },
@@ -883,6 +1075,12 @@ const styles = StyleSheet.create({
     borderColor: Colors.accent,
     backgroundColor: Colors.accent + "18",
   },
+  // Subtle faded state for user-added custom chips when they're toggled
+  // off — they stay in the chip list (the user added them, they can
+  // re-enable later) but visually communicate "currently off".
+  chipCustomDisabled: {
+    opacity: 0.55,
+  },
   chipText: {
     fontFamily: Fonts.gabarito.medium,
     fontSize: 14,
@@ -891,6 +1089,39 @@ const styles = StyleSheet.create({
   chipTextSelected: {
     color: Colors.dark,
     fontFamily: Fonts.gabarito.medium,
+  },
+  // Custom-category input row revealed under the "Other" chip.
+  customCategoryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 12,
+  },
+  customCategoryInput: {
+    flex: 1,
+    height: 44,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    backgroundColor: "#fff",
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 15,
+    color: Colors.dark,
+  },
+  customCategoryAddBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: Colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  customCategoryAddBtnDisabled: {
+    backgroundColor: "#ccc",
+  },
+  customCategoryAddBtnPressed: {
+    opacity: 0.8,
   },
   errorText: {
     fontFamily: Fonts.instrument.regular,
