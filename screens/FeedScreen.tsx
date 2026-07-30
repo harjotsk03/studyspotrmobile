@@ -2,6 +2,7 @@ import { Audio } from "expo-av";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
+  DeviceEventEmitter,
   FlatList,
   Pressable,
   RefreshControl,
@@ -23,7 +24,6 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Heart, PlusSquare } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FeedCommentsModal from "../components/FeedCommentsModal";
-import FeedComposerModal from "../components/FeedComposerModal";
 import FeedEndOfFeedCreate from "../components/FeedEndOfFeedCreate";
 import FeedInstaCard, { type MediaRect } from "../components/FeedInstaCard";
 import FullScreenReelViewer from "../components/FullScreenReelViewer";
@@ -136,7 +136,6 @@ export default function FeedScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [feedError, setFeedError] = useState<string | null>(null);
-  const [composerOpen, setComposerOpen] = useState(false);
   const [shareFriendsPost, setShareFriendsPost] = useState<FeedPost | null>(
     null,
   );
@@ -317,6 +316,13 @@ export default function FeedScreen() {
     [user],
   );
 
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener("feedPostCreated", (post: FeedPost | null) => {
+      handlePosted(post);
+    });
+    return () => sub.remove();
+  }, [handlePosted]);
+
   const handleDeleted = useCallback((postId: string) => {
     setPosts((prev) => prev.filter((p) => p.id !== postId));
     setCommentsPostId((open) => (open === postId ? null : open));
@@ -441,8 +447,8 @@ export default function FeedScreen() {
       duration: 220,
       useNativeDriver: false,
     }).start();
-    setComposerOpen(true);
-  }, [dragProgress, readyToTrigger]);
+    rootNavigation.navigate("FeedComposer");
+  }, [dragProgress, readyToTrigger, rootNavigation]);
 
   const handleMomentumScrollEnd = useCallback(() => {
     triggeredRef.current = false;
@@ -486,7 +492,7 @@ export default function FeedScreen() {
             <Text style={styles.brand}>Study Spotr</Text>
             <View style={styles.topActions}>
               <Pressable
-                onPress={() => setComposerOpen(true)}
+                onPress={() => rootNavigation.navigate("FeedComposer")}
                 hitSlop={10}
                 style={styles.topIconBtn}
                 accessibilityRole="button"
@@ -577,7 +583,7 @@ export default function FeedScreen() {
                   <Text style={styles.emptyText}>{emptyCopy}</Text>
                   <Pressable
                     style={styles.emptyCta}
-                    onPress={() => setComposerOpen(true)}
+                    onPress={() => rootNavigation.navigate("FeedComposer")}
                   >
                     <Text style={styles.emptyCtaLabel}>Create a post</Text>
                   </Pressable>
@@ -673,13 +679,6 @@ export default function FeedScreen() {
         token={token}
         navigation={navigation as NavigationProp<ParamListBase>}
         onClose={() => setShareFriendsPost(null)}
-      />
-
-      <FeedComposerModal
-        visible={composerOpen}
-        token={token}
-        onClose={() => setComposerOpen(false)}
-        onPosted={handlePosted}
       />
 
       {/*

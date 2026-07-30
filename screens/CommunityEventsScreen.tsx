@@ -388,7 +388,8 @@ export default function CommunityEventsScreen({ route }: Props) {
   useFocusEffect(
     useCallback(() => {
       void validateCommunityAccess({ alertOnDenied: true });
-    }, [validateCommunityAccess]),
+      void fetchEvents();
+    }, [validateCommunityAccess, fetchEvents]),
   );
 
   // If we arrived here from a shared-event preview card in chat, open the

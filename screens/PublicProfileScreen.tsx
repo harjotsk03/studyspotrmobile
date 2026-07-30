@@ -9,6 +9,8 @@ import {
   Dimensions,
   FlatList,
   Image,
+  Modal,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -219,6 +221,7 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
   const [messageLoading, setMessageLoading] = useState(false);
   const [error, setError] = useState("");
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+  const [avatarLightbox, setAvatarLightbox] = useState(false);
 
   const [mainTab, setMainTab] = useState<PublicProfileMainTabKey>("posts");
 
@@ -855,12 +858,14 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
       <>
         <View style={styles.heroRow}>
           {avatarUri && !avatarLoadFailed ? (
-            <Image
-              source={{ uri: avatarUri }}
-              style={styles.avatarImage}
-              resizeMode="cover"
-              onError={() => setAvatarLoadFailed(true)}
-            />
+            <Pressable onPress={() => setAvatarLightbox(true)}>
+              <Image
+                source={{ uri: avatarUri }}
+                style={styles.avatarImage}
+                resizeMode="cover"
+                onError={() => setAvatarLoadFailed(true)}
+              />
+            </Pressable>
           ) : (
             <View
               style={[
@@ -1043,6 +1048,27 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
           />
         )}
       </View>
+
+      {avatarUri ? (
+        <Modal
+          visible={avatarLightbox}
+          transparent
+          animationType="fade"
+          statusBarTranslucent
+          onRequestClose={() => setAvatarLightbox(false)}
+        >
+          <Pressable
+            style={styles.avatarLightboxOverlay}
+            onPress={() => setAvatarLightbox(false)}
+          >
+            <Image
+              source={{ uri: avatarUri }}
+              style={styles.avatarLightboxImage}
+              resizeMode="contain"
+            />
+          </Pressable>
+        </Modal>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -1358,5 +1384,16 @@ const styles = StyleSheet.create({
   },
   footerSpinner: {
     paddingVertical: 16,
+  },
+  avatarLightboxOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.9)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarLightboxImage: {
+    width: Dimensions.get("window").width - 48,
+    height: Dimensions.get("window").width - 48,
+    borderRadius: 16,
   },
 });

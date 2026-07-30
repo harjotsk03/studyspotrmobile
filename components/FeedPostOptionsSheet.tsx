@@ -1,4 +1,4 @@
-import { useCallback, type ComponentType } from "react";
+import { useCallback, useRef, useState, type ComponentType } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -15,16 +15,15 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Flag, Send, Share2, Trash2 } from "lucide-react-native";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
+import Button from "./Button";
 
 export type FeedPostOptionsSheetProps = {
   visible: boolean;
   onClose: () => void;
   isOwner: boolean;
-  /** Native share sheet (caption + URL). */
   onShare: () => void;
   onDeleteConfirmed: () => Promise<void>;
   onReportConfirmed: () => Promise<void>;
-  /** Opens in-app recipients picker (conversation list). */
   onShareWithFriends?: () => void;
 };
 
@@ -60,9 +59,6 @@ function OptionRow(props: {
   );
 }
 
-/**
- * Post actions — same presentation as FeedComposerModal (page sheet slide, light shell, header + ScrollView).
- */
 export default function FeedPostOptionsSheet({
   visible,
   onClose,
@@ -73,43 +69,61 @@ export default function FeedPostOptionsSheet({
   onReportConfirmed,
 }: FeedPostOptionsSheetProps) {
   const insets = useSafeAreaInsets();
+  const pendingAction = useRef<(() => void) | null>(null);
+
+  const closeWithAction = useCallback(
+    (action: () => void) => {
+      pendingAction.current = action;
+      onClose();
+      if (Platform.OS === "android") {
+        setTimeout(() => {
+          const a = pendingAction.current;
+          pendingAction.current = null;
+          a?.();
+        }, 350);
+      }
+    },
+    [onClose],
+  );
 
   const handleClose = useCallback(() => {
+    pendingAction.current = null;
     onClose();
   }, [onClose]);
 
+  const handleDismiss = useCallback(() => {
+    const action = pendingAction.current;
+    pendingAction.current = null;
+    if (action) action();
+  }, []);
+
+  // Delete modal state
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
   const confirmDelete = useCallback(() => {
-    handleClose();
-    requestAnimationFrame(() => {
-      Alert.alert(
-        "Delete post?",
-        "This removes the post for everyone. This can’t be undone.",
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Delete",
-            style: "destructive",
-            onPress: () => {
-              void (async () => {
-                try {
-                  await onDeleteConfirmed();
-                } catch (e) {
-                  Alert.alert(
-                    "Error",
-                    e instanceof Error ? e.message : "Could not delete post.",
-                  );
-                }
-              })();
-            },
-          },
-        ],
-      );
+    closeWithAction(() => {
+      setShowDeleteModal(true);
     });
-  }, [handleClose, onDeleteConfirmed]);
+  }, [closeWithAction]);
+
+  const handleDelete = useCallback(async () => {
+    setDeleteLoading(true);
+    try {
+      await onDeleteConfirmed();
+      setShowDeleteModal(false);
+    } catch (e) {
+      Alert.alert(
+        "Error",
+        e instanceof Error ? e.message : "Could not delete post.",
+      );
+    } finally {
+      setDeleteLoading(false);
+    }
+  }, [onDeleteConfirmed]);
 
   const confirmReport = useCallback(() => {
-    handleClose();
-    requestAnimationFrame(() => {
+    closeWithAction(() => {
       Alert.alert(
         "Report this post?",
         "Our team will review it against community guidelines.",
@@ -135,91 +149,135 @@ export default function FeedPostOptionsSheet({
         ],
       );
     });
-  }, [handleClose, onReportConfirmed]);
+  }, [closeWithAction, onReportConfirmed]);
 
   const runShare = useCallback(() => {
-    handleClose();
-    requestAnimationFrame(() => onShare());
-  }, [handleClose, onShare]);
+    closeWithAction(() => void onShare());
+  }, [closeWithAction, onShare]);
 
   const runShareFriends = useCallback(() => {
-    handleClose();
-    requestAnimationFrame(() => onShareWithFriends?.());
-  }, [handleClose, onShareWithFriends]);
+    closeWithAction(() => onShareWithFriends?.());
+  }, [closeWithAction, onShareWithFriends]);
 
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      presentationStyle="pageSheet"
-      onRequestClose={handleClose}
-    >
-      <KeyboardAvoidingView
-        style={[styles.sheet, { paddingTop: insets.top + 8 }]}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+    <>
+      <Modal
+        visible={visible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={handleClose}
+        onDismiss={handleDismiss}
       >
-        <View style={styles.sheetHeader}>
-          <TouchableOpacity
-            onPress={handleClose}
-            hitSlop={12}
-            accessibilityRole="button"
-            accessibilityLabel="Close"
-          >
-            <Text style={styles.sheetCancel}>Cancel</Text>
-          </TouchableOpacity>
-          <Text style={styles.sheetTitle}>Post options</Text>
-          <View style={styles.sheetHeaderTrailing} accessibilityElementsHidden />
-        </View>
-
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-          bounces
-          contentContainerStyle={[
-            styles.sheetBody,
-            { paddingBottom: insets.bottom + 24 },
-          ]}
+        <KeyboardAvoidingView
+          style={[styles.sheet, { paddingTop: insets.top + 8 }]}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
         >
-          <Text style={styles.bodyIntro}>
-            {isOwner
-              ? "Manage this post."
-              : "Share this post or report if something’s wrong."}
-          </Text>
-
-          <View style={styles.optionCard}>
-            <OptionRow icon={Share2} label="Share" onPress={runShare} />
-            {onShareWithFriends ? (
-              <OptionRow
-                icon={Send}
-                label="Send to friend"
-                onPress={runShareFriends}
-              />
-            ) : null}
-            {isOwner ? (
-              <OptionRow
-                icon={Trash2}
-                label="Delete post"
-                destructive
-                isLast
-                onPress={confirmDelete}
-              />
-            ) : (
-              <OptionRow
-                icon={Flag}
-                label="Report"
-                destructive
-                isLast
-                onPress={confirmReport}
-              />
-            )}
+          <View style={styles.sheetHeader}>
+            <TouchableOpacity
+              onPress={handleClose}
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+            >
+              <Text style={styles.sheetCancel}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={styles.sheetTitle}>Post options</Text>
+            <View style={styles.sheetHeaderTrailing} accessibilityElementsHidden />
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </Modal>
+
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            bounces
+            contentContainerStyle={[
+              styles.sheetBody,
+              { paddingBottom: insets.bottom + 24 },
+            ]}
+          >
+            <Text style={styles.bodyIntro}>
+              {isOwner
+                ? "Manage this post."
+                : "Share this post or report if something's wrong."}
+            </Text>
+
+            <View style={styles.optionCard}>
+              <OptionRow icon={Share2} label="Share" onPress={runShare} />
+              {onShareWithFriends ? (
+                <OptionRow
+                  icon={Send}
+                  label="Send to friend"
+                  onPress={runShareFriends}
+                />
+              ) : null}
+              {isOwner ? (
+                <OptionRow
+                  icon={Trash2}
+                  label="Delete post"
+                  destructive
+                  isLast
+                  onPress={confirmDelete}
+                />
+              ) : (
+                <OptionRow
+                  icon={Flag}
+                  label="Report"
+                  destructive
+                  isLast
+                  onPress={confirmReport}
+                />
+              )}
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Delete confirmation modal — matches community delete style */}
+      <Modal
+        visible={showDeleteModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDeleteModal(false)}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => {
+            if (!deleteLoading) setShowDeleteModal(false);
+          }}
+        >
+          <Pressable style={styles.modalCard} onPress={() => {}}>
+            <Text style={styles.modalTitle}>Delete Post?</Text>
+            <Text style={styles.modalBody}>
+              This will permanently remove this post for everyone. This action
+              can't be undone.
+            </Text>
+            <View style={styles.modalActions}>
+              <View style={styles.modalActionCell}>
+                <Button
+                  label="Keep"
+                  variant="secondary"
+                  fullWidth
+                  onPress={() => setShowDeleteModal(false)}
+                  disabled={deleteLoading}
+                />
+              </View>
+              <View style={styles.modalActionCell}>
+                <Button
+                  label="Delete"
+                  variant="destructive"
+                  fullWidth
+                  onPress={() => void handleDelete()}
+                  disabled={deleteLoading}
+                  loading={deleteLoading}
+                />
+              </View>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </>
   );
 }
 
-/* Shell + header + body gutters match FeedComposerModal */
 const styles = StyleSheet.create({
   sheet: {
     flex: 1,
@@ -295,5 +353,40 @@ const styles = StyleSheet.create({
   optionLabelDestructive: {
     color: DESTRUCTIVE,
     fontFamily: Fonts.gabarito.semiBold,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 32,
+  },
+  modalCard: {
+    width: "100%",
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 24,
+    gap: 12,
+  },
+  modalTitle: {
+    fontFamily: Fonts.gabarito.bold,
+    fontSize: 20,
+    color: Colors.dark,
+    textAlign: "center",
+  },
+  modalBody: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 15,
+    color: "#555",
+    textAlign: "center",
+    lineHeight: 22,
+  },
+  modalActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 8,
+  },
+  modalActionCell: {
+    flex: 1,
   },
 });

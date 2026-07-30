@@ -41,6 +41,20 @@
           "photosPermission": "Allow $(PRODUCT_NAME) to choose your profile photo.",
           "cameraPermission": "Allow $(PRODUCT_NAME) to take your profile photo."
         }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow $(PRODUCT_NAME) to browse your photos for posts.",
+          "isAccessMediaLocationEnabled": true
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow $(PRODUCT_NAME) to use the camera for posts.",
+          "recordAudioAndroid": false
+        }
       ]
     ]
   }

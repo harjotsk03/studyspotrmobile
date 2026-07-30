@@ -296,6 +296,8 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
   const [lightboxMountKey, setLightboxMountKey] = useState(0);
   const [shareSheetOpen, setShareSheetOpen] = useState(false);
   const lightboxListRef = useRef<FlatList<SpotGalleryItem>>(null);
+  const scrollRef = useRef<ScrollView>(null);
+  const reviewsSectionY = useRef(0);
 
   const galleryItems = useMemo(
     () => buildSpotGalleryItems(spot, reviews),
@@ -544,6 +546,7 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
       </View>
 
       <ScrollView
+        ref={scrollRef}
         style={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -616,9 +619,12 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
               <Text style={styles.metaText}>{ratingLabel}</Text>
             </View>
             {reviewCountLabel ? (
-              <View style={styles.metaPill}>
+              <Pressable
+                style={styles.metaPill}
+                onPress={() => scrollRef.current?.scrollTo({ y: reviewsSectionY.current, animated: true })}
+              >
                 <Text style={styles.metaText}>{reviewCountLabel}</Text>
-              </View>
+              </Pressable>
             ) : null}
           </View>
 
@@ -780,7 +786,10 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
           </View>
         </View>
 
-        <View style={[styles.section, styles.lastSection]}>
+        <View
+          style={[styles.section, styles.lastSection]}
+          onLayout={(e) => { reviewsSectionY.current = e.nativeEvent.layout.y; }}
+        >
           <Text style={styles.sectionTitle}>Reviews</Text>
           {reviewsLoading && reviews.length === 0 ? (
             <ActivityIndicator style={styles.loader} color={Colors.accent} />

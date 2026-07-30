@@ -65,6 +65,7 @@ import CommunityMembersScreen from "./screens/CommunityMembersScreen";
 import ProfileSectionScreen, {
   type ProfileStackParamList,
 } from "./screens/ProfileSectionScreen";
+import FeedComposerScreen from "./screens/FeedComposerScreen";
 import FeedPostDetailScreen from "./screens/FeedPostDetailScreen";
 import FeedInteractionsScreen from "./screens/FeedInteractionsScreen";
 import UserPostsFeedScreen from "./screens/UserPostsFeedScreen";
@@ -386,6 +387,11 @@ function AppContent() {
         screenOptions={{ headerShown: false, animation: "slide_from_right" }}
       >
         <RootStack.Screen name="MainTabs" children={() => tabs} />
+        <RootStack.Screen
+          name="FeedComposer"
+          component={FeedComposerScreen}
+          options={{ animation: "slide_from_bottom" }}
+        />
         <RootStack.Screen
           name="PublicProfile"
           component={PublicProfileScreen}

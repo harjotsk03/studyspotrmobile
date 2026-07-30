@@ -1127,7 +1127,7 @@ export default function EventDetailDrawer({
           )}
           {canDeleteEvent && (
             <Button
-              icon={<Trash2 size={20} color="#DC2626" strokeWidth={2} />}
+              icon={<Trash2 size={20} color="#fff" strokeWidth={2} />}
               variant="destructive"
               size="icon"
               onPress={openDeleteConfirm}
@@ -1211,34 +1211,25 @@ export default function EventDetailDrawer({
             </Text>
 
             <View style={styles.deleteModalActions}>
-              <TouchableOpacity
-                style={[
-                  styles.deleteModalButton,
-                  styles.deleteModalButtonSecondary,
-                ]}
-                onPress={() => closeDeleteConfirm()}
-                activeOpacity={0.7}
-                disabled={deleteLoading}
-              >
-                <Text style={styles.deleteModalButtonSecondaryText}>Keep</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.deleteModalButton,
-                  styles.deleteModalButtonDestructive,
-                ]}
-                onPress={() => void handleDeleteEvent()}
-                activeOpacity={0.7}
-                disabled={deleteLoading}
-              >
-                {deleteLoading ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={styles.deleteModalButtonDestructiveText}>
-                    Delete
-                  </Text>
-                )}
-              </TouchableOpacity>
+              <View style={styles.deleteModalActionCell}>
+                <Button
+                  label="Keep"
+                  variant="secondary"
+                  fullWidth
+                  onPress={() => closeDeleteConfirm()}
+                  disabled={deleteLoading}
+                />
+              </View>
+              <View style={styles.deleteModalActionCell}>
+                <Button
+                  label="Delete"
+                  variant="destructive"
+                  fullWidth
+                  onPress={() => void handleDeleteEvent()}
+                  disabled={deleteLoading}
+                  loading={deleteLoading}
+                />
+              </View>
             </View>
           </Animated.View>
         </View>
@@ -1569,27 +1560,7 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: 8,
   },
-  deleteModalButton: {
+  deleteModalActionCell: {
     flex: 1,
-    height: 48,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  deleteModalButtonSecondary: {
-    backgroundColor: "#F0F0F0",
-  },
-  deleteModalButtonSecondaryText: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 15,
-    color: Colors.dark,
-  },
-  deleteModalButtonDestructive: {
-    backgroundColor: "#E53E3E",
-  },
-  deleteModalButtonDestructiveText: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 15,
-    color: "#fff",
   },
 });

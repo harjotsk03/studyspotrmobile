@@ -35,6 +35,7 @@ export type MainTabsParamList = {
 /** Community screens mounted on RootStack must match `CommunityStackParamList`. */
 export type RootStackParamList = {
   MainTabs: NavigatorScreenParams<MainTabsParamList> | undefined;
+  FeedComposer: undefined;
   PublicProfile: { userId: string };
   FeedPostDetail: {
     post: FeedPost;

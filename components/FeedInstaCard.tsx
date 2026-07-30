@@ -534,13 +534,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
     minWidth: 0,
-  },
+  }, 
   avatarRing: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    padding: 1.5,
-    backgroundColor: Colors.accent,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -549,8 +547,6 @@ const styles = StyleSheet.create({
     height: "100%",
     borderRadius: 18,
     backgroundColor: "#eee",
-    borderWidth: 2,
-    borderColor: "#fff",
   },
   avatarFb: {
     width: "100%",
