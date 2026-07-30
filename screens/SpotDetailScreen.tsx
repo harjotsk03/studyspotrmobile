@@ -49,6 +49,7 @@ import {
   Volume2,
   Wifi,
 } from "lucide-react-native";
+import ReportConfirmModal from "../components/ReportConfirmModal";
 import ShareToFriendsSheet from "../components/ShareToFriendsSheet";
 import SpotReviewComposerModal, {
   type ComposerMode,
@@ -295,6 +296,7 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [lightboxMountKey, setLightboxMountKey] = useState(0);
   const [shareSheetOpen, setShareSheetOpen] = useState(false);
+  const [showSpotReportModal, setShowSpotReportModal] = useState(false);
   const lightboxListRef = useRef<FlatList<SpotGalleryItem>>(null);
   const scrollRef = useRef<ScrollView>(null);
   const reviewsSectionY = useRef(0);
@@ -461,63 +463,73 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
   };
 
   const spotMenu = () => {
-    if (!isSpotOwner || !user?.id) return;
-    Alert.alert(title, undefined, [
-      {
-        text: "Edit spot",
-        onPress: () => {
-          if (route.name === "SpotViewer") {
-            rootNavigation.navigate("MainTabs", {
-              screen: "Spots",
-              params: { screen: "EditSpot", params: { spot } },
-            });
-            navigation.goBack();
-            return;
-          }
-          (
-            navigation as NativeStackNavigationProp<SpotsStackParamList>
-          ).navigate("EditSpot", { spot });
+    if (isSpotOwner && user?.id) {
+      Alert.alert(title, undefined, [
+        {
+          text: "Edit spot",
+          onPress: () => {
+            if (route.name === "SpotViewer") {
+              rootNavigation.navigate("MainTabs", {
+                screen: "Spots",
+                params: { screen: "EditSpot", params: { spot } },
+              });
+              navigation.goBack();
+              return;
+            }
+            (
+              navigation as NativeStackNavigationProp<SpotsStackParamList>
+            ).navigate("EditSpot", { spot });
+          },
         },
-      },
-      {
-        text: "Delete spot",
-        style: "destructive",
-        onPress: () => {
-          Alert.alert(
-            "Delete this spot?",
-            "Reviews and photos will be removed. This cannot be undone.",
-            [
-              { text: "Cancel", style: "cancel" },
-              {
-                text: "Delete",
-                style: "destructive",
-                onPress: () => {
-                  void (async () => {
-                    try {
-                      await deleteSpotJson({
-                        spot_id: spotId,
-                        user_id: user.id,
-                        deleting_user_points: true,
-                      });
-                      await refetchSpots();
-                      navigation.goBack();
-                    } catch (e) {
-                      Alert.alert(
-                        "Error",
-                        e instanceof Error
-                          ? e.message
-                          : "Could not delete spot.",
-                      );
-                    }
-                  })();
+        {
+          text: "Delete spot",
+          style: "destructive",
+          onPress: () => {
+            Alert.alert(
+              "Delete this spot?",
+              "Reviews and photos will be removed. This cannot be undone.",
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Delete",
+                  style: "destructive",
+                  onPress: () => {
+                    void (async () => {
+                      try {
+                        await deleteSpotJson({
+                          spot_id: spotId,
+                          user_id: user.id,
+                          deleting_user_points: true,
+                        });
+                        await refetchSpots();
+                        navigation.goBack();
+                      } catch (e) {
+                        Alert.alert(
+                          "Error",
+                          e instanceof Error
+                            ? e.message
+                            : "Could not delete spot.",
+                        );
+                      }
+                    })();
+                  },
                 },
-              },
-            ],
-          );
+              ],
+            );
+          },
         },
-      },
-      { text: "Cancel", style: "cancel" },
-    ]);
+        { text: "Cancel", style: "cancel" },
+      ]);
+    } else if (token) {
+      Alert.alert(title, undefined, [
+        {
+          text: "Report spot",
+          style: "destructive",
+          onPress: () => setShowSpotReportModal(true),
+        },
+        { text: "Cancel", style: "cancel" },
+      ]);
+    }
   };
 
   return (
@@ -533,15 +545,16 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
           {title}
         </Text>
         <View style={styles.headerActions}>
-          {isSpotOwner ? (
+          {isSpotOwner || token ? (
             <Button
               size="icon"
               icon={<EllipsisVertical size={20} color={Colors.dark} />}
               variant="ghost"
               onPress={spotMenu}
             />
-          ) : null}
-          {!token && !isSpotOwner ? <View style={styles.placeholder} /> : null}
+          ) : (
+            <View style={styles.placeholder} />
+          )}
         </View>
       </View>
 
@@ -1047,6 +1060,14 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
         token={token}
         navigation={rootNavigation as unknown as NavigationProp<ParamListBase>}
         onClose={() => setShareSheetOpen(false)}
+      />
+
+      <ReportConfirmModal
+        visible={showSpotReportModal}
+        onClose={() => setShowSpotReportModal(false)}
+        contentType="spot"
+        contentId={spotId}
+        contentLabel="Spot"
       />
     </View>
   );

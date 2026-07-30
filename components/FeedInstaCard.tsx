@@ -32,6 +32,7 @@ import {
   unlikeFeedPost,
   type FeedPost,
 } from "../utils/feedApi";
+
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import FeedPostOptionsSheet from "./FeedPostOptionsSheet";
 import FeedLikersModal from "./FeedLikersModal";
@@ -293,6 +294,10 @@ export default function FeedInstaCard({
     await reportFeedPost(token, post.id);
   }, [token, post.id]);
 
+  const handleBlockComplete = useCallback(() => {
+    onDeleted(post.id);
+  }, [post.id, onDeleted]);
+
   const openPostOptions = useCallback(() => {
     if (!token) return;
     setOptionsOpen(true);
@@ -497,12 +502,16 @@ export default function FeedInstaCard({
         visible={optionsOpen}
         onClose={() => setOptionsOpen(false)}
         isOwner={isOwner}
+        postId={post.id}
         onShare={onShare}
         onShareWithFriends={
           token && onShareWithFriends ? onShareWithFriends : undefined
         }
         onDeleteConfirmed={confirmDeletePost}
         onReportConfirmed={confirmReportPost}
+        authorUsername={author?.username}
+        authorId={!isOwner ? post.author_id : undefined}
+        onBlockComplete={!isOwner ? handleBlockComplete : undefined}
       />
       <FeedLikersModal
         visible={likersOpen}

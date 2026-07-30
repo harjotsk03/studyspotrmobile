@@ -36,6 +36,7 @@ import {
 import FeedPostOptionsSheet from "./FeedPostOptionsSheet";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 
+
 /** Space reserved at bottom-right for the action rail (icons + labels) */
 const RAIL_RESERVED_X = 66;
 
@@ -256,6 +257,10 @@ export default function FeedReelItem({
     await reportFeedPost(token, post.id);
   }, [token, post.id]);
 
+  const handleBlockComplete = useCallback(() => {
+    onDeleted(post.id);
+  }, [post.id, onDeleted]);
+
   const openPostOptions = useCallback(() => {
     if (!token) return;
     setOptionsOpen(true);
@@ -430,12 +435,16 @@ export default function FeedReelItem({
         visible={optionsOpen}
         onClose={() => setOptionsOpen(false)}
         isOwner={isOwner}
+        postId={post.id}
         onShare={onShare}
         onShareWithFriends={
           token && onShareWithFriends ? onShareWithFriends : undefined
         }
         onDeleteConfirmed={confirmDeletePost}
         onReportConfirmed={confirmReportPost}
+        authorUsername={author?.username}
+        authorId={!isOwner ? post.author_id : undefined}
+        onBlockComplete={!isOwner ? handleBlockComplete : undefined}
       />
     </View>
   );

@@ -30,7 +30,8 @@ import type {
   ProfileSectionKey,
   ProfileStackParamList,
 } from "./ProfileSectionScreen";
-import { Camera, MapPin, Share, Star, UserPlus } from "lucide-react-native";
+import type { RootStackParamList } from "../types/navigation";
+import { Camera, MapPin, ShieldBan, Share, Star, UserPlus } from "lucide-react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import {
@@ -62,6 +63,8 @@ export default function ProfileScreen() {
   } = useAuth();
   const navigation =
     useNavigation<NativeStackNavigationProp<ProfileStackParamList>>();
+  const rootNavigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { spots } = useSpots();
 
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
@@ -795,6 +798,7 @@ export default function ProfileScreen() {
                   navigation.navigate("ProfileSection", { section })
                 }
                 onLogout={handleLogout}
+                onBlockedUsers={() => rootNavigation.navigate("BlockedUsers")}
                 onPreviewWelcomeToast={__DEV__ ? replayWelcomeToast : undefined}
               />
             ) : listLoading ? (
@@ -815,6 +819,7 @@ function SettingsBody({
   sectionButtons,
   onNavigateSection,
   onLogout,
+  onBlockedUsers,
   onPreviewWelcomeToast,
 }: {
   sectionButtons: Array<{
@@ -824,6 +829,7 @@ function SettingsBody({
   }>;
   onNavigateSection: (section: ProfileSectionKey) => void;
   onLogout: () => void;
+  onBlockedUsers: () => void;
   onPreviewWelcomeToast?: () => void;
 }) {
   return (
@@ -843,6 +849,24 @@ function SettingsBody({
           />
         ))}
       </View>
+
+      <Text style={[styles.sectionCardTitle, { marginTop: 24 }]}>
+        Privacy
+      </Text>
+      <TouchableOpacity
+        style={styles.blockedUsersRow}
+        onPress={onBlockedUsers}
+        activeOpacity={0.7}
+      >
+        <ShieldBan size={20} color={Colors.dark} strokeWidth={2} />
+        <View style={styles.blockedUsersInfo}>
+          <Text style={styles.blockedUsersTitle}>Blocked Users</Text>
+          <Text style={styles.blockedUsersSubtitle}>
+            Manage users you've blocked
+          </Text>
+        </View>
+      </TouchableOpacity>
+
       {onPreviewWelcomeToast ? (
         <TouchableOpacity
           style={styles.devPreviewToastButton}
@@ -1057,6 +1081,31 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.instrument.medium,
     fontSize: 11,
     color: "#666",
+  },
+  blockedUsersRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: "#e5e5e5",
+  },
+  blockedUsersInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  blockedUsersTitle: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 15,
+    color: Colors.dark,
+  },
+  blockedUsersSubtitle: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 13,
+    color: "#888",
   },
   logoutButton: {
     marginTop: 18,

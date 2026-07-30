@@ -43,6 +43,7 @@ export type RootStackParamList = {
     highlightCommentId?: string | null;
   };
   FeedInteractions: undefined;
+  BlockedUsers: undefined;
   SpotViewer: { spot: StudySpot };
   UserPostsFeed: UserPostsFeedParams;
 } & Pick<

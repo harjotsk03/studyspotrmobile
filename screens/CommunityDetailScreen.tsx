@@ -34,6 +34,7 @@ import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import {
   ArrowLeft,
   CalendarDays,
+  Flag,
   Globe,
   Info,
   Lock,
@@ -65,6 +66,7 @@ import {
 } from "../utils/communityMembership";
 import ActionButton from "../components/ActionButton";
 import Button from "../components/Button";
+import ReportConfirmModal from "../components/ReportConfirmModal";
 import { SkeletonBox } from "../components/Skeleton";
 import type {
   NativeStackNavigationProp,
@@ -296,6 +298,7 @@ export default function CommunityDetailScreen({ route }: Props) {
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showCommunityReportModal, setShowCommunityReportModal] = useState(false);
 
   const communityId = initialCommunity.id;
 
@@ -843,6 +846,14 @@ export default function CommunityDetailScreen({ route }: Props) {
                   }}
                 />
               )}
+              {!isOwner && token && (
+                <ActionButton
+                  label="Report"
+                  icon={Flag}
+                  variant="delete"
+                  onPress={() => setShowCommunityReportModal(true)}
+                />
+              )}
               {isMember && !isOwner && (
                 <ActionButton
                   label="Leave"
@@ -1028,6 +1039,14 @@ export default function CommunityDetailScreen({ route }: Props) {
         token={token}
         navigation={navigation as unknown as NavigationProp<ParamListBase>}
         onClose={() => setShareSheetOpen(false)}
+      />
+
+      <ReportConfirmModal
+        visible={showCommunityReportModal}
+        onClose={() => setShowCommunityReportModal(false)}
+        contentType="community"
+        contentId={communityId}
+        contentLabel="Community"
       />
     </View>
   );

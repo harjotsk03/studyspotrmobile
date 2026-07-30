@@ -78,6 +78,7 @@ import SpotsScreen from "./screens/SpotsScreen";
 import SpotDetailScreen from "./screens/SpotDetailScreen";
 import SpotWizardScreen from "./screens/SpotWizardScreen";
 import ProfileScreen from "./screens/ProfileScreen";
+import BlockedUsersScreen from "./screens/BlockedUsersScreen";
 import LoginScreen from "./screens/LoginScreen";
 import RegisterScreen from "./screens/RegisterScreen";
 import ForgotPasswordScreen from "./screens/ForgotPasswordScreen";
@@ -434,6 +435,10 @@ function AppContent() {
         <RootStack.Screen
           name="CommunityMembers"
           component={CommunityMembersScreen}
+        />
+        <RootStack.Screen
+          name="BlockedUsers"
+          component={BlockedUsersScreen}
         />
       </RootStack.Navigator>
       <LoginWelcomeToast />

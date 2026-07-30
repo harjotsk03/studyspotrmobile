@@ -19,7 +19,16 @@ import {
   View,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
-import { ArrowLeft, Lock, MapPin, Star } from "lucide-react-native";
+import {
+  ArrowLeft,
+  EllipsisVertical,
+  Flag,
+  Lock,
+  MapPin,
+  ShieldBan,
+  ShieldCheck,
+  Star,
+} from "lucide-react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import ProfilePostGridTile from "../components/ProfilePostGridTile";
 import ProfileStat from "../components/ProfileStat";
@@ -51,6 +60,8 @@ import {
   type SpotReview,
 } from "../utils/spotsApi";
 import { createDirectConversation } from "../utils/chatApi";
+import Button from "../components/Button";
+import ReportConfirmModal from "../components/ReportConfirmModal";
 
 type ProfileListRow = FeedPost | StudySpot | SpotReview;
 
@@ -223,6 +234,12 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const [avatarLightbox, setAvatarLightbox] = useState(false);
 
+  const [showProfileOptions, setShowProfileOptions] = useState(false);
+  const [showBlockConfirm, setShowBlockConfirm] = useState(false);
+  const [blockLoading, setBlockLoading] = useState(false);
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+
   const [mainTab, setMainTab] = useState<PublicProfileMainTabKey>("posts");
 
   const [publishedPosts, setPublishedPosts] = useState<FeedPost[]>([]);
@@ -337,6 +354,17 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
       setUser(nextUser);
       setRelationship(json?.relationship ?? "none");
       setAvatarLoadFailed(false);
+
+      // Check block status
+      const blockRes = await fetch(
+        `${API_BASE_URL}/api/v1/users/blocked`,
+        { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } },
+      );
+      if (blockRes.ok) {
+        const blockJson = await blockRes.json().catch(() => null);
+        const blockedUsers: { id: string }[] = blockJson?.users ?? [];
+        setIsBlocked(blockedUsers.some((u) => u.id === userId));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load profile.");
     } finally {
@@ -347,6 +375,49 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
 
   useEffect(() => {
     void fetchProfile();
+  }, [token, userId]);
+
+  const handleBlock = useCallback(async () => {
+    if (!token) return;
+    setBlockLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/users/${userId}/block`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || "Could not block user.");
+      }
+      setIsBlocked(true);
+      setShowBlockConfirm(false);
+      navigation.goBack();
+    } catch (e) {
+      Alert.alert("Error", e instanceof Error ? e.message : "Could not block user.");
+    } finally {
+      setBlockLoading(false);
+    }
+  }, [token, userId, navigation]);
+
+  const handleUnblock = useCallback(async () => {
+    if (!token) return;
+    setBlockLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/users/${userId}/block`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || "Could not unblock user.");
+      }
+      setIsBlocked(false);
+      setShowProfileOptions(false);
+    } catch (e) {
+      Alert.alert("Error", e instanceof Error ? e.message : "Could not unblock user.");
+    } finally {
+      setBlockLoading(false);
+    }
   }, [token, userId]);
 
   async function sendProfileAction(nextRelationship: PublicRelationship) {
@@ -984,7 +1055,17 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
               {" "}
             </Text>
           )}
-          <View style={[styles.iconButton, styles.iconButtonPlaceholder]} />
+          {relationship !== "self" ? (
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => setShowProfileOptions(true)}
+              style={styles.iconButton}
+            >
+              <EllipsisVertical size={22} color={Colors.dark} strokeWidth={2.2} />
+            </TouchableOpacity>
+          ) : (
+            <View style={[styles.iconButton, styles.iconButtonPlaceholder]} />
+          )}
         </View>
 
         {loading && <PublicProfileLoadingSkeleton />}
@@ -1069,6 +1150,124 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
           </Pressable>
         </Modal>
       ) : null}
+
+      {/* Profile options sheet */}
+      <Modal
+        visible={showProfileOptions}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowProfileOptions(false)}
+      >
+        <Pressable
+          style={styles.profileOptionsBackdrop}
+          onPress={() => setShowProfileOptions(false)}
+        >
+          <Pressable style={styles.profileOptionsCard} onPress={() => {}}>
+            <TouchableOpacity
+              style={styles.profileOptionRow}
+              activeOpacity={0.7}
+              onPress={() => {
+                if (isBlocked) {
+                  void handleUnblock();
+                } else {
+                  setShowProfileOptions(false);
+                  setShowBlockConfirm(true);
+                }
+              }}
+            >
+              {isBlocked ? (
+                <ShieldCheck size={22} color={Colors.dark} strokeWidth={2} />
+              ) : (
+                <ShieldBan size={22} color="#DC3545" strokeWidth={2} />
+              )}
+              <Text
+                style={[
+                  styles.profileOptionLabel,
+                  !isBlocked && styles.profileOptionLabelDestructive,
+                ]}
+              >
+                {isBlocked ? "Unblock" : "Block"}
+              </Text>
+            </TouchableOpacity>
+
+            <View style={styles.profileOptionDivider} />
+
+            <TouchableOpacity
+              style={styles.profileOptionRow}
+              activeOpacity={0.7}
+              onPress={() => {
+                setShowProfileOptions(false);
+                setShowReportModal(true);
+              }}
+            >
+              <Flag size={22} color="#DC3545" strokeWidth={2} />
+              <Text
+                style={[
+                  styles.profileOptionLabel,
+                  styles.profileOptionLabelDestructive,
+                ]}
+              >
+                Report
+              </Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Block confirm modal */}
+      <Modal
+        visible={showBlockConfirm}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowBlockConfirm(false)}
+      >
+        <Pressable
+          style={styles.confirmBackdrop}
+          onPress={() => {
+            if (!blockLoading) setShowBlockConfirm(false);
+          }}
+        >
+          <Pressable style={styles.confirmCard} onPress={() => {}}>
+            <Text style={styles.confirmTitle}>
+              Block {user?.username ? `@${user.username}` : displayName}?
+            </Text>
+            <Text style={styles.confirmBody}>
+              They won't be able to see your content and you won't see theirs.
+              You can unblock them later.
+            </Text>
+            <View style={styles.confirmActions}>
+              <View style={styles.confirmActionCell}>
+                <Button
+                  label="Cancel"
+                  variant="secondary"
+                  fullWidth
+                  onPress={() => setShowBlockConfirm(false)}
+                  disabled={blockLoading}
+                />
+              </View>
+              <View style={styles.confirmActionCell}>
+                <Button
+                  label="Block"
+                  variant="destructive"
+                  fullWidth
+                  onPress={() => void handleBlock()}
+                  disabled={blockLoading}
+                  loading={blockLoading}
+                />
+              </View>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Report modal */}
+      <ReportConfirmModal
+        visible={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        contentType="user"
+        contentId={userId}
+        contentLabel="User"
+      />
     </SafeAreaView>
   );
 }
@@ -1395,5 +1594,73 @@ const styles = StyleSheet.create({
     width: Dimensions.get("window").width - 48,
     height: Dimensions.get("window").width - 48,
     borderRadius: 16,
+  },
+  profileOptionsBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 32,
+  },
+  profileOptionsCard: {
+    width: "100%",
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 24,
+    gap: 0,
+  },
+  profileOptionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    paddingVertical: 16,
+  },
+  profileOptionDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "#eaeaea",
+  },
+  profileOptionLabel: {
+    fontFamily: Fonts.instrument.semiBold,
+    fontSize: 16,
+    color: Colors.dark,
+  },
+  profileOptionLabelDestructive: {
+    color: "#DC3545",
+    fontFamily: Fonts.gabarito.semiBold,
+  },
+  confirmBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 32,
+  },
+  confirmCard: {
+    width: "100%",
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 24,
+    gap: 12,
+  },
+  confirmTitle: {
+    fontFamily: Fonts.gabarito.bold,
+    fontSize: 20,
+    color: Colors.dark,
+    textAlign: "center",
+  },
+  confirmBody: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 15,
+    color: "#555",
+    textAlign: "center",
+    lineHeight: 22,
+  },
+  confirmActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 8,
+  },
+  confirmActionCell: {
+    flex: 1,
   },
 });

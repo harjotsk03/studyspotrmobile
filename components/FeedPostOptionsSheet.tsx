@@ -12,19 +12,27 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Flag, Send, Share2, Trash2 } from "lucide-react-native";
+import { Flag, Send, Share2, ShieldBan, Trash2 } from "lucide-react-native";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
+import { API_BASE_URL } from "../constants/Api";
+import { useAuth } from "../context/AuthContext";
 import Button from "./Button";
+import ReportConfirmModal from "./ReportConfirmModal";
 
 export type FeedPostOptionsSheetProps = {
   visible: boolean;
   onClose: () => void;
   isOwner: boolean;
+  postId: string;
+  authorId?: string;
   onShare: () => void;
   onDeleteConfirmed: () => Promise<void>;
   onReportConfirmed: () => Promise<void>;
   onShareWithFriends?: () => void;
+  authorUsername?: string | null;
+  onBlockUser?: () => void;
+  onBlockComplete?: () => void;
 };
 
 const DESTRUCTIVE = "#DC3545";
@@ -63,10 +71,15 @@ export default function FeedPostOptionsSheet({
   visible,
   onClose,
   isOwner,
+  postId,
+  authorId,
   onShare,
   onShareWithFriends,
   onDeleteConfirmed,
   onReportConfirmed,
+  authorUsername,
+  onBlockUser,
+  onBlockComplete,
 }: FeedPostOptionsSheetProps) {
   const insets = useSafeAreaInsets();
   const pendingAction = useRef<(() => void) | null>(null);
@@ -97,9 +110,14 @@ export default function FeedPostOptionsSheet({
     if (action) action();
   }, []);
 
+  const { token } = useAuth();
+
   // Delete modal state
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [showBlockModal, setShowBlockModal] = useState(false);
+  const [blockLoading, setBlockLoading] = useState(false);
 
   const confirmDelete = useCallback(() => {
     closeWithAction(() => {
@@ -124,32 +142,9 @@ export default function FeedPostOptionsSheet({
 
   const confirmReport = useCallback(() => {
     closeWithAction(() => {
-      Alert.alert(
-        "Report this post?",
-        "Our team will review it against community guidelines.",
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Report",
-            style: "destructive",
-            onPress: () => {
-              void (async () => {
-                try {
-                  await onReportConfirmed();
-                  Alert.alert("Thanks", "We received your report.");
-                } catch (e) {
-                  Alert.alert(
-                    "Report",
-                    e instanceof Error ? e.message : "Could not submit report.",
-                  );
-                }
-              })();
-            },
-          },
-        ],
-      );
+      setShowReportModal(true);
     });
-  }, [closeWithAction, onReportConfirmed]);
+  }, [closeWithAction]);
 
   const runShare = useCallback(() => {
     closeWithAction(() => void onShare());
@@ -158,6 +153,31 @@ export default function FeedPostOptionsSheet({
   const runShareFriends = useCallback(() => {
     closeWithAction(() => onShareWithFriends?.());
   }, [closeWithAction, onShareWithFriends]);
+
+  const runBlockUser = useCallback(() => {
+    closeWithAction(() => setShowBlockModal(true));
+  }, [closeWithAction]);
+
+  const handleBlock = useCallback(async () => {
+    if (!token || !authorId) return;
+    setBlockLoading(true);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/v1/users/${authorId}/block`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+        },
+      );
+      if (!res.ok) throw new Error("Could not block user.");
+      setShowBlockModal(false);
+      onBlockComplete?.();
+    } catch {
+      Alert.alert("Error", "Could not block user.");
+    } finally {
+      setBlockLoading(false);
+    }
+  }, [token, authorId, onBlockComplete]);
 
   return (
     <>
@@ -218,13 +238,23 @@ export default function FeedPostOptionsSheet({
                   onPress={confirmDelete}
                 />
               ) : (
-                <OptionRow
-                  icon={Flag}
-                  label="Report"
-                  destructive
-                  isLast
-                  onPress={confirmReport}
-                />
+                <>
+                  {authorId && (
+                    <OptionRow
+                      icon={ShieldBan}
+                      label={authorUsername ? `Block @${authorUsername}` : "Block user"}
+                      destructive
+                      onPress={runBlockUser}
+                    />
+                  )}
+                  <OptionRow
+                    icon={Flag}
+                    label="Report"
+                    destructive
+                    isLast
+                    onPress={confirmReport}
+                  />
+                </>
               )}
             </View>
           </ScrollView>
@@ -274,6 +304,62 @@ export default function FeedPostOptionsSheet({
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Block confirm modal */}
+      <Modal
+        visible={showBlockModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!blockLoading) setShowBlockModal(false);
+        }}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => {
+            if (!blockLoading) setShowBlockModal(false);
+          }}
+        >
+          <Pressable style={styles.modalCard} onPress={() => {}}>
+            <Text style={styles.modalTitle}>
+              Block {authorUsername ? `@${authorUsername}` : "this user"}?
+            </Text>
+            <Text style={styles.modalBody}>
+              They won't be able to see your content and you won't see theirs.
+              You can unblock them later.
+            </Text>
+            <View style={styles.modalActions}>
+              <View style={styles.modalActionCell}>
+                <Button
+                  label="Cancel"
+                  variant="secondary"
+                  fullWidth
+                  onPress={() => setShowBlockModal(false)}
+                  disabled={blockLoading}
+                />
+              </View>
+              <View style={styles.modalActionCell}>
+                <Button
+                  label="Block"
+                  variant="destructive"
+                  fullWidth
+                  onPress={() => void handleBlock()}
+                  disabled={blockLoading}
+                  loading={blockLoading}
+                />
+              </View>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <ReportConfirmModal
+        visible={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        contentType="post"
+        contentId={postId}
+        contentLabel="Post"
+      />
     </>
   );
 }

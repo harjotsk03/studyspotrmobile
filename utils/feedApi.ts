@@ -696,28 +696,27 @@ export async function deleteFeedPost(
   }
 }
 
-/** Report a post (server: `POST /posts/:id/report`). */
+/** Report a post via the generic report endpoint. */
 export async function reportFeedPost(
   token: string,
   postId: string,
   body?: { reason?: string },
 ): Promise<void> {
-  const res = await fetch(
-    `${FEED_API_BASE}/posts/${encodeURIComponent(postId)}/report`,
-    {
-      method: "POST",
-      headers: {
-        ...authHeaders(token),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        reason:
-          typeof body?.reason === "string" && body.reason.trim()
-            ? body.reason.trim()
-            : undefined,
-      }),
+  const res = await fetch(`${API_BASE_URL}/api/v1/report`, {
+    method: "POST",
+    headers: {
+      ...authHeaders(token),
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify({
+      content_type: "post",
+      content_id: postId,
+      reason:
+        typeof body?.reason === "string" && body.reason.trim()
+          ? body.reason.trim()
+          : undefined,
+    }),
+  });
   const json = await res.json().catch(() => null);
   if (!res.ok) {
     throw new Error(apiError(json, `Could not submit report (${res.status})`));

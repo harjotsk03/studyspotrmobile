@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   CalendarDays,
   Check,
+  Flag,
   MapPin,
   Share2,
   Trash2,
@@ -35,6 +36,7 @@ import type { RootStackParamList } from "../types/navigation";
 import ShareToFriendsSheet from "../components/ShareToFriendsSheet";
 import { patchSharedAttachmentEventCache } from "../components/SharedAttachmentPreview";
 import Button from "../components/Button";
+import ReportConfirmModal from "../components/ReportConfirmModal";
 
 // ─── Shared Types ─────────────────────────────────────────────────────────────
 
@@ -337,6 +339,7 @@ export default function EventDetailDrawer({
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [shareSheetOpen, setShareSheetOpen] = useState(false);
+  const [showEventReportModal, setShowEventReportModal] = useState(false);
 
   // Local community membership state (for when user joins from the drawer)
   const [communityJoinStatus, setCommunityJoinStatus] = useState<
@@ -1125,6 +1128,14 @@ export default function EventDetailDrawer({
               onPress={handleShare}
             />
           )}
+          {!canDeleteEvent && token && (
+            <Button
+              icon={<Flag size={20} color="#DC3545" strokeWidth={2} />}
+              variant="outline"
+              size="icon"
+              onPress={() => setShowEventReportModal(true)}
+            />
+          )}
           {canDeleteEvent && (
             <Button
               icon={<Trash2 size={20} color="#fff" strokeWidth={2} />}
@@ -1253,6 +1264,16 @@ export default function EventDetailDrawer({
           onClose();
         }}
       />
+
+      {detailEvent && (
+        <ReportConfirmModal
+          visible={showEventReportModal}
+          onClose={() => setShowEventReportModal(false)}
+          contentType="event"
+          contentId={detailEvent.id}
+          contentLabel="Event"
+        />
+      )}
     </Modal>
   );
 }

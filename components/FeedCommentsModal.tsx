@@ -49,6 +49,7 @@ import {
   type FeedComment,
 } from "../utils/feedApi";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
+import ReportConfirmModal from "./ReportConfirmModal";
 
 type Props = {
   visible: boolean;
@@ -181,6 +182,7 @@ export default function FeedCommentsModal({
   const [draft, setDraft] = useState("");
   const [replyTo, setReplyTo] = useState<FeedComment | null>(null);
   const [keyboardInset, setKeyboardInset] = useState(0);
+  const [reportCommentId, setReportCommentId] = useState<string | null>(null);
   const loadingRef = useRef(false);
   const closingRef = useRef(false);
 
@@ -522,6 +524,25 @@ export default function FeedCommentsModal({
     [token, onCommentsDelta],
   );
 
+  const confirmReportComment = useCallback(
+    (comment: FeedComment) => {
+      if (!token) return;
+      setReportCommentId(comment.id);
+    },
+    [token],
+  );
+
+  const handleCommentLongPress = useCallback(
+    (comment: FeedComment, isMine: boolean) => {
+      if (isMine) {
+        confirmDelete(comment);
+      } else if (token) {
+        confirmReportComment(comment);
+      }
+    },
+    [confirmDelete, confirmReportComment, token],
+  );
+
   const onSortPress = useCallback(() => {
     Alert.alert("Comments", "Showing newest first.");
   }, []);
@@ -693,6 +714,7 @@ export default function FeedCommentsModal({
   );
 
   return (
+    <>
     <Modal
       visible={visible && !!postId}
       transparent
@@ -842,7 +864,7 @@ export default function FeedCommentsModal({
                           style={styles.commentRow}
                           onPress={() => handleCommentRowPress(item)}
                           onLongPress={() => {
-                            if (mine) confirmDelete(item);
+                            handleCommentLongPress(item, !!mine);
                           }}
                           delayLongPress={450}
                         >
@@ -1034,6 +1056,15 @@ export default function FeedCommentsModal({
         </Animated.View>
       </View>
     </Modal>
+
+    <ReportConfirmModal
+      visible={reportCommentId !== null}
+      onClose={() => setReportCommentId(null)}
+      contentType="comment"
+      contentId={reportCommentId ?? ""}
+      contentLabel="Comment"
+    />
+    </>
   );
 }
 

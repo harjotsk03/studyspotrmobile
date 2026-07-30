@@ -25,6 +25,7 @@ import {
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import FeedPostOptionsSheet from "./FeedPostOptionsSheet";
 
+
 type Props = {
   post: FeedPost;
   token: string | null;
@@ -110,6 +111,10 @@ export default function FeedPostCard({
     if (!token) return;
     await reportFeedPost(token, post.id);
   }, [token, post.id]);
+
+  const handleBlockComplete = useCallback(() => {
+    onDeleted?.(post.id);
+  }, [post.id, onDeleted]);
 
   const openPostOptions = useCallback(() => {
     if (!token) return;
@@ -201,12 +206,16 @@ export default function FeedPostCard({
         visible={optionsOpen}
         onClose={() => setOptionsOpen(false)}
         isOwner={isOwner}
+        postId={post.id}
         onShare={onShare}
         onShareWithFriends={
           token && onShareWithFriends ? onShareWithFriends : undefined
         }
         onDeleteConfirmed={confirmDeletePost}
         onReportConfirmed={confirmReportPost}
+        authorUsername={author?.username}
+        authorId={!isOwner ? post.author_id : undefined}
+        onBlockComplete={!isOwner ? handleBlockComplete : undefined}
       />
     </View>
   );
