@@ -59,7 +59,7 @@ function asStringArray(value: unknown): string[] {
 export default function CompleteProfileScreen() {
   const insets = useSafeAreaInsets();
   const { showAlert, modal: alertModal } = useAppAlert();
-  const { profile, token, updateProfile, logout, replayWelcomeToast, uploadProfilePhoto } =
+  const { profile, token, updateProfile, logout, uploadProfilePhoto } =
     useAuth();
   const user = profile?.userProfile;
 
@@ -335,8 +335,7 @@ export default function CompleteProfileScreen() {
   const finish = async () => {
     setLoading(true);
     try {
-      const saved = await saveProfile({ onboarding_completed: true });
-      if (saved) replayWelcomeToast();
+      await saveProfile({ onboarding_completed: true });
     } catch {
       showAlert("Network error", "Could not reach the server.");
     } finally {

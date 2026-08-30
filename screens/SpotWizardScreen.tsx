@@ -31,6 +31,7 @@ import {
 } from "../utils/spotsApi";
 import { getSpotCoordinates } from "../utils/getSpotCoordinates";
 import { getSpotTitle } from "../utils/getSpotTitle";
+import { isSpotAlwaysOpen } from "../utils/spotHours";
 
 const STEPS_CREATE = ["Place", "Atmosphere", "Amenities", "Hours", "Photos & review"] as const;
 const STEPS_EDIT = ["Place", "Atmosphere", "Amenities", "Hours"] as const;
@@ -182,6 +183,7 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
       ? editSpot.close_time.trim()
       : "22:00",
   );
+  const [is24Hours, setIs24Hours] = useState(() => isSpotAlwaysOpen(editSpot));
 
   const [rating, setRating] = useState(5);
   const [reviewContent, setReviewContent] = useState("");
@@ -414,8 +416,9 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
       outlets_available: outlets,
       whiteboards_available: whiteboards,
       group_work_friendly: groupWork,
-      open_time: openTime.trim(),
-      close_time: closeTime.trim(),
+      is_24_hours: is24Hours,
+      open_time: is24Hours ? "00:00" : openTime.trim(),
+      close_time: is24Hours ? "00:00" : closeTime.trim(),
     };
 
     setLoading(true);
@@ -608,9 +611,34 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
   } else if (step === 3) {
     stepBody = (
       <>
-        <Text style={styles.sectionHint}>Use simple times like 08:00 — 22:00</Text>
-        <Input label="Opens" value={openTime} onChangeText={setOpenTime} placeholder="08:00" />
-        <Input label="Closes" value={closeTime} onChangeText={setCloseTime} placeholder="22:00" containerStyle={styles.fieldGap} />
+        <Text style={styles.sectionHint}>
+          {is24Hours
+            ? "This spot will show as always open."
+            : "Use simple times like 08:00 — 22:00"}
+        </Text>
+        <SwitchRow
+          label="Open 24 hours"
+          value={is24Hours}
+          onValueChange={setIs24Hours}
+        />
+        {!is24Hours ? (
+          <>
+            <Input
+              label="Opens"
+              value={openTime}
+              onChangeText={setOpenTime}
+              placeholder="08:00"
+              containerStyle={styles.fieldGap}
+            />
+            <Input
+              label="Closes"
+              value={closeTime}
+              onChangeText={setCloseTime}
+              placeholder="22:00"
+              containerStyle={styles.fieldGap}
+            />
+          </>
+        ) : null}
       </>
     );
   } else if (step === 4 && !isEdit) {

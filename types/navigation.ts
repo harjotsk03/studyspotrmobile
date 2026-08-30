@@ -33,9 +33,9 @@ export type InboxStackParamList = {
 };
 
 export type MainTabsParamList = {
-  Feed: undefined;
   Community: undefined;
   Spots: NavigatorScreenParams<SpotsStackParamList>;
+  Feed: undefined;
   Inbox: NavigatorScreenParams<InboxStackParamList>;
   Profile: undefined;
 };

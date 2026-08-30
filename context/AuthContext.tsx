@@ -51,13 +51,7 @@ interface AuthState {
     accessToken: string,
     refreshToken: string,
     rememberMe?: boolean,
-    /** After transition to main app, show animated welcome toast once. */
-    showWelcomeToast?: boolean,
   ) => Promise<void>;
-  /** Increments after successful login/register when `showWelcomeToast` is true — observed by LoginWelcomeToast. */
-  welcomeToastNonce: number;
-  /** Replay welcome toast animation (same as after login); use Profile → Settings “Preview…” in dev, or call from debugger. */
-  replayWelcomeToast: () => void;
   updateProfile: (updates: Partial<UserProfileData>) => Promise<void>;
   refreshProfile: () => Promise<UserProfile | null>;
   /** Multipart `image` upload to `/api/v1/auth/update-profile-photo`. */
@@ -216,7 +210,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState<string | null>(null);
-  const [welcomeToastNonce, setWelcomeToastNonce] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
 
   const tokenRef = useRef<string | null>(null);
@@ -464,7 +457,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       accessToken: string,
       nextRefreshToken: string,
       rememberMe = true,
-      showWelcomeToast?: boolean,
     ) => {
       const normalizedUser = normalizeProfile(user);
 
@@ -484,16 +476,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       applySession(accessToken, nextRefreshToken, rememberMe, normalizedUser);
-      if (showWelcomeToast) {
-        setWelcomeToastNonce((n) => n + 1);
-      }
     },
     [applySession],
   );
-
-  const replayWelcomeToast = useCallback(() => {
-    setWelcomeToastNonce((n) => n + 1);
-  }, []);
 
   const persistProfile = useCallback(async (nextProfile: UserProfile) => {
     if (!rememberSessionRef.current) {
@@ -643,8 +628,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         profile,
         token,
         isLoading,
-        welcomeToastNonce,
-        replayWelcomeToast,
         login,
         updateProfile,
         refreshProfile,
