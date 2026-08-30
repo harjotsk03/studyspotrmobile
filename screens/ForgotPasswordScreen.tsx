@@ -18,13 +18,9 @@ import Button from "../components/Button";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { MailIcon } from "lucide-react-native";
+import type { AuthStackParamList } from "../types/navigation";
 
 type ForgotPasswordStep = "request" | "reset";
-type AuthStackParamList = {
-  LoginScreen: undefined;
-  RegisterScreen: undefined;
-  ForgotPasswordScreen: undefined;
-};
 
 export default function ForgotPasswordScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();

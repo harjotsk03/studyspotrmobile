@@ -14,7 +14,7 @@ import * as Haptics from 'expo-haptics';
 import { Colors } from '../constants/Colors';
 import { Fonts } from '../constants/Fonts';
 
-type Variant = 'default' | 'secondary' | 'outline' | 'ghost' | 'destructive' | 'link' | 'accent';
+type Variant = 'default' | 'secondary' | 'outline' | 'ghost' | 'destructive' | 'link' | 'accent' | 'dark';
 type Size = 'sm' | 'default' | 'lg' | 'icon';
 
 type HapticStrength = 'light' | 'medium' | 'heavy' | 'selection' | false;
@@ -90,7 +90,7 @@ const variantStyles: Record<
   outline: {
     container: {
       backgroundColor: "#fff",
-      borderWidth: 1.25,
+      borderWidth: 1,
       borderColor: Colors.dark,
     },
     text: { color: Colors.dark },
@@ -123,26 +123,32 @@ const variantStyles: Record<
     shadowColor: darkenHex(Colors.accent, 0.22),
     depth: true,
   },
+  dark: {
+    container: { backgroundColor: Colors.dark2, borderWidth: 1.25, borderColor: Colors.dark },
+    text: { color: "#fff" },
+    shadowColor: darkenHex(Colors.dark, 0.22),
+    depth: true,
+  },
 };
 
 const sizeStyles: Record<Size, { container: ViewStyle; text: TextStyle; iconSize: number }> = {
   sm: {
-    container: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 6 },
+    container: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 999 },
     text: { fontSize: 13 },
     iconSize: 16,
   },
   default: {
-    container: { paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8 },
+    container: { paddingVertical: 12, paddingHorizontal: 20, borderRadius: 999 },
     text: { fontSize: 14 },
     iconSize: 18,
   },
   lg: {
-    container: { paddingVertical: 16, paddingHorizontal: 28, borderRadius: 10 },
+    container: { paddingVertical: 16, paddingHorizontal: 28, borderRadius: 999 },
     text: { fontSize: 17 },
     iconSize: 22,
   },
   icon: {
-    container: { padding: 10, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+    container: { padding: 10, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
     text: { fontSize: 0 },
     iconSize: 20,
   },

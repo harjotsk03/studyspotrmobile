@@ -5,6 +5,14 @@ import type { FeedPost } from "../utils/feedApi";
 import type { ChatOtherUser } from "../utils/chatApi";
 import type { UserPostsFeedParams } from "../screens/UserPostsFeedScreen";
 
+export type AuthStackParamList = {
+  WelcomeScreen: undefined;
+  LoginScreen: undefined;
+  SignupMethodScreen: undefined;
+  RegisterScreen: undefined;
+  ForgotPasswordScreen: undefined;
+};
+
 export type SpotsStackParamList = {
   SpotsHome: undefined;
   SpotDetail: { spot: StudySpot };

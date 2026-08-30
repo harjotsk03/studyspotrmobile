@@ -1,6 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  Alert,
   Keyboard,
   Pressable,
   StyleSheet,
@@ -11,22 +10,25 @@ import {
 } from "react-native";
 import { Colors } from "../constants/Colors";
 import { API_BASE_URL } from "../constants/Api";
-import { useAuth } from "../context/AuthContext";
+import {
+  loadRememberMePreference,
+  persistRememberMePreference,
+  useAuth,
+} from "../context/AuthContext";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Fonts } from "../constants/Fonts";
 import Button from "../components/Button";
 import Input from "../components/Input";
+import SocialAuthButtons from "../components/SocialAuthButtons";
+import { useAppAlert } from "../components/AppAlertModal";
 import { Circle, CircleCheck, Eye, EyeOff } from "lucide-react-native";
 
-type AuthStackParamList = {
-  LoginScreen: undefined;
-  RegisterScreen: undefined;
-  ForgotPasswordScreen: undefined;
-};
+import type { AuthStackParamList } from "../types/navigation";
 
 export default function LoginScreen() {
   const { login } = useAuth();
+  const { showAlert, modal: alertModal } = useAppAlert();
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -34,9 +36,21 @@ export default function LoginScreen() {
   const [rememberMe, setRememberMe] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
 
+  useEffect(() => {
+    void loadRememberMePreference().then(setRememberMe);
+  }, []);
+
+  const toggleRememberMe = () => {
+    setRememberMe((current) => {
+      const next = !current;
+      void persistRememberMePreference(next);
+      return next;
+    });
+  };
+
   const handleLogin = async () => {
     if (!email || !password) {
-      Alert.alert("Error", "Please enter your email and password.");
+      showAlert("Almost there", "Please enter your email and password.");
       return;
     }
 
@@ -51,7 +65,7 @@ export default function LoginScreen() {
       const data = await res.json();
 
       if (!res.ok) {
-        Alert.alert("Login failed", data.error || "Something went wrong.");
+        showAlert("Login failed", data.error || "Something went wrong.");
         return;
       }
 
@@ -63,7 +77,7 @@ export default function LoginScreen() {
         true,
       );
     } catch {
-      Alert.alert("Network error", "Could not reach the server.");
+      showAlert("Network error", "Could not reach the server.");
     } finally {
       setLoading(false);
     }
@@ -118,7 +132,9 @@ export default function LoginScreen() {
             <View style={styles.actionsRow}>
               <Pressable
                 style={styles.rememberMeButton}
-                onPress={() => setRememberMe((current) => !current)}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: rememberMe }}
+                onPress={toggleRememberMe}
               >
                 <View>
                   {rememberMe ? (
@@ -147,11 +163,19 @@ export default function LoginScreen() {
               style={styles.loginButton}
               onPress={handleLogin}
             />
+
+            <SocialAuthButtons
+              disabled={loading}
+              intent="signin"
+              rememberMe={rememberMe}
+              divider="above"
+              dividerLabel="or"
+            />
           </View>
 
           <TouchableOpacity
-            style={styles.footer}
-            onPress={() => navigation.navigate("RegisterScreen")}
+            style={styles.registerButton}
+            onPress={() => navigation.navigate("SignupMethodScreen")}
           >
             <Text style={styles.registerText}>
               Don't have an account?{" "}
@@ -159,6 +183,7 @@ export default function LoginScreen() {
             </Text>
           </TouchableOpacity>
         </View>
+        {alertModal}
       </View>
     </TouchableWithoutFeedback>
   );
@@ -178,10 +203,6 @@ const styles = StyleSheet.create({
   content: {
     width: "100%",
   },
-  footer: {
-    marginTop: "auto",
-    marginBottom: 20,
-  },
   title: {
     fontSize: 36,
     fontFamily: Fonts.gabarito.bold,
@@ -194,6 +215,11 @@ const styles = StyleSheet.create({
     color: "#666",
     marginBottom: 10,
   },
+  registerButton: {
+    marginTop: "auto",
+    marginBottom: 20,
+    alignItems: "center",
+  },
   registerText: {
     color: Colors.dark,
     fontSize: 16,
@@ -202,6 +228,7 @@ const styles = StyleSheet.create({
   },
   loginButton: {
     marginTop: 24,
+    marginBottom: 8,
   },
   fieldGap: {
     marginTop: 16,
@@ -221,25 +248,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-  },
-  checkbox: {
-    width: 18,
-    height: 18,
-    borderRadius: 5,
-    borderWidth: 1.5,
-    borderColor: "#CFCFCF",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#fff",
-  },
-  checkboxChecked: {
-    backgroundColor: Colors.accent,
-    borderColor: Colors.accent,
-  },
-  checkboxMark: {
-    color: "#fff",
-    fontSize: 11,
-    fontFamily: Fonts.gabarito.bold,
   },
   rememberMeText: {
     color: Colors.dark,

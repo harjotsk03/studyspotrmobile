@@ -1,15 +1,19 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useRef,
   useState,
   type ReactNode,
 } from "react";
+import { AppState } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { API_BASE_URL } from "../constants/Api";
 import { postProfilePhotoMultipart } from "../utils/profilePhotoUpload";
 import { disconnectChatSocket } from "../utils/chatSocket";
+import { profileNeedsOnboarding } from "../utils/profileCompleteness";
+import { unregisterPushNotifications } from "../utils/pushNotifications";
 
 export interface UserProfileData {
   id: string;
@@ -24,6 +28,9 @@ export interface UserProfileData {
   city?: string;
   country?: string;
   profile_photo?: string;
+  onboarding_completed?: boolean;
+  interests?: string[];
+  academic_interests?: string[];
   friends_count?: number;
   spots_created_count?: number;
   communities_joined_count?: number;
@@ -59,6 +66,8 @@ interface AuthState {
     opts?: { contentType?: string; fileName?: string },
   ) => Promise<void>;
   logout: () => Promise<void>;
+  /** True when a session exists but onboarding is not finished. */
+  needsOnboarding: boolean;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -67,7 +76,39 @@ const STORAGE_KEYS = {
   profile: "cached_profile",
   jwt: "jwt",
   refreshToken: "refresh_token",
+  rememberMe: "remember_me",
 } as const;
+
+export const REMEMBER_ME_STORAGE_KEY = STORAGE_KEYS.rememberMe;
+
+/** Refresh a couple of minutes before the access token actually expires. */
+const ACCESS_TOKEN_REFRESH_MARGIN_MS = 2 * 60 * 1000;
+const REFRESH_RETRY_MS = 30 * 1000;
+const UNKNOWN_EXPIRY_REFRESH_MS = 15 * 60 * 1000;
+
+type RefreshOutcome =
+  | { ok: true; accessToken: string }
+  | { ok: false; reason: "invalid" | "network" };
+
+export async function loadRememberMePreference(): Promise<boolean> {
+  try {
+    const value = await AsyncStorage.getItem(STORAGE_KEYS.rememberMe);
+    return value !== "0";
+  } catch {
+    return true;
+  }
+}
+
+export async function persistRememberMePreference(rememberMe: boolean) {
+  try {
+    await AsyncStorage.setItem(
+      STORAGE_KEYS.rememberMe,
+      rememberMe ? "1" : "0",
+    );
+  } catch {
+    // Preference write failed — login still applies the in-memory choice.
+  }
+}
 
 function decodeBase64Url(value: string) {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
@@ -119,6 +160,28 @@ function getTokenExpiryTime(token: string) {
   }
 }
 
+function tokenNeedsRefresh(token: string | null) {
+  if (!token) {
+    return true;
+  }
+
+  const expiresAt = getTokenExpiryTime(token);
+  if (!expiresAt) {
+    return false;
+  }
+
+  return expiresAt - Date.now() <= ACCESS_TOKEN_REFRESH_MARGIN_MS;
+}
+
+function msUntilAccessTokenRefresh(token: string) {
+  const expiresAt = getTokenExpiryTime(token);
+  if (!expiresAt) {
+    return UNKNOWN_EXPIRY_REFRESH_MS;
+  }
+
+  return Math.max(0, expiresAt - Date.now() - ACCESS_TOKEN_REFRESH_MARGIN_MS);
+}
+
 function isNestedUserProfile(
   profile: UserProfile | UserProfileData,
 ): profile is UserProfile {
@@ -141,246 +204,340 @@ function normalizeProfile(profile: UserProfile | UserProfileData): UserProfile {
   };
 }
 
+async function clearStoredSession() {
+  await Promise.all([
+    AsyncStorage.removeItem(STORAGE_KEYS.profile),
+    AsyncStorage.removeItem(STORAGE_KEYS.jwt),
+    AsyncStorage.removeItem(STORAGE_KEYS.refreshToken),
+  ]);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState<string | null>(null);
-  const [rememberSession, setRememberSession] = useState(false);
   const [welcomeToastNonce, setWelcomeToastNonce] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
-  const isRefreshingRef = useRef(false);
 
-  const clearStoredAuth = async () => {
-    await Promise.all([
-      AsyncStorage.removeItem(STORAGE_KEYS.profile),
-      AsyncStorage.removeItem(STORAGE_KEYS.jwt),
-      AsyncStorage.removeItem(STORAGE_KEYS.refreshToken),
-    ]);
-  };
+  const tokenRef = useRef<string | null>(null);
+  const refreshTokenRef = useRef<string | null>(null);
+  const rememberSessionRef = useRef(false);
+  const refreshInFlightRef = useRef<Promise<RefreshOutcome> | null>(null);
 
-  const refreshAccessToken = async (
-    currentRefreshToken: string,
-    shouldPersist: boolean,
-  ) => {
-    if (isRefreshingRef.current) {
-      return null;
-    }
-
-    isRefreshingRef.current = true;
-
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/auth/refresh-token`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: currentRefreshToken }),
-      });
-
-      const data = await res.json().catch(() => null);
-
-      if (!res.ok || !data?.access_token) {
-        return null;
-      }
-
-      const nextRefreshToken =
-        typeof data.refresh_token === "string" && data.refresh_token.length > 0
-          ? data.refresh_token
-          : currentRefreshToken;
-
-      setToken(data.access_token);
+  const applySession = useCallback(
+    (
+      nextToken: string,
+      nextRefreshToken: string,
+      persist: boolean,
+      nextProfile?: UserProfile | null,
+    ) => {
+      tokenRef.current = nextToken;
+      refreshTokenRef.current = nextRefreshToken;
+      rememberSessionRef.current = persist;
+      setToken(nextToken);
       setRefreshToken(nextRefreshToken);
-      setRememberSession(shouldPersist);
-
-      if (shouldPersist) {
-        await Promise.all([
-          AsyncStorage.setItem(STORAGE_KEYS.jwt, data.access_token),
-          AsyncStorage.setItem(STORAGE_KEYS.refreshToken, nextRefreshToken),
-        ]);
+      if (nextProfile) {
+        setProfile(nextProfile);
       }
+    },
+    [],
+  );
 
-      return data.access_token as string;
-    } catch {
-      return null;
-    } finally {
-      isRefreshingRef.current = false;
+  const refreshAccessToken = useCallback(async (): Promise<RefreshOutcome> => {
+    if (refreshInFlightRef.current) {
+      return refreshInFlightRef.current;
     }
-  };
 
-  const logout = async () => {
+    const currentRefreshToken = refreshTokenRef.current;
+    if (!currentRefreshToken) {
+      return { ok: false, reason: "invalid" };
+    }
+
+    const job = (async (): Promise<RefreshOutcome> => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/v1/auth/refresh-token`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: currentRefreshToken }),
+        });
+
+        const data = await res.json().catch(() => null);
+
+        if (!res.ok || !data?.access_token) {
+          if (res.status === 401 || res.status === 400) {
+            return { ok: false, reason: "invalid" };
+          }
+          return { ok: false, reason: "network" };
+        }
+
+        const nextRefreshToken =
+          typeof data.refresh_token === "string" && data.refresh_token.length > 0
+            ? data.refresh_token
+            : currentRefreshToken;
+
+        applySession(
+          data.access_token,
+          nextRefreshToken,
+          rememberSessionRef.current,
+        );
+
+        if (rememberSessionRef.current) {
+          await Promise.all([
+            AsyncStorage.setItem(STORAGE_KEYS.jwt, data.access_token),
+            AsyncStorage.setItem(STORAGE_KEYS.refreshToken, nextRefreshToken),
+          ]);
+        }
+
+        return { ok: true, accessToken: data.access_token as string };
+      } catch {
+        return { ok: false, reason: "network" };
+      } finally {
+        refreshInFlightRef.current = null;
+      }
+    })();
+
+    refreshInFlightRef.current = job;
+    return job;
+  }, [applySession]);
+
+  const logout = useCallback(async () => {
+    const accessToken = tokenRef.current;
     disconnectChatSocket();
-    await clearStoredAuth();
+    if (accessToken) {
+      void unregisterPushNotifications(accessToken);
+    }
+    await clearStoredSession();
+    tokenRef.current = null;
+    refreshTokenRef.current = null;
+    rememberSessionRef.current = false;
     setProfile(null);
     setToken(null);
     setRefreshToken(null);
-    setRememberSession(false);
-  };
+  }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
     (async () => {
       try {
-        const [storedProfile, storedToken, storedRefreshToken] =
+        const [storedProfile, storedToken, storedRefreshToken, storedRememberMe] =
           await Promise.all([
             AsyncStorage.getItem(STORAGE_KEYS.profile),
             AsyncStorage.getItem(STORAGE_KEYS.jwt),
             AsyncStorage.getItem(STORAGE_KEYS.refreshToken),
+            AsyncStorage.getItem(STORAGE_KEYS.rememberMe),
           ]);
 
-        const expiresAt = storedToken ? getTokenExpiryTime(storedToken) : null;
+        if (cancelled) {
+          return;
+        }
+
         const parsedProfile = storedProfile
           ? normalizeProfile(
               JSON.parse(storedProfile) as UserProfile | UserProfileData,
             )
           : null;
 
-        if (
-          parsedProfile &&
-          storedToken &&
-          storedRefreshToken &&
-          (!expiresAt || expiresAt > Date.now())
-        ) {
-          setProfile(parsedProfile);
-          setToken(storedToken);
-          setRefreshToken(storedRefreshToken);
-          setRememberSession(true);
-        } else if (parsedProfile && storedRefreshToken) {
-          const nextToken = await refreshAccessToken(storedRefreshToken, true);
+        const shouldRestore =
+          storedRememberMe !== "0" &&
+          Boolean(parsedProfile && storedRefreshToken);
 
-          if (nextToken) {
+        if (shouldRestore && parsedProfile && storedRefreshToken) {
+          tokenRef.current = storedToken;
+          refreshTokenRef.current = storedRefreshToken;
+          rememberSessionRef.current = true;
+          setRefreshToken(storedRefreshToken);
+
+          if (storedToken && !tokenNeedsRefresh(storedToken)) {
             setProfile(parsedProfile);
+            setToken(storedToken);
           } else {
-            await clearStoredAuth();
+            const outcome = await refreshAccessToken();
+            if (cancelled) {
+              return;
+            }
+            if (outcome.ok) {
+              setProfile(parsedProfile);
+            } else if (outcome.reason === "network" && storedToken) {
+              // Offline / blip: keep the last session so Remember Me survives.
+              setProfile(parsedProfile);
+              setToken(storedToken);
+            } else if (outcome.reason === "invalid") {
+              await clearStoredSession();
+              tokenRef.current = null;
+              refreshTokenRef.current = null;
+              rememberSessionRef.current = false;
+              setRefreshToken(null);
+            } else {
+              await clearStoredSession();
+            }
           }
         } else if (storedProfile || storedToken || storedRefreshToken) {
-          await clearStoredAuth();
+          await clearStoredSession();
         }
       } catch {
         // storage read failed — treat as logged out
       } finally {
-        setIsLoading(false);
+        if (!cancelled) {
+          setIsLoading(false);
+        }
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshAccessToken]);
+
+  useEffect(() => {
+    if (!token || !refreshToken) {
+      return;
+    }
+
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const arm = (delay: number) => {
+      timeoutId = setTimeout(() => {
+        void (async () => {
+          if (cancelled) {
+            return;
+          }
+
+          const outcome = await refreshAccessToken();
+          if (cancelled) {
+            return;
+          }
+
+          if (outcome.ok) {
+            return;
+          }
+
+          if (outcome.reason === "invalid") {
+            await logout();
+            return;
+          }
+
+          arm(REFRESH_RETRY_MS);
+        })();
+      }, delay);
+    };
+
+    arm(msUntilAccessTokenRefresh(token));
+
+    return () => {
+      cancelled = true;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [logout, refreshAccessToken, refreshToken, token]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (nextState) => {
+      if (nextState !== "active") {
+        return;
+      }
+
+      if (!tokenRef.current || !refreshTokenRef.current) {
+        return;
+      }
+
+      if (!tokenNeedsRefresh(tokenRef.current)) {
+        return;
+      }
+
+      void (async () => {
+        const outcome = await refreshAccessToken();
+        if (!outcome.ok && outcome.reason === "invalid") {
+          await logout();
+        }
+      })();
+    });
+
+    return () => sub.remove();
+  }, [logout, refreshAccessToken]);
+
+  const login = useCallback(
+    async (
+      user: UserProfile | UserProfileData,
+      accessToken: string,
+      nextRefreshToken: string,
+      rememberMe = true,
+      showWelcomeToast?: boolean,
+    ) => {
+      const normalizedUser = normalizeProfile(user);
+
+      await persistRememberMePreference(rememberMe);
+
+      if (rememberMe) {
+        await Promise.all([
+          AsyncStorage.setItem(
+            STORAGE_KEYS.profile,
+            JSON.stringify(normalizedUser),
+          ),
+          AsyncStorage.setItem(STORAGE_KEYS.jwt, accessToken),
+          AsyncStorage.setItem(STORAGE_KEYS.refreshToken, nextRefreshToken),
+        ]);
+      } else {
+        await clearStoredSession();
+      }
+
+      applySession(accessToken, nextRefreshToken, rememberMe, normalizedUser);
+      if (showWelcomeToast) {
+        setWelcomeToastNonce((n) => n + 1);
+      }
+    },
+    [applySession],
+  );
+
+  const replayWelcomeToast = useCallback(() => {
+    setWelcomeToastNonce((n) => n + 1);
   }, []);
 
-  useEffect(() => {
-    if (!token || !refreshToken) {
+  const persistProfile = useCallback(async (nextProfile: UserProfile) => {
+    if (!rememberSessionRef.current) {
       return;
     }
 
-    const expiresAt = getTokenExpiryTime(token);
-    if (!expiresAt) {
-      return;
-    }
-
-    const msUntilExpiry = expiresAt - Date.now();
-    if (msUntilExpiry <= 0) {
-      void logout();
-      return;
-    }
-
-    const timeoutId = setTimeout(() => {
-      void logout();
-    }, msUntilExpiry);
-
-    return () => clearTimeout(timeoutId);
-  }, [refreshToken, token]);
-
-  useEffect(() => {
-    if (!token || !refreshToken) {
-      return;
-    }
-
-    const intervalId = setInterval(
-      () => {
-        void (async () => {
-          const nextToken = await refreshAccessToken(
-            refreshToken,
-            rememberSession,
-          );
-
-          if (!nextToken) {
-            await logout();
-          }
-        })();
-      },
-      15 * 60 * 1000,
+    await AsyncStorage.setItem(
+      STORAGE_KEYS.profile,
+      JSON.stringify(nextProfile),
     );
+  }, []);
 
-    return () => clearInterval(intervalId);
-  }, [logout, refreshToken, rememberSession, token]);
+  const updateProfile = useCallback(
+    async (updates: Partial<UserProfileData>) => {
+      setProfile((current) => {
+        if (!current) {
+          return current;
+        }
 
-  const login = async (
-    user: UserProfile | UserProfileData,
-    accessToken: string,
-    nextRefreshToken: string,
-    rememberMe = true,
-    showWelcomeToast?: boolean,
-  ) => {
-    const normalizedUser = normalizeProfile(user);
+        const nextProfile: UserProfile = {
+          ...current,
+          userProfile: {
+            ...current.userProfile,
+            ...updates,
+          },
+        };
 
-    if (rememberMe) {
-      await Promise.all([
-        AsyncStorage.setItem(
-          STORAGE_KEYS.profile,
-          JSON.stringify(normalizedUser),
-        ),
-        AsyncStorage.setItem(STORAGE_KEYS.jwt, accessToken),
-        AsyncStorage.setItem(STORAGE_KEYS.refreshToken, nextRefreshToken),
-      ]);
-    } else {
-      await clearStoredAuth();
-    }
-
-    setProfile(normalizedUser);
-    setToken(accessToken);
-    setRefreshToken(nextRefreshToken);
-    setRememberSession(rememberMe);
-    if (showWelcomeToast) {
-      setWelcomeToastNonce((n) => n + 1);
-    }
-  };
-
-  function replayWelcomeToast() {
-    setWelcomeToastNonce((n) => n + 1);
-  }
-
-  const persistProfile = async (nextProfile: UserProfile) => {
-    if (rememberSession) {
-      await AsyncStorage.setItem(
-        STORAGE_KEYS.profile,
-        JSON.stringify(nextProfile),
-      );
-    }
-  };
-
-  const updateProfile = async (updates: Partial<UserProfileData>) => {
-    setProfile((current) => {
-      if (!current) {
-        return current;
-      }
-
-      const nextProfile: UserProfile = {
-        ...current,
-        userProfile: {
-          ...current.userProfile,
-          ...updates,
-        },
-      };
-
-      if (rememberSession) {
         void persistProfile(nextProfile);
-      }
-      return nextProfile;
-    });
-  };
+        return nextProfile;
+      });
+    },
+    [persistProfile],
+  );
 
-  const refreshProfile = async () => {
-    if (!token) {
+  const refreshProfile = useCallback(async () => {
+    const accessToken = tokenRef.current;
+    if (!accessToken) {
       return null;
     }
 
     try {
       const res = await fetch(`${API_BASE_URL}/api/v1/auth/profile`, {
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${accessToken}`,
           Accept: "application/json",
         },
       });
@@ -397,84 +554,88 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       return null;
     }
-  };
+  }, [persistProfile]);
 
-  const uploadProfilePhoto = async (
-    localUri: string,
-    opts?: { contentType?: string; fileName?: string },
-  ) => {
-    if (!token) {
-      throw new Error("You are not logged in.");
-    }
+  const uploadProfilePhoto = useCallback(
+    async (
+      localUri: string,
+      opts?: { contentType?: string; fileName?: string },
+    ) => {
+      const accessToken = tokenRef.current;
+      if (!accessToken) {
+        throw new Error("You are not logged in.");
+      }
 
-    const rawName =
-      opts?.fileName?.trim() ||
-      localUri.split("/").pop()?.split("?")[0] ||
-      "profile.jpg";
-    const ext = rawName.includes(".")
-      ? rawName.split(".").pop()?.toLowerCase()
-      : "";
-    const inferredMime =
-      ext === "png"
-        ? "image/png"
-        : ext === "webp"
-          ? "image/webp"
-          : ext === "heic" || ext === "heif"
-            ? "image/heic"
-            : "image/jpeg";
-    const contentType = opts?.contentType?.trim() || inferredMime;
-    const filename = rawName.includes(".") ? rawName : `${rawName}.jpg`;
+      const rawName =
+        opts?.fileName?.trim() ||
+        localUri.split("/").pop()?.split("?")[0] ||
+        "profile.jpg";
+      const ext = rawName.includes(".")
+        ? rawName.split(".").pop()?.toLowerCase()
+        : "";
+      const inferredMime =
+        ext === "png"
+          ? "image/png"
+          : ext === "webp"
+            ? "image/webp"
+            : ext === "heic" || ext === "heif"
+              ? "image/heic"
+              : "image/jpeg";
+      const contentType = opts?.contentType?.trim() || inferredMime;
+      const filename = rawName.includes(".") ? rawName : `${rawName}.jpg`;
 
-    const responseJson = (await postProfilePhotoMultipart({
-      token,
-      localUri,
-      contentType,
-      filename,
-    })) as Record<string, unknown> | null;
+      const responseJson = (await postProfilePhotoMultipart({
+        token: accessToken,
+        localUri,
+        contentType,
+        filename,
+      })) as Record<string, unknown> | null;
 
-    const data = responseJson;
+      const data = responseJson;
 
-    let nextPhoto: string | undefined;
-    if (typeof data?.profile_photo === "string" && data.profile_photo.trim()) {
-      nextPhoto = data.profile_photo.trim();
-    }
+      let nextPhoto: string | undefined;
+      if (typeof data?.profile_photo === "string" && data.profile_photo.trim()) {
+        nextPhoto = data.profile_photo.trim();
+      }
 
-    const userBlob = data?.user ?? data?.profile;
-    if (
-      !nextPhoto &&
-      userBlob &&
-      typeof userBlob === "object" &&
-      userBlob !== null
-    ) {
-      const u = userBlob as Record<string, unknown>;
-      const combined =
-        (typeof u.profile_photo === "string" && u.profile_photo.trim()) ||
-        (typeof u.photo_url === "string" && u.photo_url.trim()) ||
-        (typeof u.avatar_url === "string" && u.avatar_url.trim()) ||
-        "";
-      nextPhoto = combined || undefined;
-    }
+      const userBlob = data?.user ?? data?.profile;
+      if (
+        !nextPhoto &&
+        userBlob &&
+        typeof userBlob === "object" &&
+        userBlob !== null
+      ) {
+        const u = userBlob as Record<string, unknown>;
+        const combined =
+          (typeof u.profile_photo === "string" && u.profile_photo.trim()) ||
+          (typeof u.photo_url === "string" && u.photo_url.trim()) ||
+          (typeof u.avatar_url === "string" && u.avatar_url.trim()) ||
+          "";
+        nextPhoto = combined || undefined;
+      }
 
-    if (
-      userBlob &&
-      typeof userBlob === "object" &&
-      userBlob !== null &&
-      typeof (userBlob as Record<string, unknown>).id === "string"
-    ) {
-      await updateProfile({
-        ...(userBlob as Partial<UserProfileData>),
-        ...(nextPhoto ? { profile_photo: nextPhoto } : {}),
-      });
-      return;
-    }
+      if (
+        userBlob &&
+        typeof userBlob === "object" &&
+        userBlob !== null &&
+        typeof (userBlob as Record<string, unknown>).id === "string"
+      ) {
+        await updateProfile({
+          ...(userBlob as Partial<UserProfileData>),
+          ...(nextPhoto ? { profile_photo: nextPhoto } : {}),
+        });
+        return;
+      }
 
-    if (nextPhoto) {
-      await updateProfile({ profile_photo: nextPhoto });
-      return;
-    }
+      if (nextPhoto) {
+        await updateProfile({ profile_photo: nextPhoto });
+        return;
+      }
 
-    await refreshProfile();
-  };
+      await refreshProfile();
+    },
+    [refreshProfile, updateProfile],
+  );
 
   return (
     <AuthContext.Provider
@@ -489,6 +650,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         refreshProfile,
         uploadProfilePhoto,
         logout,
+        needsOnboarding: profileNeedsOnboarding(profile?.userProfile),
       }}
     >
       {children}

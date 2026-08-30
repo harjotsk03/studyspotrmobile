@@ -1,46 +1,44 @@
 import { useState } from "react";
 import {
-  Alert,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "../context/AuthContext";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import StudySpotrLogo from "../assets/studyspotrlogo.svg";
 import Input from "../components/Input";
 import Button from "../components/Button";
+import FadeInUp from "../components/FadeInUp";
+import SmoothProgressBar from "../components/SmoothProgressBar";
+import { useAppAlert } from "../components/AppAlertModal";
+import AuthLegalNotice from "../components/AuthLegalNotice";
+import { useLegalConsent } from "../hooks/useLegalConsent";
+import type { AuthStackParamList } from "../types/navigation";
 import {
+  ArrowLeft,
   ArrowRightIcon,
-  AtSignIcon,
   Check,
   Eye,
   EyeOff,
-  LockIcon,
-  MailIcon,
-  UserIcon,
   X,
 } from "lucide-react-native";
 
-const TOTAL_STEPS = 3;
-
-type AuthStackParamList = {
-  LoginScreen: undefined;
-  RegisterScreen: undefined;
-  ForgotPasswordScreen: undefined;
-};
+const TOTAL_STEPS = 2;
 
 const STEP_SUBTITLES = [
   "What's your name and email?",
   "Create a secure password",
-  "Pick a username",
 ];
 
 const PASSWORD_REQUIREMENTS = [
@@ -68,6 +66,9 @@ const PASSWORD_REQUIREMENTS = [
 
 export default function RegisterScreen() {
   const { login } = useAuth();
+  const { modal: legalModal, ensureConsent } = useLegalConsent();
+  const { showAlert, modal: alertModal } = useAppAlert();
+  const insets = useSafeAreaInsets();
   const navigation =
     useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
   const [step, setStep] = useState(0);
@@ -84,9 +85,6 @@ export default function RegisterScreen() {
   const [confirmError, setConfirmError] = useState("");
   const [showPasswordRules, setShowPasswordRules] = useState(false);
   const [showPasswords, setShowPasswords] = useState(false);
-
-  const [username, setUsername] = useState("");
-  const [usernameError, setUsernameError] = useState("");
 
   const passwordChecks = PASSWORD_REQUIREMENTS.map((requirement) => ({
     ...requirement,
@@ -112,7 +110,7 @@ export default function RegisterScreen() {
 
   const validateStep0 = async (): Promise<boolean> => {
     if (!firstName.trim() || !lastName.trim() || !email.trim()) {
-      Alert.alert("Error", "Please fill in all fields.");
+      showAlert("Almost there", "Please fill in all fields.");
       return false;
     }
 
@@ -143,7 +141,7 @@ export default function RegisterScreen() {
       setEmailError("");
       return true;
     } catch {
-      Alert.alert("Network error", "Could not reach the server.");
+      showAlert("Network error", "Could not reach the server.");
       return false;
     } finally {
       setLoading(false);
@@ -171,47 +169,18 @@ export default function RegisterScreen() {
     return valid;
   };
 
-  const validateStep2 = async (): Promise<boolean> => {
-    if (!username.trim()) {
-      setUsernameError("Please enter a username.");
-      return false;
-    }
-
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/auth/check-username`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: username.trim() }),
-      });
-      const data = await res.json();
-
-      if (!res.ok || data.exists || data.message != "Username is available.") {
-        setUsernameError(data.message || "This username is already taken.");
-        return false;
-      }
-
-      setUsernameError("");
-      return true;
-    } catch {
-      Alert.alert("Network error", "Could not reach the server.");
-      return false;
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleNext = async () => {
     if (step === 0) {
       if (await validateStep0()) setStep(1);
     } else if (step === 1) {
-      if (validateStep1()) setStep(2);
-    } else if (step === 2) {
-      if (await validateStep2()) handleRegister();
+      if (validateStep1()) await handleRegister();
     }
   };
 
   const handleRegister = async () => {
+    const accepted = await ensureConsent();
+    if (!accepted) return;
+
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/api/v1/auth/register`, {
@@ -221,7 +190,6 @@ export default function RegisterScreen() {
           first_name: firstName,
           last_name: lastName,
           email,
-          username,
           password,
         }),
       });
@@ -229,16 +197,24 @@ export default function RegisterScreen() {
       const data = await res.json();
 
       if (!res.ok) {
-        Alert.alert("Register failed", data.error || "Something went wrong.");
+        showAlert("Register failed", data.error || "Something went wrong.");
         return;
       }
 
-      await login(data.user, data.access_token, data.refresh_token, true, true);
+      await login(data.user, data.access_token, data.refresh_token, true, false);
     } catch {
-      Alert.alert("Network error", "Could not reach the server.");
+      showAlert("Network error", "Could not reach the server.");
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleBack = () => {
+    if (step > 0) {
+      setStep(step - 1);
+      return;
+    }
+    navigation.goBack();
   };
 
   return (
@@ -246,178 +222,160 @@ export default function RegisterScreen() {
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <View style={styles.headerRow}>
+          <Pressable
+            onPress={handleBack}
+            style={styles.backCircle}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+          >
+            <ArrowLeft size={20} color={Colors.dark} strokeWidth={2.4} />
+          </Pressable>
+          <StudySpotrLogo width={44} height={44} color={Colors.primary} />
+          <View style={styles.headerSpacer} />
+        </View>
+        <SmoothProgressBar progress={(step + 1) / TOTAL_STEPS} />
+      </View>
+
       <ScrollView
         contentContainerStyle={styles.scroll}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.title}>Create an Account</Text>
-        <Text style={styles.subtitle}>{STEP_SUBTITLES[step]}</Text>
+        <FadeInUp replayKey={step}>
+          <Text style={styles.title}>
+            {step === 0 ? "What's your name?" : "Create a password"}
+          </Text>
+          <Text style={styles.subtitle}>{STEP_SUBTITLES[step]}</Text>
 
-        <View style={styles.progressRow}>
-          {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
-            <View
-              key={i}
-              style={[
-                styles.progressBar,
-                i <= step ? styles.progressActive : styles.progressInactive,
-              ]}
-            />
-          ))}
-        </View>
-
-        {step === 0 && (
-          <>
-            <View style={styles.nameRow}>
+          {step === 0 && (
+            <>
               <Input
+                variant="floating"
                 label="First Name"
                 placeholder="First"
                 value={firstName}
                 onChangeText={setFirstName}
                 autoCapitalize="words"
                 autoComplete="given-name"
-                icon={<UserIcon size={18} color="#999" />}
-                containerStyle={styles.nameField}
+                containerStyle={styles.fieldGap}
               />
               <Input
+                variant="floating"
                 label="Last Name"
                 placeholder="Last"
                 value={lastName}
                 onChangeText={setLastName}
                 autoCapitalize="words"
                 autoComplete="family-name"
-                icon={<UserIcon size={18} color="#999" />}
-                containerStyle={styles.nameField}
+                containerStyle={styles.fieldGap}
               />
-            </View>
-
-            <Input
-              label="Email"
-              placeholder="you@example.com"
-              value={email}
-              onChangeText={(t) => {
-                setEmail(t);
-                if (emailError) setEmailError("");
-              }}
-              autoCapitalize="none"
-              keyboardType="email-address"
-              autoComplete="email"
-              icon={<MailIcon size={18} color="#999" />}
-              error={emailError}
-              containerStyle={styles.fieldGap}
-            />
-          </>
-        )}
-
-        {step === 1 && (
-          <>
-            <Input
-              label="Password"
-              placeholder="Create a strong password"
-              value={password}
-              onChangeText={(t) => {
-                setPassword(t);
-                if (passwordError) setPasswordError("");
-              }}
-              onFocus={() => setShowPasswordRules(true)}
-              onBlur={() => setShowPasswordRules(false)}
-              secureTextEntry={!showPasswords}
-              autoComplete="new-password"
-              icon={<LockIcon size={18} color="#999" />}
-              rightIcon={passwordVisibilityToggle}
-              error={passwordError}
-            />
-
-            {showPasswordRules && (
-              <View style={styles.passwordRulesCard}>
-                <Text style={styles.passwordRulesTitle}>
-                  Password must include:
-                </Text>
-                {passwordChecks.map((requirement) => (
-                  <View key={requirement.label} style={styles.passwordRuleRow}>
-                    <View
-                      style={[
-                        styles.passwordRuleIcon,
-                        requirement.met
-                          ? styles.passwordRuleIconMet
-                          : styles.passwordRuleIconUnmet,
-                      ]}
-                    >
-                      {requirement.met ? (
-                        <Check size={12} strokeWidth={3} color="#fff" />
-                      ) : (
-                        <X size={12} strokeWidth={3} color="#fff" />
-                      )}
-                    </View>
-                    <Text
-                      style={[
-                        styles.passwordRuleText,
-                        requirement.met && styles.passwordRuleTextMet,
-                      ]}
-                    >
-                      {requirement.label}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            )}
-
-            <Input
-              label="Confirm Password"
-              placeholder="Re-enter password"
-              value={confirmPassword}
-              onChangeText={(t) => {
-                setConfirmPassword(t);
-                if (confirmError) setConfirmError("");
-              }}
-              secureTextEntry={!showPasswords}
-              autoComplete="new-password"
-              icon={<LockIcon size={18} color="#999" />}
-              rightIcon={passwordVisibilityToggle}
-              error={confirmError}
-              containerStyle={styles.fieldGap}
-            />
-          </>
-        )}
-
-        {step === 2 && (
-          <Input
-            label="Username"
-            placeholder="your_username"
-            value={username}
-            onChangeText={(t) => {
-              setUsername(t);
-              if (usernameError) setUsernameError("");
-            }}
-            autoCapitalize="none"
-            autoCorrect={false}
-            icon={<AtSignIcon size={18} color="#999" />}
-            error={usernameError}
-          />
-        )}
-
-        <View style={styles.buttonRow}>
-          {step > 0 && (
-            <Button
-              label="Back"
-              variant="accent"
-              onPress={() => setStep(step - 1)}
-              style={styles.backButton}
-            />
+              <Input
+                variant="floating"
+                label="Email"
+                placeholder="you@example.com"
+                value={email}
+                onChangeText={(t) => {
+                  setEmail(t);
+                  if (emailError) setEmailError("");
+                }}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                autoComplete="email"
+                error={emailError}
+                containerStyle={styles.fieldGap}
+              />
+            </>
           )}
-          <Button
-            label={step === TOTAL_STEPS - 1 ? "Create Account" : "Next"}
-            variant="default"
-            loading={loading}
-            icon={
-              <ArrowRightIcon size={16} strokeWidth={3} color={Colors.light} />
-            }
-            iconPosition="right"
-            onPress={handleNext}
-            style={styles.nextButton}
-          />
-        </View>
 
+          {step === 1 && (
+            <>
+              <Input
+                variant="floating"
+                label="Password"
+                placeholder="Create a strong password"
+                value={password}
+                onChangeText={(t) => {
+                  setPassword(t);
+                  if (passwordError) setPasswordError("");
+                }}
+                onFocus={() => setShowPasswordRules(true)}
+                onBlur={() => setShowPasswordRules(false)}
+                secureTextEntry={!showPasswords}
+                autoComplete="new-password"
+                rightIcon={passwordVisibilityToggle}
+                error={passwordError}
+                containerStyle={styles.fieldGap}
+              />
+
+              {showPasswordRules && (
+                <View style={styles.passwordRulesCard}>
+                  <Text style={styles.passwordRulesTitle}>
+                    Password must include:
+                  </Text>
+                  {passwordChecks.map((requirement) => (
+                    <View key={requirement.label} style={styles.passwordRuleRow}>
+                      <View
+                        style={[
+                          styles.passwordRuleIcon,
+                          requirement.met
+                            ? styles.passwordRuleIconMet
+                            : styles.passwordRuleIconUnmet,
+                        ]}
+                      >
+                        {requirement.met ? (
+                          <Check size={12} strokeWidth={3} color="#fff" />
+                        ) : (
+                          <X size={12} strokeWidth={3} color="#fff" />
+                        )}
+                      </View>
+                      <Text
+                        style={[
+                          styles.passwordRuleText,
+                          requirement.met && styles.passwordRuleTextMet,
+                        ]}
+                      >
+                        {requirement.label}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              <Input
+                variant="floating"
+                label="Confirm Password"
+                placeholder="Re-enter password"
+                value={confirmPassword}
+                onChangeText={(t) => {
+                  setConfirmPassword(t);
+                  if (confirmError) setConfirmError("");
+                }}
+                secureTextEntry={!showPasswords}
+                autoComplete="new-password"
+                rightIcon={passwordVisibilityToggle}
+                error={confirmError}
+                containerStyle={styles.fieldGap}
+              />
+            </>
+          )}
+        </FadeInUp>
+      </ScrollView>
+
+      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+        <Button
+          label={step === TOTAL_STEPS - 1 ? "Create Account" : "Continue"}
+          variant="default"
+          size="lg"
+          loading={loading}
+          icon={
+            <ArrowRightIcon size={16} strokeWidth={3} color={Colors.light} />
+          }
+          iconPosition="right"
+          onPress={handleNext}
+        />
+        <AuthLegalNotice style={styles.legal} />
         <TouchableOpacity
           style={styles.loginLink}
           onPress={() => navigation.navigate("LoginScreen")}
@@ -427,7 +385,9 @@ export default function RegisterScreen() {
             <Text style={styles.loginLinkTextAccent}>Log in</Text>
           </Text>
         </TouchableOpacity>
-      </ScrollView>
+      </View>
+      {legalModal}
+      {alertModal}
     </KeyboardAvoidingView>
   );
 }
@@ -437,49 +397,55 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.light,
   },
+  header: {
+    paddingHorizontal: 22,
+    paddingBottom: 10,
+    gap: 14,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  backCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#E8E8E8",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerSpacer: {
+    width: 44,
+    height: 44,
+  },
   scroll: {
     flexGrow: 1,
     paddingHorizontal: 28,
-    paddingTop: 100,
-    paddingBottom: 40,
+    paddingTop: 18,
+    paddingBottom: 24,
   },
   title: {
-    fontSize: 36,
+    fontSize: 32,
     fontFamily: Fonts.gabarito.bold,
     color: Colors.dark,
-    marginBottom: 4,
+    marginBottom: 6,
   },
   subtitle: {
     fontFamily: Fonts.instrument.regular,
     fontSize: 16,
     color: "#666",
-    marginBottom: 20,
-  },
-  progressRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginBottom: 28,
-  },
-  progressBar: {
-    flex: 1,
-    height: 4,
-    borderRadius: 2,
-  },
-  progressActive: {
-    backgroundColor: Colors.accent,
-  },
-  progressInactive: {
-    backgroundColor: "#ddd",
-  },
-  nameRow: {
-    flexDirection: "row",
-    gap: 12,
-  },
-  nameField: {
-    flex: 1,
+    marginBottom: 24,
   },
   fieldGap: {
-    marginTop: 16,
+    marginBottom: 12,
+    marginTop: 0,
+  },
+  footer: {
+    paddingHorizontal: 28,
+    paddingTop: 8,
   },
   passwordRulesCard: {
     backgroundColor: "#fff",
@@ -527,21 +493,12 @@ const styles = StyleSheet.create({
   passwordRuleTextMet: {
     color: Colors.dark,
   },
-  buttonRow: {
-    flexDirection: "row",
-    gap: 12,
-    marginTop: 28,
-  },
-  backButton: {
-    flex: 1,
-  },
-  nextButton: {
-    flex: 2,
+  legal: {
+    marginTop: 14,
   },
   loginLink: {
     alignItems: "center",
-    marginTop: "auto",
-    paddingTop: 22,
+    marginTop: 14,
   },
   loginLinkText: {
     color: Colors.dark,

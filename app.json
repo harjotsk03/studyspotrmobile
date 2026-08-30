@@ -7,21 +7,26 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+    "scheme": "studyspotr",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#1A61A8"
     },
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.studyspotr.app",
+      "usesAppleSignIn": true,
       "infoPlist": {
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
         },
-        "NSMicrophoneUsageDescription": "Allow microphone access when recording video for posts."
+        "NSMicrophoneUsageDescription": "Allow microphone access when recording video for posts.",
+        "UIBackgroundModes": ["remote-notification"]
       }
     },
     "android": {
+      "package": "com.studyspotr.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -54,6 +59,30 @@
         {
           "cameraPermission": "Allow $(PRODUCT_NAME) to use the camera for posts.",
           "recordAudioAndroid": false
+        }
+      ],
+      "expo-web-browser",
+      "expo-apple-authentication",
+      "@react-native-google-signin/google-signin",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#1A61A8",
+          "defaultChannel": "default",
+          "enableBackgroundRemoteNotifications": true
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow $(PRODUCT_NAME) to use your location to find study spots, groups, and people nearby. Your live location is never shared with other users."
+        }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Allow $(PRODUCT_NAME) to see your contacts so we can suggest people you might know. We never store or share your contact list."
         }
       ]
     ]

@@ -19,6 +19,8 @@ interface InputProps extends Omit<TextInputProps, "style"> {
   error?: string;
   containerStyle?: StyleProp<ViewStyle>;
   inputStyle?: StyleProp<ViewStyle>;
+  /** Label sits inside the field, Mozi-style. */
+  variant?: "default" | "floating";
 }
 
 export default function Input({
@@ -27,7 +29,7 @@ export default function Input({
   iconPosition = "left",
   rightIcon,
   error,
-
+  variant = "default",
   containerStyle,
   inputStyle,
   onFocus,
@@ -36,53 +38,64 @@ export default function Input({
   ...textInputProps
 }: InputProps) {
   const [focused, setFocused] = useState(false);
+  const floating = variant === "floating";
+
+  const field = (
+    <>
+      {icon && iconPosition === "left" && (
+        <View style={[styles.iconLeft, multiline && styles.iconTopAligned]}>
+          {icon}
+        </View>
+      )}
+
+      <TextInput
+        style={[styles.textInput, floating && styles.textInputFloating]}
+        placeholderTextColor="#999"
+        selectionColor={Colors.primary}
+        multiline={multiline}
+        onFocus={(e) => {
+          setFocused(true);
+          onFocus?.(e);
+        }}
+        onBlur={(e) => {
+          setFocused(false);
+          onBlur?.(e);
+        }}
+        {...textInputProps}
+      />
+
+      {icon && iconPosition === "right" && (
+        <View style={[styles.iconRight, multiline && styles.iconTopAligned]}>
+          {icon}
+        </View>
+      )}
+
+      {rightIcon && (
+        <View style={[styles.iconRight, multiline && styles.iconTopAligned]}>
+          {rightIcon}
+        </View>
+      )}
+    </>
+  );
 
   return (
     <View style={containerStyle}>
-      {label && <Text style={styles.label}>{label}</Text>}
+      {!floating && label ? <Text style={styles.label}>{label}</Text> : null}
 
       <View
         style={[
           styles.inputRow,
+          floating && styles.inputRowFloating,
           multiline && styles.inputRowMultiline,
           focused && styles.inputRowFocused,
           error && styles.inputRowError,
           inputStyle,
         ]}
       >
-        {icon && iconPosition === "left" && (
-          <View style={[styles.iconLeft, multiline && styles.iconTopAligned]}>
-            {icon}
-          </View>
-        )}
-
-        <TextInput
-          style={styles.textInput}
-          placeholderTextColor="#999"
-          selectionColor={Colors.primary}
-          multiline={multiline}
-          onFocus={(e) => {
-            setFocused(true);
-            onFocus?.(e);
-          }}
-          onBlur={(e) => {
-            setFocused(false);
-            onBlur?.(e);
-          }}
-          {...textInputProps}
-        />
-
-        {icon && iconPosition === "right" && (
-          <View style={[styles.iconRight, multiline && styles.iconTopAligned]}>
-            {icon}
-          </View>
-        )}
-
-        {rightIcon && (
-          <View style={[styles.iconRight, multiline && styles.iconTopAligned]}>
-            {rightIcon}
-          </View>
-        )}
+        {floating && label ? (
+          <Text style={styles.floatingLabel}>{label}</Text>
+        ) : null}
+        {floating ? <View style={styles.floatingValueRow}>{field}</View> : field}
       </View>
 
       {error && <Text style={styles.error}>{error}</Text>}
@@ -107,6 +120,23 @@ const styles = StyleSheet.create({
     borderColor: "#ddd",
     paddingHorizontal: 14,
   },
+  inputRowFloating: {
+    flexDirection: "column",
+    alignItems: "stretch",
+    borderRadius: 16,
+    paddingTop: 10,
+    paddingBottom: 10,
+  },
+  floatingLabel: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 12,
+    color: "#999",
+    marginBottom: 2,
+  },
+  floatingValueRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
   inputRowMultiline: {
     alignItems: "flex-start",
   },
@@ -122,6 +152,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: Colors.dark,
     paddingVertical: 14,
+  },
+  textInputFloating: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 18,
+    paddingVertical: 0,
   },
   iconLeft: {
     marginRight: 10,

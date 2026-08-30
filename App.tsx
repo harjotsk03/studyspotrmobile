@@ -1,4 +1,5 @@
 import { Image, StyleSheet, View } from "react-native";
+import { useCallback, useEffect, useState } from "react";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { NavigationContainer } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
@@ -82,14 +83,20 @@ import BlockedUsersScreen from "./screens/BlockedUsersScreen";
 import LoginScreen from "./screens/LoginScreen";
 import RegisterScreen from "./screens/RegisterScreen";
 import ForgotPasswordScreen from "./screens/ForgotPasswordScreen";
+import CompleteProfileScreen from "./screens/CompleteProfileScreen";
+import WelcomeScreen from "./screens/WelcomeScreen";
+import SignupMethodScreen from "./screens/SignupMethodScreen";
 import { Fonts } from "./constants/Fonts";
 import type {
+  AuthStackParamList,
   InboxStackParamList,
   RootStackParamList,
   SpotsStackParamList,
 } from "./types/navigation";
-import { SkeletonBox } from "./components/Skeleton";
 import LoginWelcomeToast from "./components/LoginWelcomeToast";
+import PushNotificationBridge from "./components/PushNotificationBridge";
+import BootSplash from "./components/BootSplash";
+import { navigationRef } from "./navigation/rootNavigation";
 
 const Tab = createBottomTabNavigator();
 const RootStack = createNativeStackNavigator<RootStackParamList>();
@@ -97,7 +104,7 @@ const CommunityStack = createNativeStackNavigator<CommunityStackParamList>();
 const SpotsStack = createNativeStackNavigator<SpotsStackParamList>();
 const ProfileStack = createNativeStackNavigator<ProfileStackParamList>();
 const InboxStack = createNativeStackNavigator<InboxStackParamList>();
-const AuthStack = createNativeStackNavigator();
+const AuthStack = createNativeStackNavigator<AuthStackParamList>();
 
 function CommunityStackScreen() {
   return (
@@ -223,45 +230,42 @@ const tabAvatarStyles = StyleSheet.create({
   },
 });
 
+function AuthReadyReporter({
+  onLoadingChange,
+}: {
+  onLoadingChange: (loading: boolean) => void;
+}) {
+  const { isLoading } = useAuth();
+
+  useEffect(() => {
+    onLoadingChange(isLoading);
+  }, [isLoading, onLoadingChange]);
+
+  return null;
+}
+
 function AppContent() {
-  const { profile, isLoading } = useAuth();
+  const { profile, isLoading, needsOnboarding } = useAuth();
   const { unreadCount } = useNotifications();
   const { feedLoading } = useFeedActivity();
   const { isOverlayOpen } = useFullScreenOverlay();
 
   if (isLoading) {
-    return (
-      <View
-        style={{
-          flex: 1,
-          justifyContent: "center",
-          alignItems: "center",
-          backgroundColor: Colors.light,
-        }}
-      >
-        <SkeletonBox width={96} height={96} radius={48} />
-        <SkeletonBox
-          width={150}
-          height={18}
-          radius={9}
-          style={{ marginTop: 22 }}
-        />
-        <SkeletonBox
-          width={100}
-          height={14}
-          radius={7}
-          style={{ marginTop: 10 }}
-        />
-      </View>
-    );
+    return <View style={{ flex: 1, backgroundColor: Colors.light }} />;
   }
 
   if (!profile) {
     return (
       <AuthStack.Navigator
+        initialRouteName="WelcomeScreen"
         screenOptions={{ headerShown: false, animation: "slide_from_right" }}
       >
+        <AuthStack.Screen name="WelcomeScreen" component={WelcomeScreen} />
         <AuthStack.Screen name="LoginScreen" component={LoginScreen} />
+        <AuthStack.Screen
+          name="SignupMethodScreen"
+          component={SignupMethodScreen}
+        />
         <AuthStack.Screen name="RegisterScreen" component={RegisterScreen} />
         <AuthStack.Screen
           name="ForgotPasswordScreen"
@@ -269,6 +273,10 @@ function AppContent() {
         />
       </AuthStack.Navigator>
     );
+  }
+
+  if (needsOnboarding) {
+    return <CompleteProfileScreen />;
   }
 
   // When the signed-in user has a profile photo we swap the generic
@@ -463,56 +471,59 @@ export default function App() {
     InstrumentSans_700Bold,
     InstrumentSans_700Bold_Italic,
   });
+  const [authLoading, setAuthLoading] = useState(true);
+  const [splashVisible, setSplashVisible] = useState(true);
 
-  if (!fontsLoaded) {
-    return (
-      <View
-        style={{
-          flex: 1,
-          justifyContent: "center",
-          alignItems: "center",
-          backgroundColor: Colors.light,
-        }}
-      >
-        <SkeletonBox width={96} height={96} radius={48} />
-        <SkeletonBox
-          width={150}
-          height={18}
-          radius={9}
-          style={{ marginTop: 22 }}
-        />
-        <SkeletonBox
-          width={100}
-          height={14}
-          radius={7}
-          style={{ marginTop: 10 }}
-        />
-      </View>
-    );
-  }
+  const handleAuthLoadingChange = useCallback((loading: boolean) => {
+    setAuthLoading(loading);
+  }, []);
+
+  const splashReady = fontsLoaded && !authLoading;
 
   return (
-    <AuthProvider>
-      <NotificationsProvider>
-        <FeedInteractionsProvider>
-          <SearchStateProvider>
-            <SpotsProvider>
-              <CommunityCacheProvider>
-                <FeedActivityProvider>
-                  <FullScreenOverlayProvider>
-                    <SafeAreaProvider>
-                      <NavigationContainer>
-                        <StatusBar style="dark" />
-                        <AppContent />
-                      </NavigationContainer>
-                    </SafeAreaProvider>
-                  </FullScreenOverlayProvider>
-                </FeedActivityProvider>
-              </CommunityCacheProvider>
-            </SpotsProvider>
-          </SearchStateProvider>
-        </FeedInteractionsProvider>
-      </NotificationsProvider>
-    </AuthProvider>
+    <View style={styles.appRoot}>
+      {fontsLoaded ? (
+        <AuthProvider>
+          <AuthReadyReporter onLoadingChange={handleAuthLoadingChange} />
+          <NotificationsProvider>
+            <FeedInteractionsProvider>
+              <SearchStateProvider>
+                <SpotsProvider>
+                  <CommunityCacheProvider>
+                    <FeedActivityProvider>
+                      <FullScreenOverlayProvider>
+                        <SafeAreaProvider>
+                          <NavigationContainer ref={navigationRef}>
+                            <StatusBar
+                              style={splashVisible ? "light" : "dark"}
+                            />
+                            <AppContent />
+                            <PushNotificationBridge />
+                          </NavigationContainer>
+                        </SafeAreaProvider>
+                      </FullScreenOverlayProvider>
+                    </FeedActivityProvider>
+                  </CommunityCacheProvider>
+                </SpotsProvider>
+              </SearchStateProvider>
+            </FeedInteractionsProvider>
+          </NotificationsProvider>
+        </AuthProvider>
+      ) : null}
+
+      {splashVisible ? (
+        <BootSplash
+          ready={splashReady}
+          onFinished={() => setSplashVisible(false)}
+        />
+      ) : null}
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  appRoot: {
+    flex: 1,
+    backgroundColor: Colors.light,
+  },
+});
