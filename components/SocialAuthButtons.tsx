@@ -68,7 +68,6 @@ export default function SocialAuthButtons({
       data.access_token,
       data.refresh_token,
       rememberMe,
-      !data.needs_onboarding,
     );
   };
 
@@ -105,7 +104,6 @@ export default function SocialAuthButtons({
         data.access_token,
         data.refresh_token,
         rememberMe,
-        !data.needs_onboarding,
       );
     } catch (error) {
       if (isOAuthCancelled(error)) return;

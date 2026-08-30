@@ -31,6 +31,7 @@ export type StudySpot = {
   group_work_friendly?: boolean;
   open_time?: string;
   close_time?: string;
+  is_24_hours?: boolean;
   rating?: number | string;
   rating_count?: number | string;
   created_by_id?: string;

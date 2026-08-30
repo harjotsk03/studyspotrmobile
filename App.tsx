@@ -90,15 +90,15 @@ import { Fonts } from "./constants/Fonts";
 import type {
   AuthStackParamList,
   InboxStackParamList,
+  MainTabsParamList,
   RootStackParamList,
   SpotsStackParamList,
 } from "./types/navigation";
-import LoginWelcomeToast from "./components/LoginWelcomeToast";
 import PushNotificationBridge from "./components/PushNotificationBridge";
 import BootSplash from "./components/BootSplash";
 import { navigationRef } from "./navigation/rootNavigation";
 
-const Tab = createBottomTabNavigator();
+const Tab = createBottomTabNavigator<MainTabsParamList>();
 const RootStack = createNativeStackNavigator<RootStackParamList>();
 const CommunityStack = createNativeStackNavigator<CommunityStackParamList>();
 const SpotsStack = createNativeStackNavigator<SpotsStackParamList>();
@@ -212,14 +212,8 @@ const tabIcons: Record<
   Profile: User,
 };
 
-/**
- * Sizing for the avatar-as-tab-icon. We hide the "Profile" label when a
- * photo is present (see Profile Tab.Screen options below) and inflate the
- * avatar to fill the space the label vacates — that way the bottom nav
- * feels balanced rather than top-heavy with a tiny icon over an empty
- * label slot.
- */
-const PROFILE_AVATAR_SIZE = 28;
+/** Match the 24px lucide icons so the avatar sits evenly with the other tabs. */
+const PROFILE_AVATAR_SIZE = 24;
 const tabAvatarStyles = StyleSheet.create({
   avatar: {
     width: PROFILE_AVATAR_SIZE,
@@ -291,8 +285,10 @@ function AppContent() {
 
   const tabs = (
     <Tab.Navigator
+      initialRouteName="Community"
       screenOptions={({ route }) => ({
         headerShown: false,
+        tabBarShowLabel: true,
         tabBarIcon: ({ focused }) => {
           // Swap the Feed icon for the spinning arrow loader while the feed
           // is actively fetching, so the tab itself signals that a refresh
@@ -336,7 +332,7 @@ function AppContent() {
         tabBarInactiveTintColor: "#999",
         tabBarLabelStyle: {
           fontFamily: Fonts.gabarito.medium,
-          fontSize: 12,
+          fontSize: 11,
         },
         // Hide the tab bar while a full-screen overlay (e.g. the reel viewer)
         // is up. The overlay is rendered in-tree (not a native Modal) so the
@@ -346,28 +342,34 @@ function AppContent() {
           ? { display: "none" }
           : {
               backgroundColor: "#fff",
-              height: 80,
+              height: 88,
               borderTopWidth: 1,
-              paddingTop: 10,
-              paddingHorizontal: 8,
+              paddingTop: 8,
+              paddingHorizontal: 4,
               borderTopColor: "#eee",
             },
       })}
     >
-      <Tab.Screen name="Feed" component={FeedScreen} options={{
-        tabBarLabel: "",
-      }} />
-      <Tab.Screen name="Community" component={CommunityStackScreen} options={{
-        tabBarLabel: "",
-      }} />
-      <Tab.Screen name="Spots" component={SpotsStackScreen} options={{
-        tabBarLabel: "",
-      }} />
+      <Tab.Screen
+        name="Community"
+        component={CommunityStackScreen}
+        options={{ tabBarLabel: "Community" }}
+      />
+      <Tab.Screen
+        name="Spots"
+        component={SpotsStackScreen}
+        options={{ tabBarLabel: "Spots" }}
+      />
+      <Tab.Screen
+        name="Feed"
+        component={FeedScreen}
+        options={{ tabBarLabel: "Feed" }}
+      />
       <Tab.Screen
         name="Inbox"
         component={InboxStackScreen}
         options={{
-          tabBarLabel: "",
+          tabBarLabel: "Notifications",
           tabBarBadge:
             unreadCount > 0
               ? unreadCount > 99
@@ -379,13 +381,7 @@ function AppContent() {
       <Tab.Screen
         name="Profile"
         component={ProfileStackScreen}
-        options={{
-          // When the user has a profile photo, drop the "Profile" label
-          // so the bigger avatar can sit on its own. Without a photo the
-          // generic User icon stays alongside the label like every other
-          // tab.
-          tabBarLabel: "",
-        }}
+        options={{ tabBarLabel: "Profile" }}
       />
     </Tab.Navigator>
   );
@@ -449,7 +445,6 @@ function AppContent() {
           component={BlockedUsersScreen}
         />
       </RootStack.Navigator>
-      <LoginWelcomeToast />
     </View>
   );
 }

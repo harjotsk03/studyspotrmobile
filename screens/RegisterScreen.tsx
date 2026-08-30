@@ -201,7 +201,7 @@ export default function RegisterScreen() {
         return;
       }
 
-      await login(data.user, data.access_token, data.refresh_token, true, false);
+      await login(data.user, data.access_token, data.refresh_token, true);
     } catch {
       showAlert("Network error", "Could not reach the server.");
     } finally {

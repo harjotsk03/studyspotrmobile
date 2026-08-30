@@ -59,7 +59,6 @@ export default function ProfileScreen() {
     logout,
     refreshProfile,
     uploadProfilePhoto,
-    replayWelcomeToast,
   } = useAuth();
   const navigation =
     useNavigation<NativeStackNavigationProp<ProfileStackParamList>>();
@@ -799,7 +798,6 @@ export default function ProfileScreen() {
                 }
                 onLogout={handleLogout}
                 onBlockedUsers={() => rootNavigation.navigate("BlockedUsers")}
-                onPreviewWelcomeToast={__DEV__ ? replayWelcomeToast : undefined}
               />
             ) : listLoading ? (
               <ActivityIndicator style={styles.emptySpinner} />
@@ -820,7 +818,6 @@ function SettingsBody({
   onNavigateSection,
   onLogout,
   onBlockedUsers,
-  onPreviewWelcomeToast,
 }: {
   sectionButtons: Array<{
     key: ProfileSectionKey;
@@ -830,7 +827,6 @@ function SettingsBody({
   onNavigateSection: (section: ProfileSectionKey) => void;
   onLogout: () => void;
   onBlockedUsers: () => void;
-  onPreviewWelcomeToast?: () => void;
 }) {
   return (
     <ScrollView
@@ -867,20 +863,6 @@ function SettingsBody({
         </View>
       </TouchableOpacity>
 
-      {onPreviewWelcomeToast ? (
-        <TouchableOpacity
-          style={styles.devPreviewToastButton}
-          onPress={onPreviewWelcomeToast}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.devPreviewToastLabel}>
-            Preview login welcome toast
-          </Text>
-          <Text style={styles.devPreviewToastHint}>
-            __DEV__ only — design tool
-          </Text>
-        </TouchableOpacity>
-      ) : null}
       <TouchableOpacity
         style={styles.logoutButton}
         onPress={onLogout}
@@ -1060,27 +1042,6 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.instrument.semiBold,
     fontSize: 14,
     color: Colors.dark,
-  },
-  devPreviewToastButton: {
-    marginTop: 20,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderRadius: 14,
-    backgroundColor: "rgba(255, 153, 0, 0.14)",
-    borderWidth: 1,
-    borderColor: "rgba(255, 153, 0, 0.45)",
-    alignItems: "center",
-  },
-  devPreviewToastLabel: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 15,
-    color: Colors.dark,
-  },
-  devPreviewToastHint: {
-    marginTop: 4,
-    fontFamily: Fonts.instrument.medium,
-    fontSize: 11,
-    color: "#666",
   },
   blockedUsersRow: {
     flexDirection: "row",

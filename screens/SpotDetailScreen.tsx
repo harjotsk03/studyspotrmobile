@@ -2,12 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   FlatList,
   Image,
+  Linking,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -28,32 +32,34 @@ import type {
 } from "@react-navigation/native-stack";
 import type { ComponentType } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
+import * as Location from "expo-location";
 import {
   ArrowLeft,
+  Bookmark,
+  ChevronRight,
   Clock3,
   Coffee,
   Edit3,
   EllipsisVertical,
-  LayoutGrid,
+  Image as ImageIcon,
   MapPin,
   MessageSquarePlus,
   Plug,
   Presentation,
-  Send,
   Star,
-  SunMedium,
   Trash2,
   UserRound,
   UsersRound,
-  X,
-  Volume2,
   Wifi,
+  X,
 } from "lucide-react-native";
 import ReportConfirmModal from "../components/ReportConfirmModal";
 import ShareToFriendsSheet from "../components/ShareToFriendsSheet";
 import SpotReviewComposerModal, {
   type ComposerMode,
 } from "../components/SpotReviewComposerModal";
+import Button from "../components/Button";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { useAuth } from "../context/AuthContext";
@@ -71,31 +77,31 @@ import {
   type SpotReview,
 } from "../utils/spotsApi";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
+import { calculateDistanceKm } from "../utils/calculateDistanceKm";
+import { formatDistance } from "../utils/formatDistance";
+import { getSpotCoordinates } from "../utils/getSpotCoordinates";
 import { getSpotDescription } from "../utils/getSpotDescription";
 import { getSpotTitle } from "../utils/getSpotTitle";
+import { isSpotAlwaysOpen } from "../utils/spotHours";
 import { toNumber } from "../utils/toNumber";
 import type { RootStackParamList, SpotsStackParamList } from "../types/navigation";
-import Button from "../components/Button";
-import { Share2 } from "lucide-react-native/icons";
 
 type Props =
   | NativeStackScreenProps<SpotsStackParamList, "SpotDetail">
   | NativeStackScreenProps<RootStackParamList, "SpotViewer">;
 
-function formatRating(value: unknown) {
+const HERO_HEIGHT = 330;
+
+function formatRatingNumber(value: unknown) {
   const parsed = toNumber(value);
-  if (parsed === null) {
-    return "No rating yet";
-  }
-  return `${parsed.toFixed(1)} / 5`;
+  if (parsed === null) return null;
+  return parsed.toFixed(1);
 }
 
-function formatCount(value: unknown) {
+function formatReviewCount(value: unknown) {
   const parsed = toNumber(value);
-  if (parsed === null || parsed <= 0) {
-    return null;
-  }
-  return `${Math.round(parsed)} reviews`;
+  if (parsed === null || parsed <= 0) return null;
+  return Math.round(parsed);
 }
 
 function getNoiseLabel(spot: StudySpot) {
@@ -106,6 +112,12 @@ function getNoiseLabel(spot: StudySpot) {
     return spot.noice_level;
   }
   return null;
+}
+
+function noiseChipLabel(raw: string) {
+  const trimmed = raw.trim();
+  if (/zone$/i.test(trimmed)) return trimmed;
+  return `${trimmed} zone`;
 }
 
 function amenityOn(v: unknown): boolean {
@@ -123,23 +135,105 @@ const AMENITIES: {
   Icon: ComponentType<SvgIconProps>;
   read: (s: StudySpot) => unknown;
 }[] = [
-  { label: "Food & drinks", Icon: Coffee, read: (s) => s.food_drink_allowed },
-  { label: "Wi‑Fi", Icon: Wifi, read: (s) => s.wifi_available },
-  { label: "Power outlets", Icon: Plug, read: (s) => s.outlets_available },
   {
-    label: "Whiteboards",
+    label: "Food allowed",
+    Icon: Coffee,
+    read: (s) => s.food_drink_allowed,
+  },
+  {
+    label: "Wi-Fi available",
+    Icon: Wifi,
+    read: (s) => s.wifi_available,
+  },
+  {
+    label: "Outlets available",
+    Icon: Plug,
+    read: (s) => s.outlets_available,
+  },
+  {
+    label: "Whiteboards available",
     Icon: Presentation,
     read: (s) => s.whiteboards_available,
   },
   {
-    label: "Group friendly",
+    label: "Group work friendly",
     Icon: UsersRound,
     read: (s) => s.group_work_friendly,
   },
 ];
 
-function SoftDivider() {
-  return <View style={styles.softDivider} />;
+function parseClockMinutes(raw: unknown): number | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const match = raw
+    .trim()
+    .match(/^(\d{1,2}):(\d{2})(?:\s*(AM|PM))?$/i);
+  if (!match) return null;
+  let hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const meridiem = match[3]?.toUpperCase();
+  if (Number.isNaN(hours) || Number.isNaN(minutes) || minutes > 59) {
+    return null;
+  }
+  if (meridiem === "AM") {
+    if (hours === 12) hours = 0;
+  } else if (meridiem === "PM") {
+    if (hours < 12) hours += 12;
+  }
+  if (hours > 23) return null;
+  return hours * 60 + minutes;
+}
+
+function formatClockLabel(raw: unknown): string | null {
+  const mins = parseClockMinutes(raw);
+  if (mins === null) {
+    return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+  }
+  const hours24 = Math.floor(mins / 60);
+  const minutes = mins % 60;
+  const meridiem = hours24 >= 12 ? "PM" : "AM";
+  const hours12 = hours24 % 12 || 12;
+  return `${hours12}:${String(minutes).padStart(2, "0")} ${meridiem}`;
+}
+
+function isOpenNow(openRaw: unknown, closeRaw: unknown): boolean | null {
+  const open = parseClockMinutes(openRaw);
+  const close = parseClockMinutes(closeRaw);
+  if (open === null || close === null) return null;
+  const now = new Date();
+  const current = now.getHours() * 60 + now.getMinutes();
+  if (close === open) return true;
+  if (close > open) return current >= open && current < close;
+  return current >= open || current < close;
+}
+
+function hoursUntilClose(closeRaw: unknown): number | null {
+  const close = parseClockMinutes(closeRaw);
+  if (close === null) return null;
+  const now = new Date();
+  const current = now.getHours() * 60 + now.getMinutes();
+  let remaining = close - current;
+  if (remaining <= 0) remaining += 24 * 60;
+  const hours = Math.round(remaining / 60);
+  return hours >= 1 ? hours : null;
+}
+
+function mapsUrlForSpot(spot: StudySpot): string | null {
+  const coords = getSpotCoordinates(spot);
+  const address =
+    typeof spot.address === "string" ? spot.address.trim() : "";
+  if (coords) {
+    const dest = `${coords.latitude},${coords.longitude}`;
+    return Platform.OS === "ios"
+      ? `http://maps.apple.com/?daddr=${encodeURIComponent(dest)}`
+      : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
+  }
+  if (address) {
+    const query = encodeURIComponent(address);
+    return Platform.OS === "ios"
+      ? `http://maps.apple.com/?q=${query}`
+      : `https://www.google.com/maps/search/?api=1&query=${query}`;
+  }
+  return null;
 }
 
 function formatReviewDate(raw: unknown): string | null {
@@ -160,34 +254,12 @@ function ReviewStars({ value }: { value: number }) {
       {[1, 2, 3, 4, 5].map((i) => (
         <Star
           key={i}
-          size={14}
+          size={12}
           color={i <= n ? Colors.accent : "#ddd"}
           fill={i <= n ? Colors.accent : "transparent"}
           strokeWidth={2}
         />
       ))}
-    </View>
-  );
-}
-
-function VibeTile({
-  Icon,
-  subtitle,
-  value,
-}: {
-  Icon: ComponentType<SvgIconProps>;
-  subtitle: string;
-  value: string;
-}) {
-  return (
-    <View style={styles.vibeTile}>
-      <View style={styles.vibeIconBubble}>
-        <Icon size={20} color={Colors.primary} strokeWidth={2.2} />
-      </View>
-      <Text style={styles.vibeTileSubtitle}>{subtitle}</Text>
-      <Text style={styles.vibeTileValue} numberOfLines={2}>
-        {value}
-      </Text>
     </View>
   );
 }
@@ -297,9 +369,28 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
   const [lightboxMountKey, setLightboxMountKey] = useState(0);
   const [shareSheetOpen, setShareSheetOpen] = useState(false);
   const [showSpotReportModal, setShowSpotReportModal] = useState(false);
+  // TODO: wire to saved-spots API
+  const [saved, setSaved] = useState(false);
+  const [userLocation, setUserLocation] = useState<{
+    latitude: number;
+    longitude: number;
+  } | null>(null);
   const lightboxListRef = useRef<FlatList<SpotGalleryItem>>(null);
   const scrollRef = useRef<ScrollView>(null);
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const sheetOffsetY = useRef(0);
   const reviewsSectionY = useRef(0);
+  const heroParallaxStyle = {
+    transform: [
+      {
+        translateY: scrollY.interpolate({
+          inputRange: [0, HERO_HEIGHT],
+          outputRange: [0, HERO_HEIGHT],
+          extrapolate: "clamp",
+        }),
+      },
+    ],
+  };
 
   const galleryItems = useMemo(
     () => buildSpotGalleryItems(spot, reviews),
@@ -360,6 +451,33 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
     );
   }, [galleryItems.length]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (cancelled || status !== "granted") return;
+
+      try {
+        const result = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        if (!cancelled) {
+          setUserLocation({
+            latitude: result.coords.latitude,
+            longitude: result.coords.longitude,
+          });
+        }
+      } catch {
+        if (!cancelled) setUserLocation(null);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const loadData = useCallback(async () => {
     setReviewsLoading(true);
     try {
@@ -393,22 +511,59 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
 
   const title = getSpotTitle(spot);
   const description = getSpotDescription(spot);
-  const ratingLabel = formatRating(spot.rating);
-  const reviewCountLabel = formatCount(spot.rating_count);
+  const ratingLabel = formatRatingNumber(spot.rating);
+  const reviewCount =
+    formatReviewCount(spot.rating_count) ??
+    (reviews.length > 0 ? reviews.length : null);
   const noiseLabel = getNoiseLabel(spot);
   const lightingLabel =
     typeof spot.lighting === "string" ? spot.lighting.trim() : "";
   const tablesLabel = typeof spot.tables === "string" ? spot.tables.trim() : "";
-  const hasVibeTiles = Boolean(noiseLabel || lightingLabel || tablesLabel);
-  const hasVisitBlock = Boolean(
-    (typeof spot.address === "string" && spot.address.trim()) ||
-    spot.open_time ||
-    spot.close_time,
+  const vibeCells = [
+    noiseLabel ? { caption: "Noise", value: noiseLabel } : null,
+    lightingLabel ? { caption: "Light", value: lightingLabel } : null,
+    tablesLabel ? { caption: "Seating", value: tablesLabel } : null,
+  ].filter((cell): cell is { caption: string; value: string } => cell !== null);
+
+  const address =
+    typeof spot.address === "string" ? spot.address.trim() : "";
+  const alwaysOpen = isSpotAlwaysOpen(spot);
+  const openLabel = formatClockLabel(spot.open_time);
+  const closeLabel = formatClockLabel(spot.close_time);
+  const hoursLabel = alwaysOpen
+    ? "Open 24 hours"
+    : [openLabel, closeLabel].filter(Boolean).join(" – ");
+  const openState = alwaysOpen ? true : isOpenNow(spot.open_time, spot.close_time);
+  const closesIn =
+    alwaysOpen || openState !== true ? null : hoursUntilClose(spot.close_time);
+  const spotCoords = getSpotCoordinates(spot);
+  const distanceLabel =
+    userLocation && spotCoords
+      ? formatDistance(calculateDistanceKm(userLocation, spotCoords))
+      : null;
+
+  const amenityChips = useMemo(
+    () => AMENITIES.filter((item) => amenityOn(item.read(spot))),
+    [spot],
   );
 
   const isSpotOwner = Boolean(
     user?.id && spot.created_by_id && user.id === spot.created_by_id,
   );
+
+  const toggleSave = () => {
+    // TODO: wire to saved-spots API
+    setSaved((prev) => !prev);
+  };
+
+  const openDirections = () => {
+    const url = mapsUrlForSpot(spot);
+    if (!url) {
+      Alert.alert("Directions", "No address or coordinates for this spot.");
+      return;
+    }
+    void Linking.openURL(url);
+  };
 
   const openComposerCreate = () => {
     if (!user?.id) {
@@ -463,105 +618,120 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
   };
 
   const spotMenu = () => {
+    const buttons: {
+      text: string;
+      style?: "cancel" | "destructive";
+      onPress?: () => void;
+    }[] = [
+      {
+        text: "Share",
+        onPress: () => setShareSheetOpen(true),
+      },
+    ];
+
     if (isSpotOwner && user?.id) {
-      Alert.alert(title, undefined, [
-        {
-          text: "Edit spot",
-          onPress: () => {
-            if (route.name === "SpotViewer") {
-              rootNavigation.navigate("MainTabs", {
-                screen: "Spots",
-                params: { screen: "EditSpot", params: { spot } },
-              });
-              navigation.goBack();
-              return;
-            }
-            (
-              navigation as NativeStackNavigationProp<SpotsStackParamList>
-            ).navigate("EditSpot", { spot });
-          },
+      buttons.push({
+        text: "Edit spot",
+        onPress: () => {
+          if (route.name === "SpotViewer") {
+            rootNavigation.navigate("MainTabs", {
+              screen: "Spots",
+              params: { screen: "EditSpot", params: { spot } },
+            });
+            navigation.goBack();
+            return;
+          }
+          (
+            navigation as NativeStackNavigationProp<SpotsStackParamList>
+          ).navigate("EditSpot", { spot });
         },
-        {
-          text: "Delete spot",
-          style: "destructive",
-          onPress: () => {
-            Alert.alert(
-              "Delete this spot?",
-              "Reviews and photos will be removed. This cannot be undone.",
-              [
-                { text: "Cancel", style: "cancel" },
-                {
-                  text: "Delete",
-                  style: "destructive",
-                  onPress: () => {
-                    void (async () => {
-                      try {
-                        await deleteSpotJson({
-                          spot_id: spotId,
-                          user_id: user.id,
-                          deleting_user_points: true,
-                        });
-                        await refetchSpots();
-                        navigation.goBack();
-                      } catch (e) {
-                        Alert.alert(
-                          "Error",
-                          e instanceof Error
-                            ? e.message
-                            : "Could not delete spot.",
-                        );
-                      }
-                    })();
-                  },
+      });
+      buttons.push({
+        text: "Delete spot",
+        style: "destructive",
+        onPress: () => {
+          Alert.alert(
+            "Delete this spot?",
+            "Reviews and photos will be removed. This cannot be undone.",
+            [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Delete",
+                style: "destructive",
+                onPress: () => {
+                  void (async () => {
+                    try {
+                      await deleteSpotJson({
+                        spot_id: spotId,
+                        user_id: user.id,
+                        deleting_user_points: true,
+                      });
+                      await refetchSpots();
+                      navigation.goBack();
+                    } catch (e) {
+                      Alert.alert(
+                        "Error",
+                        e instanceof Error
+                          ? e.message
+                          : "Could not delete spot.",
+                      );
+                    }
+                  })();
                 },
-              ],
-            );
-          },
+              },
+            ],
+          );
         },
-        { text: "Cancel", style: "cancel" },
-      ]);
+      });
     } else if (token) {
-      Alert.alert(title, undefined, [
-        {
-          text: "Report spot",
-          style: "destructive",
-          onPress: () => setShowSpotReportModal(true),
-        },
-        { text: "Cancel", style: "cancel" },
-      ]);
+      buttons.push({
+        text: "Report spot",
+        style: "destructive",
+        onPress: () => setShowSpotReportModal(true),
+      });
     }
+
+    buttons.push({ text: "Cancel", style: "cancel" });
+    Alert.alert(title, undefined, buttons);
   };
+
+  const heroScrim = (
+    <LinearGradient
+      pointerEvents="none"
+      colors={["rgba(0,0,0,0.45)", "transparent", "rgba(0,0,0,0.18)"]}
+      locations={[0, 0.18, 1]}
+      style={StyleSheet.absoluteFill}
+    />
+  );
 
   return (
     <View style={styles.screen}>
-      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+      <StatusBar barStyle="light-content" />
+
+      <View
+        pointerEvents="box-none"
+        style={[
+          styles.floatingOverlay,
+          { top: insets.top + 12 },
+        ]}
+      >
         <Button
           size="icon"
-          icon={<ArrowLeft size={22} color={Colors.dark} strokeWidth={2.2} />}
           variant="secondary"
+          icon={<ArrowLeft size={22} color={Colors.dark} strokeWidth={2.2} />}
           onPress={() => navigation.goBack()}
         />
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          {title}
-        </Text>
-        <View style={styles.headerActions}>
-          {isSpotOwner || token ? (
-            <Button
-              size="icon"
-              icon={<EllipsisVertical size={20} color={Colors.dark} />}
-              variant="ghost"
-              onPress={spotMenu}
-            />
-          ) : (
-            <View style={styles.placeholder} />
-          )}
-        </View>
       </View>
 
-      <ScrollView
+      <Animated.ScrollView
         ref={scrollRef}
         style={styles.content}
         showsVerticalScrollIndicator={false}
+        scrollEventThrottle={16}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: true },
+        )}
         refreshControl={
           <RefreshControl
             refreshing={spotRefreshing}
@@ -572,74 +742,222 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
       >
         {galleryItems.length > 0 ? (
           <View style={styles.heroCarouselWrap}>
-            <FlatList
-              data={galleryItems}
-              horizontal
-              pagingEnabled
-              nestedScrollEnabled
-              showsHorizontalScrollIndicator={false}
-              keyExtractor={(item, index) => `${item.uri}-${index}`}
-              getItemLayout={(_, index) => ({
-                length: windowWidth,
-                offset: windowWidth * index,
-                index,
-              })}
-              onMomentumScrollEnd={onHeroMomentumEnd}
-              renderItem={({ item, index }) => (
+            <Animated.View style={[styles.heroParallax, heroParallaxStyle]}>
+              <FlatList
+                data={galleryItems}
+                horizontal
+                pagingEnabled
+                nestedScrollEnabled
+                showsHorizontalScrollIndicator={false}
+                keyExtractor={(item, index) => `${item.uri}-${index}`}
+                getItemLayout={(_, index) => ({
+                  length: windowWidth,
+                  offset: windowWidth * index,
+                  index,
+                })}
+                onMomentumScrollEnd={onHeroMomentumEnd}
+                renderItem={({ item, index }) => (
+                  <Pressable
+                    accessibilityRole="imagebutton"
+                    accessibilityLabel={`View spot photo ${index + 1} of ${galleryItems.length}`}
+                    onPress={() => openSpotGalleryAt(index)}
+                    style={{ width: windowWidth, height: HERO_HEIGHT }}
+                  >
+                    <Image
+                      source={{ uri: item.uri }}
+                      style={styles.heroSlideImage}
+                      resizeMode="cover"
+                    />
+                  </Pressable>
+                )}
+              />
+              {heroScrim}
+              {galleryItems.length > 1 ? (
                 <Pressable
-                  accessibilityRole="imagebutton"
-                  accessibilityLabel={`View spot photo ${index + 1} of ${galleryItems.length}`}
-                  onPress={() => openSpotGalleryAt(index)}
-                  style={{ width: windowWidth, height: 220 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Photo ${heroSlideIndex + 1} of ${galleryItems.length}`}
+                  onPress={() => openSpotGalleryAt(heroSlideIndex)}
+                  style={styles.photoCounter}
                 >
-                  <Image
-                    source={{ uri: item.uri }}
-                    style={styles.heroSlideImage}
-                    resizeMode="cover"
-                  />
+                  <ImageIcon size={13} color="#fff" />
+                  <Text style={styles.photoCounterText}>
+                    {heroSlideIndex + 1} / {galleryItems.length}
+                  </Text>
                 </Pressable>
-              )}
-            />
-            {galleryItems.length > 1 ? (
-              <View style={styles.heroDots} pointerEvents="none">
-                {galleryItems.map((_, i) => (
-                  <View
-                    key={`hero-dot-${i}`}
-                    style={[
-                      styles.heroDot,
-                      i === heroSlideIndex && styles.heroDotActive,
-                    ]}
-                  />
-                ))}
-              </View>
-            ) : null}
+              ) : null}
+            </Animated.View>
           </View>
         ) : (
           <View style={styles.heroFallback}>
-            <Text style={styles.heroInitial}>
-              {title.charAt(0).toUpperCase()}
-            </Text>
+            <Animated.View
+              style={[
+                styles.heroParallax,
+                styles.heroFallbackInner,
+                heroParallaxStyle,
+              ]}
+            >
+              <Text style={styles.heroInitial}>
+                {title.charAt(0).toUpperCase()}
+              </Text>
+              {heroScrim}
+            </Animated.View>
           </View>
         )}
 
-        <View style={styles.introCard}>
-          <Text style={styles.name}>{title}</Text>
-          <Text style={styles.description}>{description}</Text>
-
-          <View style={styles.metaRow}>
-            <View style={styles.metaPill}>
-              <Star size={15} color={Colors.accent} fill={Colors.accent} />
-              <Text style={styles.metaText}>{ratingLabel}</Text>
+        <View
+          style={styles.sheet}
+          onLayout={(e) => {
+            sheetOffsetY.current = e.nativeEvent.layout.y;
+          }}
+        >
+          {openState !== null || noiseLabel ? (
+            <View style={styles.statusRow}>
+              {openState !== null ? (
+                <View
+                  style={[
+                    styles.statusChip,
+                    openState ? styles.statusChipOpen : styles.statusChipClosed,
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.statusDot,
+                      {
+                        backgroundColor: openState ? "#16a34a" : "#6B7280",
+                      },
+                    ]}
+                  />
+                  <Text
+                    style={[
+                      styles.statusChipText,
+                      { color: openState ? "#166534" : "#6B7280" },
+                    ]}
+                  >
+                    {openState ? "Open now" : "Closed"}
+                  </Text>
+                </View>
+              ) : null}
+              {noiseLabel ? (
+                <View style={styles.noiseChip}>
+                  <Text style={styles.noiseChipText}>
+                    {noiseChipLabel(noiseLabel)}
+                  </Text>
+                </View>
+              ) : null}
             </View>
-            {reviewCountLabel ? (
-              <Pressable
-                style={styles.metaPill}
-                onPress={() => scrollRef.current?.scrollTo({ y: reviewsSectionY.current, animated: true })}
-              >
-                <Text style={styles.metaText}>{reviewCountLabel}</Text>
-              </Pressable>
-            ) : null}
-          </View>
+          ) : null}
+
+          <Text style={styles.name}>{title}</Text>
+
+          {ratingLabel || reviewCount || distanceLabel ? (
+            <View style={styles.metaRow}>
+              {ratingLabel ? (
+                <>
+                  <Star
+                    size={15}
+                    color={Colors.accent}
+                    fill={Colors.accent}
+                  />
+                  <Text style={styles.metaRating}>{ratingLabel}</Text>
+                </>
+              ) : null}
+              {reviewCount ? (
+                <Pressable
+                  onPress={() =>
+                    scrollRef.current?.scrollTo({
+                      y: reviewsSectionY.current,
+                      animated: true,
+                    })
+                  }
+                >
+                  <Text style={styles.metaReviews}>
+                    ({reviewCount} reviews)
+                  </Text>
+                </Pressable>
+              ) : null}
+              {distanceLabel ? (
+                <>
+                  {(ratingLabel || reviewCount) ? (
+                    <View style={styles.metaDot} />
+                  ) : null}
+                  <Text style={styles.metaDistance}>{distanceLabel}</Text>
+                </>
+              ) : null}
+            </View>
+          ) : null}
+
+          {description ? (
+            <Text style={styles.description}>{description}</Text>
+          ) : null}
+
+          {amenityChips.length > 0 ? (
+            <View style={styles.amenityRow}>
+              {amenityChips.map(({ Icon, label }) => (
+                <View key={label} style={styles.amenityChipOn}>
+                  <Icon size={16} color={Colors.primary} strokeWidth={2.2} />
+                  <Text style={styles.amenityLabelOn}>{label}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
+          {vibeCells.length > 0 ? (
+            <View style={styles.vibeStrip}>
+              {vibeCells.map((cell, index) => (
+                <View
+                  key={cell.caption}
+                  style={[
+                    styles.vibeCell,
+                    index < vibeCells.length - 1 && styles.vibeCellDivider,
+                  ]}
+                >
+                  <Text style={styles.vibeCaption}>{cell.caption}</Text>
+                  <Text style={styles.vibeValue}>{cell.value}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
+          {address || hoursLabel ? (
+            <View style={styles.visitBlock}>
+              {address ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Open address in maps"
+                  onPress={openDirections}
+                  style={styles.visitRow}
+                >
+                  <View style={styles.visitTileAddress}>
+                    <MapPin size={18} color={Colors.primary} strokeWidth={2.2} />
+                  </View>
+                  <Text style={styles.visitValue} numberOfLines={1}>
+                    {address}
+                  </Text>
+                  <ChevronRight size={18} color="#bbb" />
+                </Pressable>
+              ) : null}
+              {hoursLabel ? (
+                <View
+                  style={[
+                    styles.visitRow,
+                    address ? styles.visitRowSpaced : undefined,
+                  ]}
+                >
+                  <View style={styles.visitTileHours}>
+                    <Clock3 size={18} color={Colors.accent} strokeWidth={2.2} />
+                  </View>
+                  <Text style={styles.visitValue} numberOfLines={2}>
+                    {hoursLabel}
+                    {closesIn ? (
+                      <Text style={styles.closesIn}>
+                        {` · closes in ${closesIn}h`}
+                      </Text>
+                    ) : null}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
 
           {isSpotOwner ? (
             <View style={styles.ownerBadge}>
@@ -647,303 +965,206 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
             </View>
           ) : null}
 
+          <View
+            style={styles.reviewsBlock}
+            onLayout={(e) => {
+              reviewsSectionY.current =
+                sheetOffsetY.current + e.nativeEvent.layout.y;
+            }}
+          >
+            <View style={styles.reviewsHeader}>
+              <Text style={styles.reviewsTitle}>Reviews</Text>
+              <Text style={styles.reviewsTotal}>
+                {reviewCount ?? reviews.length} total
+              </Text>
+            </View>
+            {reviewsLoading && reviews.length === 0 ? (
+              <ActivityIndicator style={styles.loader} color={Colors.accent} />
+            ) : null}
+            {reviews.length === 0 && !reviewsLoading ? (
+              <Text style={styles.emptyReviews}>
+                No reviews yet — be the first.
+              </Text>
+            ) : (
+              reviews.map((r, idx) => {
+                const rUserId = spotReviewViewerUserId(r);
+                const mine = Boolean(user?.id && rUserId && user.id === rUserId);
+                const canOpenReviewerProfile = Boolean(rUserId);
+                const imgs = spotReviewPhotoUrls(r);
+                const reviewerPhotoUri = spotReviewUserProfilePhoto(r);
+                const rn =
+                  typeof r.user_name === "string" ? r.user_name : "Reviewer";
+                const ratingNum =
+                  typeof r.rating === "number"
+                    ? r.rating
+                    : Number(r.rating) || 0;
+                const dateLbl = formatReviewDate(r.created_at);
+
+                // Build the same shape every other screen feeds to the
+                // shared avatar utilities (PublicProfileScreen, FeedPostCard,
+                // CommunityMembersScreen, etc.) so the initials + color are
+                // computed consistently across the app — handling
+                // "First Last" → "FL", single-word names, username/email
+                // fallback, and a deterministic background color per user.
+                const avatarUser = {
+                  id: rUserId || r.user?.id || undefined,
+                  first_name: r.user?.first_name ?? undefined,
+                  last_name: r.user?.last_name ?? undefined,
+                  username: r.user?.username ?? undefined,
+                  name: rn,
+                };
+
+                return (
+                  <View
+                    key={spotReviewPrimaryId(r) ?? `rev-${idx}`}
+                    style={[
+                      styles.reviewRow,
+                      idx === reviews.length - 1 && styles.reviewRowLast,
+                    ]}
+                  >
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`${rn}'s profile`}
+                      disabled={!canOpenReviewerProfile}
+                      onPress={() => {
+                        if (!rUserId) return;
+                        rootNavigation.navigate("PublicProfile", {
+                          userId: rUserId,
+                        });
+                      }}
+                      style={({ pressed }) =>
+                        canOpenReviewerProfile && pressed
+                          ? styles.reviewerAvatarPressablePressed
+                          : undefined
+                      }
+                    >
+                      {reviewerPhotoUri ? (
+                        <Image
+                          source={{ uri: reviewerPhotoUri }}
+                          style={styles.reviewerAvatar}
+                        />
+                      ) : (
+                        <View
+                          style={[
+                            styles.reviewerAvatarFallback,
+                            {
+                              backgroundColor: getUserAvatarColor(avatarUser),
+                            },
+                          ]}
+                        >
+                          <Text style={styles.reviewerInitial}>
+                            {getUserInitials(avatarUser)}
+                          </Text>
+                        </View>
+                      )}
+                    </Pressable>
+                    <View style={styles.reviewContent}>
+                      <View style={styles.reviewNameRow}>
+                        <Text style={styles.reviewerName} numberOfLines={1}>
+                          {rn}
+                        </Text>
+                        <ReviewStars value={ratingNum} />
+                      </View>
+                      {dateLbl ? (
+                        <Text style={styles.reviewDate}>{dateLbl}</Text>
+                      ) : null}
+                      <Text style={styles.reviewBody}>
+                        {typeof r.content === "string" ? r.content : ""}
+                      </Text>
+                      {imgs.length > 0 ? (
+                        <ScrollView
+                          horizontal
+                          showsHorizontalScrollIndicator={false}
+                          style={styles.reviewImagesScroll}
+                        >
+                          {imgs.map((uri) => (
+                            <Pressable
+                              key={uri}
+                              accessibilityRole="imagebutton"
+                              accessibilityLabel="View review photo full screen"
+                              onPress={() => openSpotGalleryForUri(uri)}
+                              style={styles.reviewThumbPressable}
+                            >
+                              <Image
+                                source={{ uri }}
+                                style={styles.reviewThumb}
+                                resizeMode="cover"
+                              />
+                            </Pressable>
+                          ))}
+                        </ScrollView>
+                      ) : null}
+                      {mine ? (
+                        <View style={styles.reviewActions}>
+                          <Button
+                            size="sm"
+                            label="Edit"
+                            icon={<Edit3 size={16} color={Colors.dark} />}
+                            variant="secondary"
+                            onPress={() => openComposerEdit(r)}
+                          />
+                          <Button
+                            size="sm"
+                            label="Delete"
+                            icon={<Trash2 size={16} color="#ffffff" />}
+                            variant="destructive"
+                            onPress={() => confirmDeleteReview(r)}
+                          />
+                        </View>
+                      ) : null}
+                    </View>
+                  </View>
+                );
+              })
+            )}
+          </View>
+
           {spot.created_by_name ? (
-            <View style={styles.inlineInfoRow}>
+            <View style={styles.addedByRow}>
               <UserRound size={16} color="#777" />
-              <Text style={styles.inlineInfoText}>
+              <Text style={styles.addedByText}>
                 Added by {spot.created_by_name}
               </Text>
             </View>
           ) : null}
-
-          <View style={styles.reviewCtaContainer}>
-            <View style={styles.reviewCtaButton}>
-              <Button
-                icon={<MessageSquarePlus size={16} color="#fff" />}
-                label="Write a review"
-                variant="default"
-                size="default"
-                onPress={openComposerCreate}
-              />
-            </View>
-            <View>
-              <Button
-                size="default"
-                icon={<Share2 size={16} color={Colors.dark} />}
-                variant="outline"
-                onPress={() => setShareSheetOpen(true)}
-              />
-            </View>
-          </View>
         </View>
+      </Animated.ScrollView>
 
-        <View style={[styles.detailsCard, styles.detailsCardElevated]}>
-          <Text style={styles.detailsCardTitle}>At a glance</Text>
-          {hasVibeTiles ? (
-            <>
-              <Text style={styles.detailsEyebrow}>Study vibe</Text>
-              <View style={styles.vibeTileRow}>
-                {noiseLabel ? (
-                  <VibeTile
-                    Icon={Volume2}
-                    subtitle="Noise"
-                    value={noiseLabel}
-                  />
-                ) : null}
-                {lightingLabel ? (
-                  <VibeTile
-                    Icon={SunMedium}
-                    subtitle="Lighting"
-                    value={lightingLabel}
-                  />
-                ) : null}
-                {tablesLabel ? (
-                  <VibeTile
-                    Icon={LayoutGrid}
-                    subtitle="Seating"
-                    value={tablesLabel}
-                  />
-                ) : null}
-              </View>
-            </>
-          ) : null}
-
-          {hasVibeTiles && hasVisitBlock ? <SoftDivider /> : null}
-
-          {hasVisitBlock ? (
-            <>
-              <Text style={styles.detailsEyebrow}>Visit</Text>
-              {typeof spot.address === "string" && spot.address.trim() ? (
-                <View style={styles.visitRow}>
-                  <View style={styles.visitIconWrap}>
-                    <MapPin
-                      size={18}
-                      color={Colors.primary}
-                      strokeWidth={2.2}
-                    />
-                  </View>
-                  <View style={styles.visitTextWrap}>
-                    <Text style={styles.visitLabel}>Address</Text>
-                    <Text style={styles.visitBody}>{spot.address.trim()}</Text>
-                  </View>
-                </View>
-              ) : null}
-              {spot.open_time || spot.close_time ? (
-                <View style={[styles.visitRow, styles.visitRowHours]}>
-                  <View style={styles.visitIconWrap}>
-                    <Clock3 size={18} color={Colors.accent} strokeWidth={2.2} />
-                  </View>
-                  <View style={styles.visitTextWrap}>
-                    <Text style={styles.visitLabel}>Typical hours</Text>
-                    <Text style={styles.visitBody}>
-                      {[spot.open_time, spot.close_time]
-                        .filter(Boolean)
-                        .join(" – ")}
-                    </Text>
-                  </View>
-                </View>
-              ) : null}
-            </>
-          ) : null}
-
-          {hasVibeTiles || hasVisitBlock ? <SoftDivider /> : null}
-
-          <Text style={styles.detailsEyebrow}>Amenities</Text>
-          <View style={styles.amenityGrid}>
-            {AMENITIES.map(({ Icon, label, read }) => {
-              const on = amenityOn(read(spot));
-              return (
-                <View
-                  key={label}
-                  style={[styles.amenityTile, !on && styles.amenityTileOff]}
-                >
-                  <View
-                    style={[
-                      styles.amenityIconWrap,
-                      !on && styles.amenityIconWrapMuted,
-                    ]}
-                  >
-                    <Icon
-                      size={22}
-                      color={on ? Colors.primary : "#B8B8B8"}
-                      strokeWidth={2}
-                    />
-                  </View>
-                  <Text
-                    style={[
-                      styles.amenityLabel,
-                      !on && styles.amenityLabelMuted,
-                    ]}
-                    numberOfLines={2}
-                  >
-                    {label}
-                  </Text>
-                  <View
-                    style={[
-                      styles.amenityBadge,
-                      on ? styles.amenityBadgeOn : styles.amenityBadgeOff,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.amenityBadgeLabel,
-                        !on && styles.amenityBadgeLabelOff,
-                      ]}
-                    >
-                      {on ? "Yes" : "No"}
-                    </Text>
-                  </View>
-                </View>
-              );
-            })}
-          </View>
+      <View
+        style={[
+          styles.stickyBar,
+          { paddingBottom: insets.bottom > 0 ? Math.max(insets.bottom - 20, 6) : 10 },
+        ]}
+      >
+        <View style={styles.stickyPrimary}>
+          <Button
+            variant="default"
+            fullWidth
+            label="Write a review"
+            icon={<MessageSquarePlus size={17} color="#fff" />}
+            onPress={openComposerCreate}
+          />
         </View>
-
-        <View
-          style={[styles.section, styles.lastSection]}
-          onLayout={(e) => { reviewsSectionY.current = e.nativeEvent.layout.y; }}
-        >
-          <Text style={styles.sectionTitle}>Reviews</Text>
-          {reviewsLoading && reviews.length === 0 ? (
-            <ActivityIndicator style={styles.loader} color={Colors.accent} />
-          ) : null}
-          {reviews.length === 0 && !reviewsLoading ? (
-            <Text style={styles.emptyReviews}>
-              No reviews yet — be the first.
-            </Text>
-          ) : (
-            reviews.map((r, idx) => {
-              const rUserId = spotReviewViewerUserId(r);
-              const mine = Boolean(user?.id && rUserId && user.id === rUserId);
-              const canOpenReviewerProfile = Boolean(rUserId);
-              const imgs = spotReviewPhotoUrls(r);
-              const reviewerPhotoUri = spotReviewUserProfilePhoto(r);
-              const rn =
-                typeof r.user_name === "string" ? r.user_name : "Reviewer";
-              const ratingNum =
-                typeof r.rating === "number" ? r.rating : Number(r.rating) || 0;
-              const dateLbl = formatReviewDate(r.created_at);
-
-              // Build the same shape every other screen feeds to the
-              // shared avatar utilities (PublicProfileScreen, FeedPostCard,
-              // CommunityMembersScreen, etc.) so the initials + color are
-              // computed consistently across the app — handling
-              // "First Last" → "FL", single-word names, username/email
-              // fallback, and a deterministic background color per user.
-              const avatarUser = {
-                id: rUserId || r.user?.id || undefined,
-                first_name: r.user?.first_name ?? undefined,
-                last_name: r.user?.last_name ?? undefined,
-                username: r.user?.username ?? undefined,
-                name: rn,
-              };
-
-              return (
-                <View
-                  key={spotReviewPrimaryId(r) ?? `rev-${idx}`}
-                  style={[
-                    styles.reviewCard,
-                    idx === reviews.length - 1 && styles.reviewCardLast,
-                  ]}
-                >
-                  <View style={styles.reviewTop}>
-                    <View style={styles.reviewAuthor}>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`${rn}'s profile`}
-                        disabled={!canOpenReviewerProfile}
-                        onPress={() => {
-                          if (!rUserId) return;
-                          rootNavigation.navigate("PublicProfile", {
-                            userId: rUserId,
-                          });
-                        }}
-                        style={({ pressed }) =>
-                          canOpenReviewerProfile && pressed
-                            ? styles.reviewerAvatarPressablePressed
-                            : undefined
-                        }
-                      >
-                        {reviewerPhotoUri ? (
-                          <Image
-                            source={{ uri: reviewerPhotoUri }}
-                            style={styles.reviewerAvatar}
-                          />
-                        ) : (
-                          <View
-                            style={[
-                              styles.reviewerAvatarFallback,
-                              { backgroundColor: getUserAvatarColor(avatarUser) },
-                            ]}
-                          >
-                            <Text style={styles.reviewerInitial}>
-                              {getUserInitials(avatarUser)}
-                            </Text>
-                          </View>
-                        )}
-                      </Pressable>
-                      <View style={styles.reviewerTextCol}>
-                        <Text style={styles.reviewerName}>{rn}</Text>
-                        {dateLbl ? (
-                          <Text style={styles.reviewDate}>{dateLbl}</Text>
-                        ) : null}
-                      </View>
-                    </View>
-                    <ReviewStars value={ratingNum} />
-                  </View>
-
-                  <Text style={styles.reviewBody}>
-                    {typeof r.content === "string" ? r.content : ""}
-                  </Text>
-
-                  {imgs.length > 0 ? (
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      style={styles.reviewImagesScroll}
-                    >
-                      {imgs.map((uri) => (
-                        <Pressable
-                          key={uri}
-                          accessibilityRole="imagebutton"
-                          accessibilityLabel="View review photo full screen"
-                          onPress={() => openSpotGalleryForUri(uri)}
-                          style={styles.reviewThumbPressable}
-                        >
-                          <Image
-                            source={{ uri }}
-                            style={styles.reviewThumb}
-                            resizeMode="cover"
-                          />
-                        </Pressable>
-                      ))}
-                    </ScrollView>
-                  ) : null}
-
-                  {mine ? (
-                    <View style={styles.reviewActions}>
-                      <Button
-                        size="sm"
-                        label="Edit"
-                        icon={<Edit3 size={16} color={Colors.dark} />}
-                        variant="secondary"
-                        onPress={() => openComposerEdit(r)}
-                      />
-                      <Button
-                        size="sm"
-                        label="Delete"
-                        icon={<Trash2 size={16} color="#ffffff" />}
-                        variant="destructive"
-                        onPress={() => confirmDeleteReview(r)}
-                      />
-                    </View>
-                  ) : null}
-                </View>
-              );
-            })
-          )}
-        </View>
-      </ScrollView>
+        <Button
+          variant="outline"
+          size="icon"
+          icon={
+            <Bookmark
+              size={18}
+              color={saved ? Colors.accent : Colors.dark}
+              fill={saved ? Colors.accent : "transparent"}
+              strokeWidth={2.2}
+            />
+          }
+          onPress={toggleSave}
+        />
+        <Button
+          variant="outline"
+          size="icon"
+          icon={<EllipsisVertical size={18} color={Colors.dark} />}
+          onPress={spotMenu}
+        />
+      </View>
 
       <Modal
         visible={lightboxOpen && galleryItems.length > 0}
@@ -1074,56 +1295,407 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  reviewCtaContainer: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 12,
-  },
-  reviewCtaButton: {
-    flex: 1,
-  },
   screen: {
     flex: 1,
-    backgroundColor: Colors.light,
+    backgroundColor: "#fff",
   },
-  header: {
+  floatingOverlay: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    zIndex: 20,
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-    backgroundColor: Colors.light,
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#EBEBEB",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  headerTitle: {
-    flex: 1,
-    textAlign: "center",
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 18,
-    color: Colors.dark,
-    marginHorizontal: 12,
-  },
-  placeholder: {
-    width: 40,
-    height: 40,
+    alignItems: "flex-start",
   },
   content: {
     flex: 1,
   },
   loader: {
     marginVertical: 16,
+  },
+  heroCarouselWrap: {
+    position: "relative",
+    height: HERO_HEIGHT,
+    overflow: "hidden",
+    backgroundColor: "#EDEDED",
+  },
+  heroParallax: {
+    width: "100%",
+    height: HERO_HEIGHT,
+  },
+  heroFallbackInner: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroSlideImage: {
+    width: "100%",
+    height: HERO_HEIGHT,
+    backgroundColor: "#EDEDED",
+  },
+  photoCounter: {
+    position: "absolute",
+    right: 14,
+    bottom: 38,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "rgba(25,25,25,0.72)",
+  },
+  photoCounterText: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 12,
+    color: "#fff",
+  },
+  heroFallback: {
+    height: HERO_HEIGHT,
+    overflow: "hidden",
+    backgroundColor: Colors.accent,
+  },
+  heroInitial: {
+    fontFamily: Fonts.gabarito.bold,
+    fontSize: 72,
+    color: "rgba(255,255,255,0.42)",
+  },
+  sheet: {
+    marginTop: -22,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    backgroundColor: "#fff",
+    padding: 20,
+    paddingBottom: 120,
+    zIndex: 2,
+  },
+  statusRow: {
+    flexDirection: "row",
+    gap: 6,
+    marginBottom: 12,
+  },
+  statusChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+  },
+  statusChipOpen: {
+    backgroundColor: "#DCFCE7",
+  },
+  statusChipClosed: {
+    backgroundColor: "#F3F4F6",
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  statusChipText: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 12,
+  },
+  noiseChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: "#F1F4F8",
+  },
+  noiseChipText: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 12,
+    color: Colors.primary,
+  },
+  name: {
+    fontFamily: Fonts.gabarito.bold,
+    fontSize: 27,
+    letterSpacing: -0.4,
+    lineHeight: 31,
+    color: Colors.dark,
+  },
+  metaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flexWrap: "wrap",
+    marginTop: 10,
+  },
+  metaRating: {
+    fontFamily: Fonts.gabarito.bold,
+    fontSize: 14,
+    color: Colors.dark,
+  },
+  metaReviews: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14,
+    color: "#777",
+  },
+  metaDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#ccc",
+  },
+  metaDistance: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14,
+    color: "#777",
+  },
+  description: {
+    marginTop: 12,
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 15,
+    lineHeight: 23,
+    color: "#3d3d3d",
+  },
+  amenityRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginTop: 18,
+    gap: 8,
+  },
+  amenityChipOn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 13,
+    borderRadius: 999,
+    backgroundColor: "#F1F4F8",
+  },
+  amenityLabelOn: {
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 13,
+    color: Colors.dark,
+  },
+  vibeStrip: {
+    flexDirection: "row",
+    borderWidth: 1,
+    borderColor: "#EEEEEE",
+    borderRadius: 16,
+    overflow: "hidden",
+    marginTop: 20,
+  },
+  vibeCell: {
+    flex: 1,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  vibeCellDivider: {
+    borderRightWidth: 1,
+    borderRightColor: "#EEEEEE",
+  },
+  vibeCaption: {
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 10.5,
+    color: "#8f8f8f",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  vibeValue: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 15,
+    color: Colors.dark,
+    marginTop: 5,
+  },
+  visitBlock: {
+    marginTop: 20,
+    paddingTop: 18,
+    borderTopWidth: 1,
+    borderTopColor: "#F0F0F0",
+  },
+  visitRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  visitRowSpaced: {
+    marginTop: 14,
+  },
+  visitTileAddress: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: "#F4F7FB",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  visitTileHours: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: "#FFF6E8",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  visitValue: {
+    flex: 1,
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14.5,
+    color: Colors.dark,
+  },
+  closesIn: {
+    color: "#888",
+  },
+  ownerBadge: {
+    alignSelf: "flex-start",
+    marginTop: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: Colors.primary + "14",
+    borderWidth: 1,
+    borderColor: Colors.primary + "40",
+  },
+  ownerBadgeText: {
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 12,
+    color: Colors.primary,
+    letterSpacing: 0.2,
+  },
+  addedByRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 22,
+    paddingTop: 18,
+    borderTopWidth: 1,
+    borderTopColor: "#F0F0F0",
+  },
+  addedByText: {
+    flex: 1,
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14,
+    color: "#666",
+  },
+  reviewsBlock: {
+    borderTopWidth: 1,
+    borderTopColor: "#F0F0F0",
+    marginTop: 22,
+    paddingTop: 18,
+  },
+  reviewsHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 14,
+  },
+  reviewsTitle: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 20,
+    color: Colors.dark,
+  },
+  reviewsTotal: {
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 13,
+    color: Colors.primary,
+  },
+  emptyReviews: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 15,
+    color: "#888",
+  },
+  reviewRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F0F0F0",
+  },
+  reviewRowLast: {
+    borderBottomWidth: 0,
+  },
+  reviewerAvatarPressablePressed: {
+    opacity: 0.85,
+  },
+  reviewerAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#eee",
+  },
+  reviewerAvatarFallback: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  reviewerInitial: {
+    fontFamily: Fonts.gabarito.bold,
+    fontSize: 16,
+    color: "#fff",
+  },
+  reviewContent: {
+    flex: 1,
+  },
+  reviewNameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  reviewerName: {
+    flexShrink: 1,
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 15,
+    color: Colors.dark,
+  },
+  reviewDate: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 12,
+    color: "#999",
+    marginTop: 2,
+  },
+  reviewStars: {
+    flexDirection: "row",
+    gap: 2,
+  },
+  reviewBody: {
+    marginTop: 8,
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14.5,
+    lineHeight: 21,
+    color: Colors.dark,
+  },
+  reviewImagesScroll: {
+    marginTop: 10,
+  },
+  reviewThumbPressable: {
+    marginRight: 10,
+    borderRadius: 10,
+    overflow: "hidden",
+  },
+  reviewThumb: {
+    width: 76,
+    height: 76,
+    borderRadius: 10,
+    backgroundColor: "#eee",
+  },
+  reviewActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 12,
+  },
+  stickyBar: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 20,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    backgroundColor: "rgba(255,255,255,0.94)",
+    borderTopWidth: 1,
+    borderTopColor: "#EDEDED",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  stickyPrimary: {
+    flex: 1,
   },
   lightboxRoot: {
     flex: 1,
@@ -1175,12 +1747,6 @@ const styles = StyleSheet.create({
     fontSize: 17,
     color: "#fff",
   },
-  lightboxRole: {
-    marginTop: 4,
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 13,
-    color: "rgba(255,255,255,0.55)",
-  },
   lightboxCaptionEyebrow: {
     marginTop: 14,
     fontFamily: Fonts.gabarito.medium,
@@ -1198,443 +1764,5 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     color: "rgba(255,255,255,0.88)",
-  },
-  heroCarouselWrap: {
-    position: "relative",
-    height: 220,
-    backgroundColor: "#EDEDED",
-  },
-  heroSlideImage: {
-    width: "100%",
-    height: 220,
-    backgroundColor: "#EDEDED",
-  },
-  heroDots: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 12,
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 6,
-  },
-  heroDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "rgba(255,255,255,0.45)",
-  },
-  heroDotActive: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#fff",
-  },
-  heroFallback: {
-    height: 220,
-    backgroundColor: Colors.accent,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  heroInitial: {
-    fontFamily: Fonts.gabarito.bold,
-    fontSize: 72,
-    color: "rgba(255,255,255,0.42)",
-  },
-  introCard: {
-    padding: 20,
-    backgroundColor: "#fff",
-  },
-  name: {
-    fontFamily: Fonts.gabarito.bold,
-    fontSize: 28,
-    color: Colors.dark,
-  },
-  description: {
-    marginTop: 8,
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 15,
-    color: Colors.dark,
-    lineHeight: 22,
-  },
-  metaRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    marginTop: 16,
-  },
-  metaPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: "#F8F8F8",
-  },
-  metaText: {
-    fontFamily: Fonts.gabarito.medium,
-    fontSize: 13,
-    color: Colors.dark,
-  },
-  inlineInfoRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 8,
-    marginTop: 12,
-  },
-  inlineInfoText: {
-    flex: 1,
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 14,
-    color: "#666",
-    lineHeight: 21,
-  },
-  ownerBadge: {
-    alignSelf: "flex-start",
-    marginTop: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: Colors.primary + "14",
-    borderWidth: 1,
-    borderColor: Colors.primary + "40",
-  },
-  ownerBadgeText: {
-    fontFamily: Fonts.gabarito.medium,
-    fontSize: 12,
-    color: Colors.primary,
-    letterSpacing: 0.2,
-  },
-  primaryReviewCta: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    marginTop: 20,
-    backgroundColor: Colors.primary,
-    borderRadius: 14,
-    paddingVertical: 14,
-  },
-  primaryReviewCtaLabel: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 16,
-    color: "#fff",
-  },
-  section: {
-    marginTop: 12,
-    marginHorizontal: 16,
-    padding: 18,
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#EEEEEE",
-  },
-  lastSection: {
-    marginBottom: 48,
-  },
-  sectionTitle: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 20,
-    color: Colors.dark,
-    marginBottom: 14,
-  },
-  detailsCard: {
-    marginTop: 10,
-    marginHorizontal: 16,
-    padding: 18,
-    backgroundColor: "#fff",
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: "#EEEEEE",
-  },
-  detailsCardElevated: {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    elevation: 2,
-  },
-  detailsCardTitle: {
-    fontFamily: Fonts.gabarito.bold,
-    fontSize: 22,
-    color: Colors.dark,
-    marginBottom: 14,
-    letterSpacing: -0.3,
-  },
-  detailsEyebrow: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 11,
-    color: Colors.primary,
-    textTransform: "uppercase",
-    letterSpacing: 0.85,
-    marginBottom: 10,
-    marginTop: 2,
-  },
-  softDivider: {
-    height: 1,
-    backgroundColor: "#EFEFEF",
-    marginVertical: 18,
-  },
-  vibeTileRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-  },
-  vibeTile: {
-    width: "31%",
-    minWidth: 96,
-    flexGrow: 1,
-    backgroundColor: "#F8FAFC",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#E8EEF5",
-    padding: 12,
-  },
-  vibeIconBubble: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: "#fff",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: "#E2EAF3",
-  },
-  vibeTileSubtitle: {
-    fontFamily: Fonts.gabarito.medium,
-    fontSize: 11,
-    color: "#888",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 4,
-  },
-  vibeTileValue: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 14,
-    color: Colors.dark,
-    lineHeight: 19,
-  },
-  visitRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
-  },
-  visitRowHours: {
-    marginTop: 14,
-  },
-  visitIconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    backgroundColor: "#F4F7FB",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  visitTextWrap: {
-    flex: 1,
-  },
-  visitLabel: {
-    fontFamily: Fonts.gabarito.medium,
-    fontSize: 12,
-    color: "#888",
-    marginBottom: 4,
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-  },
-  visitBody: {
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 15,
-    color: Colors.dark,
-    lineHeight: 22,
-  },
-  amenityGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    marginTop: 4,
-  },
-  amenityTile: {
-    width: "47.5%",
-    flexGrow: 1,
-    minWidth: 140,
-    backgroundColor: "#FAFAFA",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#ECECEC",
-    padding: 12,
-    paddingBottom: 10,
-  },
-  amenityTileOff: {
-    opacity: 0.72,
-    backgroundColor: "#F5F5F5",
-    borderColor: "#E8E8E8",
-  },
-  amenityIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: "#fff",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: "#EDEDED",
-  },
-  amenityIconWrapMuted: {
-    borderColor: "#EAEAEA",
-    backgroundColor: "#FDFDFD",
-  },
-  amenityLabel: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 14,
-    color: Colors.dark,
-    marginBottom: 10,
-    minHeight: 36,
-  },
-  amenityLabelMuted: {
-    color: "#8A8A8A",
-  },
-  amenityBadge: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
-  },
-  amenityBadgeOn: {
-    backgroundColor: "#DCFCE7",
-  },
-  amenityBadgeOff: {
-    backgroundColor: "#F3F4F6",
-  },
-  amenityBadgeLabel: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 12,
-    color: "#166534",
-  },
-  amenityBadgeLabelOff: {
-    color: "#6B7280",
-  },
-  emptyReviews: {
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 15,
-    color: "#888",
-  },
-  reviewCard: {
-    borderBottomWidth: 1,
-    borderBottomColor: "#EFEFEF",
-    paddingVertical: 16,
-  },
-  reviewCardLast: {
-    borderBottomWidth: 0,
-  },
-  reviewTop: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-  },
-  reviewAuthor: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    flex: 1,
-    marginRight: 8,
-  },
-  reviewerAvatarPressablePressed: {
-    opacity: 0.85,
-  },
-  reviewerAvatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: "#eee",
-  },
-  reviewerAvatarFallback: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  reviewerInitial: {
-    fontFamily: Fonts.gabarito.bold,
-    fontSize: 17,
-    color: "#fff",
-  },
-  reviewerTextCol: {
-    flexShrink: 1,
-  },
-  reviewerName: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 15,
-    color: Colors.dark,
-  },
-  reviewDate: {
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 12,
-    color: "#999",
-    marginTop: 2,
-  },
-  reviewStars: {
-    flexDirection: "row",
-    gap: 2,
-    paddingTop: 4,
-  },
-  reviewBody: {
-    marginTop: 10,
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 15,
-    color: Colors.dark,
-    lineHeight: 22,
-  },
-  reviewImagesScroll: {
-    marginTop: 10,
-    marginHorizontal: -4,
-  },
-  reviewThumbPressable: {
-    marginRight: 10,
-    borderRadius: 12,
-    overflow: "hidden",
-  },
-  reviewThumb: {
-    width: 88,
-    height: 88,
-    borderRadius: 12,
-    backgroundColor: "#eee",
-  },
-  reviewActions: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 12,
-  },
-  miniBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-  },
-  miniBtnOutline: {
-    borderWidth: 1,
-    borderColor: "#ddd",
-    backgroundColor: "#fafafa",
-  },
-  miniBtnDangerOutline: {
-    borderWidth: 1,
-    borderColor: "#FECACA",
-    backgroundColor: "#FEF2F2",
-  },
-  miniBtnLabel: {
-    fontFamily: Fonts.gabarito.medium,
-    fontSize: 14,
-    color: Colors.dark,
-  },
-  miniBtnLabelDanger: {
-    fontFamily: Fonts.gabarito.medium,
-    fontSize: 14,
-    color: "#B91C1C",
   },
 });

@@ -74,7 +74,6 @@ export default function LoginScreen() {
         data.access_token,
         data.refresh_token,
         rememberMe,
-        true,
       );
     } catch {
       showAlert("Network error", "Could not reach the server.");
