@@ -14,11 +14,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft } from 'lucide-react-native';
 import { Colors } from '../constants/Colors';
 import { Fonts } from '../constants/Fonts';
+import { FIELDS_OF_STUDY, UNIVERSITIES } from '../constants/onboardingOptions';
 import { API_BASE_URL } from '../constants/Api';
 import { type UserProfileData, useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import Button from '../components/Button';
-import DeleteAccountModal from '../components/DeleteAccountModal';
 import Input from '../components/Input';
+import SearchableSelect from '../components/onboarding/SearchableSelect';
 import type { FeedPost } from '../utils/feedApi';
 import type { UserPostsFeedParams } from './UserPostsFeedScreen';
 
@@ -26,6 +28,7 @@ export type ProfileSectionKey = 'personal' | 'school' | 'location' | 'settings';
 
 export type ProfileStackParamList = {
   ProfileHome: undefined;
+  Settings: undefined;
   ProfileSection: { section: ProfileSectionKey };
   FeedPostDetail: { post: FeedPost };
   UserPostsFeed: UserPostsFeedParams;
@@ -65,6 +68,7 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
   const { section } = route.params;
   const insets = useSafeAreaInsets();
   const { profile, token, updateProfile, logout } = useAuth();
+  const { showToast } = useToast();
   const user = profile?.userProfile;
 
   const [form, setForm] = useState<ProfileFormState>(() =>
@@ -72,7 +76,6 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
   );
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   useEffect(() => {
     setForm(createFormState(user));
@@ -84,24 +87,25 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
         return {
           title: "Personal Details",
           description: "Manage the basics people see on your profile.",
-          buttonLabel: "Save Personal Details",
+          buttonLabel: "Save",
         };
       case "school":
         return {
           title: "School",
-          description: "Keep your academic info up to date.",
-          buttonLabel: "Save School Details",
+          description: "We'll use this to connect you with people on your campus.",
+          buttonLabel: "Save",
         };
       case "location":
         return {
           title: "Location",
           description: "Update where you are based.",
-          buttonLabel: "Save Location",
+          buttonLabel: "Save",
         };
       case "settings":
         return {
-          title: "Settings",
-          description: "Manage account actions and other sensitive changes.",
+          title: "Delete account",
+          description:
+            "Deleting your account permanently removes your profile, memberships, saved content, and activity.",
           buttonLabel: "",
         };
     }
@@ -234,7 +238,7 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
         await updateProfile(bodyPayload as Partial<UserProfileData>);
       }
 
-      Alert.alert("Profile updated", "Your changes were saved.");
+      showToast("Profile updated");
       navigation.goBack();
     } catch (err: any) {
       Alert.alert(
@@ -260,7 +264,6 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
         throw new Error(getErrorMessage(data) || "Failed to delete account");
       }
 
-      setShowDeleteModal(false);
       await logout();
     } catch (err: any) {
       Alert.alert(
@@ -272,30 +275,49 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
     }
   };
 
+  const confirmDeleteAccount = () => {
+    if (deleting) return;
+    Alert.alert(
+      "Delete account",
+      "This cannot be undone. Permanently delete your StudySpotr account?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: handleDeleteAccount,
+        },
+      ],
+    );
+  };
+
   const renderForm = () => {
     if (section === "settings") {
       return (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Danger Zone</Text>
-          <Text style={styles.cardBody}>
-            Deleting your account permanently removes your profile, memberships,
-            saved content, and activity.
-          </Text>
-          <Button
-            label="Delete Account"
-            variant="destructive"
-            size="lg"
-            style={styles.saveButton}
-            onPress={() => setShowDeleteModal(true)}
-          />
+        <View>
+          <Text style={styles.pageTitle}>Delete account</Text>
+          <Text style={styles.pageBody}>{sectionConfig.description}</Text>
+          <View style={styles.warningList}>
+            <Text style={styles.warningItem}>
+              {"\u2022"}  Your profile and personal info
+            </Text>
+            <Text style={styles.warningItem}>
+              {"\u2022"}  Posts, comments, and activity
+            </Text>
+            <Text style={styles.warningItem}>
+              {"\u2022"}  Community memberships
+            </Text>
+            <Text style={styles.warningItem}>
+              {"\u2022"}  Saved content and preferences
+            </Text>
+          </View>
         </View>
       );
     }
 
     return (
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>{sectionConfig.title}</Text>
-        <Text style={styles.cardBody}>{sectionConfig.description}</Text>
+      <View>
+        <Text style={styles.pageBody}>{sectionConfig.description}</Text>
 
         <View style={styles.form}>
           {section === "personal" ? (
@@ -348,20 +370,27 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
 
           {section === "school" ? (
             <>
-              <Input
-                label="School"
+              <SearchableSelect
+                label="University"
+                placeholder="Search your school"
                 value={form.school}
-                onChangeText={(value) =>
+                options={UNIVERSITIES}
+                onChange={(value) =>
                   setForm((current) => ({ ...current, school: value }))
                 }
               />
-              <Input
-                label="Field of Study"
-                containerStyle={styles.fieldGap}
+              <SearchableSelect
+                label="What are you studying?"
+                placeholder="Search a program"
                 value={form.field_of_study}
-                onChangeText={(value) =>
-                  setForm((current) => ({ ...current, field_of_study: value }))
+                options={FIELDS_OF_STUDY}
+                onChange={(value) =>
+                  setForm((current) => ({
+                    ...current,
+                    field_of_study: value,
+                  }))
                 }
+                optional
               />
             </>
           ) : null}
@@ -386,15 +415,6 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
             </>
           ) : null}
         </View>
-
-        <Button
-          label={sectionConfig.buttonLabel}
-          variant="accent"
-          size="lg"
-          style={styles.saveButton}
-          loading={saving}
-          onPress={handleSave}
-        />
       </View>
     );
   };
@@ -431,14 +451,35 @@ export default function ProfileSectionScreen({ route, navigation }: Props) {
         >
           {renderForm()}
         </ScrollView>
+        {section === "settings" ? (
+          <View
+            style={[
+              styles.deleteFooter,
+              { paddingBottom: Math.max(insets.bottom, 16) },
+            ]}
+          >
+            <Button
+              label="Delete account"
+              variant="destructive"
+              size="lg"
+              fullWidth
+              loading={deleting}
+              disabled={deleting}
+              onPress={confirmDeleteAccount}
+            />
+          </View>
+        ) : (
+          <View style={styles.saveFooter}>
+            <Button
+              label={sectionConfig.buttonLabel}
+              variant="accent"
+              size="sm"
+              loading={saving}
+              onPress={handleSave}
+            />
+          </View>
+        )}
       </KeyboardAvoidingView>
-
-      <DeleteAccountModal
-        visible={showDeleteModal}
-        deleting={deleting}
-        onClose={() => setShowDeleteModal(false)}
-        onConfirm={handleDeleteAccount}
-      />
     </View>
   );
 }
@@ -482,35 +523,49 @@ const styles = StyleSheet.create({
   content: {
     flexGrow: 1,
     padding: 20,
-    paddingBottom: 40,
-  },
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 24,
-    padding: 22,
-    borderWidth: 1,
-    borderColor: '#E8E8E8',
-  },
-  cardTitle: {
-    fontFamily: Fonts.gabarito.bold,
-    fontSize: 24,
-    color: Colors.dark,
-  },
-  cardBody: {
-    marginTop: 8,
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 15,
-    lineHeight: 22,
-    color: '#666',
+    paddingBottom: 24,
   },
   form: {
-    marginTop: 20,
+    marginTop: 16,
   },
   fieldGap: {
     marginTop: 12,
   },
-  saveButton: {
+  pageTitle: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 17,
+    color: Colors.dark,
+  },
+  pageBody: {
+    marginTop: 4,
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#8A8F96',
+  },
+  warningList: {
     marginTop: 20,
-    alignSelf: 'stretch',
+    gap: 10,
+  },
+  warningItem: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#8A8F96',
+  },
+  deleteFooter: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+  },
+  saveFooter: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 6,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E2E2E2',
+    backgroundColor: '#fff',
   },
 });

@@ -80,36 +80,63 @@ export default function Input({
 
   return (
     <View style={containerStyle}>
-      {!floating && label ? <Text style={styles.label}>{label}</Text> : null}
+      {!floating && (label || error) ? (
+        <View style={styles.labelRow}>
+          {label ? (
+            <Text style={styles.label} numberOfLines={1}>
+              {label}
+            </Text>
+          ) : (
+            <View />
+          )}
+          {error ? (
+            <Text style={styles.error} numberOfLines={2}>
+              {error}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
 
       <View
         style={[
           styles.inputRow,
           floating && styles.inputRowFloating,
           multiline && styles.inputRowMultiline,
-          focused && styles.inputRowFocused,
-          error && styles.inputRowError,
+          focused && !error && styles.inputRowFocused,
+          error ? styles.inputRowError : null,
           inputStyle,
         ]}
       >
-        {floating && label ? (
-          <Text style={styles.floatingLabel}>{label}</Text>
+        {floating && (label || error) ? (
+          <View style={styles.floatingLabelRow}>
+            {label ? <Text style={styles.floatingLabel}>{label}</Text> : null}
+            {error ? (
+              <Text style={styles.error} numberOfLines={2}>
+                {error}
+              </Text>
+            ) : null}
+          </View>
         ) : null}
         {floating ? <View style={styles.floatingValueRow}>{field}</View> : field}
       </View>
-
-      {error && <Text style={styles.error}>{error}</Text>}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  labelRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 6,
+    marginHorizontal: 2,
+  },
   label: {
+    flex: 1,
     fontFamily: Fonts.gabarito.medium,
     fontSize: 13,
     color: "#666",
-    marginBottom: 6,
-    marginLeft: 2,
   },
   inputRow: {
     flexDirection: "row",
@@ -127,11 +154,18 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 10,
   },
+  floatingLabelRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 2,
+  },
   floatingLabel: {
+    flex: 1,
     fontFamily: Fonts.instrument.regular,
     fontSize: 12,
     color: "#999",
-    marginBottom: 2,
   },
   floatingValueRow: {
     flexDirection: "row",
@@ -145,6 +179,7 @@ const styles = StyleSheet.create({
   },
   inputRowError: {
     borderColor: "#DC2626",
+    borderWidth: 1.5,
   },
   textInput: {
     flex: 1,
@@ -168,10 +203,12 @@ const styles = StyleSheet.create({
     paddingTop: 14,
   },
   error: {
+    flexShrink: 1,
+    maxWidth: "62%",
     fontFamily: Fonts.instrument.regular,
     fontSize: 12,
+    lineHeight: 16,
     color: "#DC2626",
-    marginTop: 4,
-    marginLeft: 2,
+    textAlign: "right",
   },
 });

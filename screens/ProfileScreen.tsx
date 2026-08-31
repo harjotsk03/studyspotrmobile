@@ -6,7 +6,7 @@ import {
   Image,
   Pressable,
   RefreshControl,
-  ScrollView,
+  Share,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -16,7 +16,6 @@ import * as ImagePicker from "expo-image-picker";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import ProfilePostGridTile from "../components/ProfilePostGridTile";
-import ProfileSectionButton from "../components/ProfileSectionButton";
 import ProfileStat from "../components/ProfileStat";
 import ProfileTabsBar, {
   type OwnProfileMainTabKey,
@@ -26,12 +25,9 @@ import { Fonts } from "../constants/Fonts";
 import type { StudySpot } from "../context/SpotsContext";
 import { useSpots } from "../context/SpotsContext";
 import { useAuth } from "../context/AuthContext";
-import type {
-  ProfileSectionKey,
-  ProfileStackParamList,
-} from "./ProfileSectionScreen";
+import type { ProfileStackParamList } from "./ProfileSectionScreen";
 import type { RootStackParamList } from "../types/navigation";
-import { Camera, MapPin, ShieldBan, Star } from "lucide-react-native";
+import { Camera, Heart, LayoutGrid, MapPin, Star } from "lucide-react-native";
 import Button from "../components/Button";
 import TopNav from "../components/TopNav";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
@@ -51,11 +47,14 @@ import {
   type SpotReview,
 } from "../utils/spotsApi";
 type ProfileListRow = FeedPost | StudySpot | SpotReview;
+
+type OwnListRow =
+  | { kind: "grid"; id: string; posts: FeedPost[] }
+  | { kind: "item"; id: string; item: ProfileListRow };
 export default function ProfileScreen() {
   const {
     profile,
     token,
-    logout,
     refreshProfile,
     uploadProfilePhoto,
   } = useAuth();
@@ -138,46 +137,12 @@ export default function ProfileScreen() {
     },
   ];
 
-  const sectionButtons: Array<{
-    key: ProfileSectionKey;
-    title: string;
-    subtitle: string;
-  }> = [
-    {
-      key: "personal",
-      title: "Personal Details",
-      subtitle: "First name, last name, username, and bio",
-    },
-    {
-      key: "school",
-      title: "School",
-      subtitle: "School and field of study",
-    },
-    {
-      key: "location",
-      title: "Location",
-      subtitle: "City and country",
-    },
-    {
-      key: "settings",
-      title: "Delete account",
-      subtitle: "Permanently remove your StudySpotr account",
-    },
-  ];
-
   const userSpots = useMemo(() => {
     return spots.filter((s) => {
       const cid = s.created_by_id;
       return typeof cid === "string" && cid === userId;
     });
   }, [spots, userId]);
-
-  const handleLogout = () => {
-    Alert.alert("Log out", "Are you sure you want to log out?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Log Out", style: "destructive", onPress: logout },
-    ]);
-  };
 
   const refreshPublished = useCallback(async () => {
     if (!token || !userId) return;
@@ -218,6 +183,20 @@ export default function ProfileScreen() {
       setLikedRefreshing(false);
     }
   }, [token, userId, enrichPost]);
+
+  const handleShareProfile = useCallback(async () => {
+    const handle = user?.username?.trim()
+      ? `@${user.username.trim()}`
+      : [user?.first_name, user?.last_name].filter(Boolean).join(" ").trim() ||
+        "my profile";
+    try {
+      await Share.share({
+        message: `Check out ${handle} on StudySpotr`,
+      });
+    } catch {
+      /* dismissed */
+    }
+  }, [user?.username, user?.first_name, user?.last_name]);
 
   const loadMorePosts = useCallback(async () => {
     if (
@@ -349,19 +328,33 @@ export default function ProfileScreen() {
     };
   }, [mainTab, userId, token]);
 
-  const listData = useMemo(() => {
-    if (mainTab === "posts") return publishedPosts;
-    if (mainTab === "liked") return likedPosts;
-    if (mainTab === "spots") return userSpots;
-    if (mainTab === "reviews") return reviewsList;
-    return [];
-  }, [
-    mainTab,
-    publishedPosts,
-    likedPosts,
-    userSpots,
-    reviewsList,
-  ]) as ProfileListRow[];
+  const listRows = useMemo((): OwnListRow[] => {
+    if (mainTab === "posts" || mainTab === "liked") {
+      const posts =
+        mainTab === "posts" ? publishedPosts : likedPosts;
+      const rows: OwnListRow[] = [];
+      for (let i = 0; i < posts.length; i += 3) {
+        rows.push({
+          kind: "grid",
+          id: `${mainTab}-${i}`,
+          posts: posts.slice(i, i + 3),
+        });
+      }
+      return rows;
+    }
+    if (mainTab === "spots") {
+      return userSpots.map((item, index) => ({
+        kind: "item" as const,
+        id: item.id ?? `spot-${index}`,
+        item,
+      }));
+    }
+    return reviewsList.map((item, index) => ({
+      kind: "item" as const,
+      id: `${spotReviewPrimaryId(item) ?? "rev"}-${index}`,
+      item,
+    }));
+  }, [mainTab, publishedPosts, likedPosts, userSpots, reviewsList]);
 
   const listLoading =
     mainTab === "posts"
@@ -702,9 +695,24 @@ export default function ProfileScreen() {
       <Text style={styles.bio}>{user?.bio || "No bio set"}</Text>
 
       <View style={styles.actionButtonsRow}>
-        <Button fullWidth label="Edit profile" variant="secondary" onPress={() =>
-          navigation.navigate("ProfileSection", { section: "personal" })
-        } />
+        <View style={styles.actionBtnCell}>
+          <Button
+            fullWidth
+            label="Share profile"
+            variant="outline"
+            onPress={() => void handleShareProfile()}
+          />
+        </View>
+        <View style={styles.actionBtnCell}>
+          <Button
+            fullWidth
+            label="Edit profile"
+            variant="default"
+            onPress={() =>
+              navigation.navigate("ProfileSection", { section: "personal" })
+            }
+          />
+        </View>
       </View>
 
       <ProfileTabsBar
@@ -715,48 +723,41 @@ export default function ProfileScreen() {
     </>
   );
 
-  function renderItem({ item }: { item: ProfileListRow }) {
-    if (mainTab === "posts" || mainTab === "liked") {
+  function renderItem({ item }: { item: OwnListRow }) {
+    if (item.kind === "grid") {
       return (
-        <ProfilePostGridTile
-          post={item as FeedPost}
-          onPress={() => openPostDetail(item as FeedPost)}
-        />
+        <View style={styles.gridRow}>
+          {item.posts.map((post) => (
+            <ProfilePostGridTile
+              key={post.id}
+              post={post}
+              onPress={() => openPostDetail(post)}
+            />
+          ))}
+          {item.posts.length < 3
+            ? Array.from({ length: 3 - item.posts.length }, (_, i) => (
+                <View key={`pad-${item.id}-${i}`} style={styles.gridPad} />
+              ))
+            : null}
+        </View>
       );
     }
-    if (mainTab === "spots") return renderSpotRow({ item: item as StudySpot });
-    if (mainTab === "reviews") {
-      const rv = item as SpotReview;
-      return renderReviewRow({ item: rv });
-    }
-    return null;
-  }
-
-  function keyExtractor(item: ProfileListRow, index: number): string {
-    if (mainTab === "posts" || mainTab === "liked")
-      return (item as FeedPost).id;
-    if (mainTab === "spots") return (item as StudySpot).id ?? `spot-${index}`;
-    const r = item as SpotReview;
-    const rid = spotReviewPrimaryId(r) ?? `rev-${index}`;
-    return `${rid}_${index}`;
+    if (mainTab === "spots")
+      return renderSpotRow({ item: item.item as StudySpot });
+    return renderReviewRow({ item: item.item as SpotReview });
   }
 
   return (
     <View style={styles.safeArea}>
-      <TopNav />
+      <TopNav onOpenSettings={() => navigation.navigate("Settings")} />
       <View style={styles.container}>
-        <FlatList<ProfileListRow>
+        <FlatList<OwnListRow>
           style={styles.profileList}
-          key={isGridTab ? "profile-grid" : "profile-list"}
-          numColumns={isGridTab ? 3 : 1}
-          data={(mainTab === "settings" ? [] : listData) as ProfileListRow[]}
-          keyExtractor={(item, index) => keyExtractor(item, index)}
+          data={listRows}
+          keyExtractor={(item) => item.id}
           ListHeaderComponent={listHeaderEl}
           stickyHeaderIndices={[]}
-          renderItem={(args) =>
-            mainTab === "settings" ? null : renderItem(args as never)
-          }
-          columnWrapperStyle={isGridTab ? styles.gridColumnWrap : undefined}
+          renderItem={renderItem}
           ListFooterComponent={
             (mainTab === "posts" || mainTab === "liked") && postsTailLoading ? (
               <ActivityIndicator style={styles.listFooterSpinner} />
@@ -764,11 +765,7 @@ export default function ProfileScreen() {
           }
           onEndReachedThreshold={0.35}
           onEndReached={() => void loadMorePosts()}
-          contentContainerStyle={
-            mainTab === "settings"
-              ? [styles.flatScroll, styles.settingsScroll]
-              : styles.flatScroll
-          }
+          contentContainerStyle={styles.flatScroll}
           ItemSeparatorComponent={
             isGridTab ? undefined : () => <View style={styles.sep} />
           }
@@ -781,21 +778,15 @@ export default function ProfileScreen() {
             />
           }
           ListEmptyComponent={
-            mainTab === "settings" ? (
-              <SettingsBody
-                sectionButtons={sectionButtons}
-                onNavigateSection={(section) =>
-                  navigation.navigate("ProfileSection", { section })
-                }
-                onLogout={handleLogout}
-                onBlockedUsers={() => rootNavigation.navigate("BlockedUsers")}
-              />
-            ) : listLoading ? (
+            listLoading ? (
               <ActivityIndicator style={styles.emptySpinner} />
             ) : listError ? (
               <Text style={styles.inlineError}>{listError}</Text>
             ) : (
-              <Text style={styles.emptyText}>{tabEmptyLabel(mainTab)}</Text>
+              <ProfileTabEmpty
+                tab={mainTab}
+                onAddSpot={() => rootNavigation.navigate("CreateSpot")}
+              />
             )
           }
         />
@@ -804,73 +795,50 @@ export default function ProfileScreen() {
   );
 }
 
-function SettingsBody({
-  sectionButtons,
-  onNavigateSection,
-  onLogout,
-  onBlockedUsers,
+function ProfileTabEmpty({
+  tab,
+  onAddSpot,
 }: {
-  sectionButtons: Array<{
-    key: ProfileSectionKey;
-    title: string;
-    subtitle: string;
-  }>;
-  onNavigateSection: (section: ProfileSectionKey) => void;
-  onLogout: () => void;
-  onBlockedUsers: () => void;
+  tab: OwnProfileMainTabKey;
+  onAddSpot: () => void;
 }) {
+  const Icon =
+    tab === "posts"
+      ? LayoutGrid
+      : tab === "liked"
+        ? Heart
+        : tab === "reviews"
+          ? Star
+          : MapPin;
+  const title =
+    tab === "posts"
+      ? "No posts yet"
+      : tab === "liked"
+        ? "No liked posts yet"
+        : tab === "reviews"
+          ? "No reviews yet"
+          : "No spots yet";
+  const body =
+    tab === "posts"
+      ? "Share a photo or thought and it’ll show up here."
+      : tab === "liked"
+        ? "Posts you like will show up here."
+        : tab === "reviews"
+          ? "Reviews you write will show up here."
+          : "Add a place you found so others can find it too.";
+
   return (
-    <ScrollView
-      nestedScrollEnabled
-      showsVerticalScrollIndicator={false}
-      contentContainerStyle={styles.settingsBody}
-    >
-      <Text style={styles.sectionCardTitle}>Account & profile</Text>
-      <View style={styles.sectionList}>
-        {sectionButtons.map((item) => (
-          <ProfileSectionButton
-            key={item.key}
-            title={item.title}
-            subtitle={item.subtitle}
-            onPress={() => onNavigateSection(item.key)}
-          />
-        ))}
-      </View>
-
-      <Text style={[styles.sectionCardTitle, { marginTop: 24 }]}>
-        Privacy
-      </Text>
-      <TouchableOpacity
-        style={styles.blockedUsersRow}
-        onPress={onBlockedUsers}
-        activeOpacity={0.7}
-      >
-        <ShieldBan size={20} color={Colors.dark} strokeWidth={2} />
-        <View style={styles.blockedUsersInfo}>
-          <Text style={styles.blockedUsersTitle}>Blocked Users</Text>
-          <Text style={styles.blockedUsersSubtitle}>
-            Manage users you've blocked
-          </Text>
+    <View style={styles.emptyCenter}>
+      <Icon size={44} color="#C5C9CE" strokeWidth={1.6} />
+      <Text style={styles.emptyCenterTitle}>{title}</Text>
+      <Text style={styles.emptyCenterBody}>{body}</Text>
+      {tab === "spots" ? (
+        <View style={styles.emptyCta}>
+          <Button label="Add a spot" onPress={onAddSpot} />
         </View>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={styles.logoutButton}
-        onPress={onLogout}
-        activeOpacity={0.8}
-      >
-        <Text style={styles.logoutText}>Log Out</Text>
-      </TouchableOpacity>
-    </ScrollView>
+      ) : null}
+    </View>
   );
-}
-
-function tabEmptyLabel(mainTab: OwnProfileMainTabKey): string {
-  if (mainTab === "posts") return "No posts yet.";
-  if (mainTab === "liked") return "No liked posts yet.";
-  if (mainTab === "spots") return "No spots listed yet.";
-  if (mainTab === "reviews") return "No reviews yet.";
-  return "";
 }
 
 const styles = StyleSheet.create({
@@ -891,13 +859,14 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     gap: 12,
   },
-  gridColumnWrap: {
+  gridRow: {
+    flexDirection: "row",
     gap: 1,
     marginBottom: 1,
   },
-  settingsScroll: {
-    flexGrow: 1,
-    paddingBottom: 60,
+  gridPad: {
+    flex: 1,
+    maxWidth: "33.333%",
   },
   heroRow: {
     flexDirection: "row",
@@ -1008,57 +977,8 @@ const styles = StyleSheet.create({
     marginBottom: 2,
     paddingHorizontal: 16,
   },
-  actionBtn: {
+  actionBtnCell: {
     flex: 1,
-    paddingVertical: 11,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  actionBtnMuted: {
-    backgroundColor: "#ececec",
-  },
-  actionBtnTextMuted: {
-    fontFamily: Fonts.instrument.semiBold,
-    fontSize: 14,
-    color: Colors.dark,
-  },
-  blockedUsersRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    paddingVertical: 16,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: "#e5e5e5",
-  },
-  blockedUsersInfo: {
-    flex: 1,
-    gap: 2,
-  },
-  blockedUsersTitle: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 15,
-    color: Colors.dark,
-  },
-  blockedUsersSubtitle: {
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 13,
-    color: "#888",
-  },
-  logoutButton: {
-    marginTop: 18,
-    backgroundColor: Colors.dark,
-    borderRadius: 14,
-    paddingVertical: 16,
-    alignItems: "center",
-  },
-  logoutText: {
-    color: "#fff",
-    fontSize: 17,
-    fontFamily: Fonts.gabarito.medium,
   },
   sep: {
     height: 4,
@@ -1151,31 +1071,38 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     paddingHorizontal: 12,
   },
-  emptyText: {
+  emptyCenter: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 36,
+    paddingTop: 36,
+    paddingBottom: 56,
+    minHeight: 240,
+  },
+  emptyCenterTitle: {
+    marginTop: 14,
+    color: Colors.dark,
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 18,
     textAlign: "center",
-    marginTop: 24,
+  },
+  emptyCenterBody: {
+    marginTop: 6,
+    maxWidth: 220,
+    color: "#8A8F96",
     fontFamily: Fonts.instrument.regular,
-    color: "#888",
-    fontSize: 15,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: "center",
+  },
+  emptyCta: {
+    marginTop: 18,
   },
   emptySpinner: {
     marginVertical: 32,
   },
   listFooterSpinner: {
     marginVertical: 16,
-  },
-  sectionCardTitle: {
-    fontFamily: Fonts.gabarito.bold,
-    fontSize: 18,
-    color: Colors.dark,
-    marginBottom: 14,
-    marginTop: 6,
-    textAlign: "left",
-  },
-  settingsBody: {
-    paddingBottom: 24,
-  },
-  sectionList: {
-    gap: 12,
   },
 });

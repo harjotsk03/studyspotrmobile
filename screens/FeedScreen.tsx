@@ -534,11 +534,7 @@ export default function FeedScreen() {
               );
             }}
             ListEmptyComponent={
-              loading ? (
-                <View style={styles.emptyLoadingWrap}>
-                  <SpinningArrowLoader size={32} />
-                </View>
-              ) : (
+              loading ? null : (
                 <View style={styles.emptyWrap}>
                   <Text style={styles.emptyText}>{emptyCopy}</Text>
                   <Pressable
@@ -721,11 +717,6 @@ const styles = StyleSheet.create({
     color: "#666",
     textAlign: "center",
     lineHeight: 24,
-  },
-  emptyLoadingWrap: {
-    paddingTop: 80,
-    alignItems: "center",
-    justifyContent: "center",
   },
   emptyWrap: {
     flex: 1,

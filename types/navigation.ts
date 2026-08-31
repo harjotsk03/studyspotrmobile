@@ -55,6 +55,7 @@ export type RootStackParamList = {
   ChatThread: ChatThreadParams;
   BlockedUsers: undefined;
   SpotViewer: { spot: StudySpot };
+  CreateSpot: undefined;
   UserPostsFeed: UserPostsFeedParams;
 } & Pick<
   CommunityStackParamList,

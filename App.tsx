@@ -49,6 +49,7 @@ import {
   FullScreenOverlayProvider,
   useFullScreenOverlay,
 } from "./context/FullScreenOverlayContext";
+import { ToastProvider } from "./context/ToastContext";
 import SpinningArrowLoader from "./components/SpinningArrowLoader";
 
 import FeedScreen from "./screens/FeedScreen";
@@ -79,6 +80,7 @@ import SpotsScreen from "./screens/SpotsScreen";
 import SpotDetailScreen from "./screens/SpotDetailScreen";
 import SpotWizardScreen from "./screens/SpotWizardScreen";
 import ProfileScreen from "./screens/ProfileScreen";
+import ProfileSettingsScreen from "./screens/ProfileSettingsScreen";
 import BlockedUsersScreen from "./screens/BlockedUsersScreen";
 import LoginScreen from "./screens/LoginScreen";
 import RegisterScreen from "./screens/RegisterScreen";
@@ -152,6 +154,7 @@ function ProfileStackScreen() {
       }}
     >
       <ProfileStack.Screen name="ProfileHome" component={ProfileScreen} />
+      <ProfileStack.Screen name="Settings" component={ProfileSettingsScreen} />
       <ProfileStack.Screen
         name="ProfileSection"
         component={ProfileSectionScreen}
@@ -408,6 +411,7 @@ function AppContent() {
           component={SpotDetailScreen}
           options={{ gestureEnabled: true }}
         />
+        <RootStack.Screen name="CreateSpot" component={SpotWizardScreen} />
         <RootStack.Screen
           name="FeedPostDetail"
           component={FeedPostDetailScreen}
@@ -494,7 +498,9 @@ export default function App() {
                         <SafeAreaProvider>
                           <NavigationContainer ref={navigationRef}>
                             <StatusBar style="dark" />
-                            <AppContent />
+                            <ToastProvider>
+                              <AppContent />
+                            </ToastProvider>
                             <PushNotificationBridge />
                           </NavigationContainer>
                         </SafeAreaProvider>

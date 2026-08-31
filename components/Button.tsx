@@ -249,17 +249,28 @@ export default function Button({
     </Text>
   ) : null);
 
-  const inner = loading ? (
-    <ActivityIndicator size="small" color={v.text.color as string} />
-  ) : (
+  const inner = (
     <View style={styles.inner}>
-      {icon && iconPosition === 'left' && (
-        <View style={content ? styles.iconLeft : undefined}>{icon}</View>
-      )}
-      {content}
-      {icon && iconPosition === 'right' && (
-        <View style={content ? styles.iconRight : undefined}>{icon}</View>
-      )}
+      <View style={loading ? styles.innerHidden : undefined}>
+        <View style={styles.innerRow}>
+          {icon && iconPosition === 'left' && (
+            <View style={content ? styles.iconLeft : undefined}>{icon}</View>
+          )}
+          {content}
+          {icon && iconPosition === 'right' && (
+            <View style={content ? styles.iconRight : undefined}>{icon}</View>
+          )}
+        </View>
+      </View>
+      {loading ? (
+        <View style={styles.spinnerOverlay} pointerEvents="none">
+          <ActivityIndicator
+            size="small"
+            color={v.text.color as string}
+            style={styles.spinner}
+          />
+        </View>
+      ) : null}
     </View>
   );
 
@@ -358,8 +369,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   inner: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  innerRow: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  innerHidden: {
+    opacity: 0,
+  },
+  spinnerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  spinner: {
+    transform: [{ scale: 0.7 }],
   },
   text: {
     fontFamily: Fonts.gabarito.medium,
