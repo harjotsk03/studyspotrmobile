@@ -16,7 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { useAuth } from "../context/AuthContext";
-import type { InboxStackParamList } from "../types/navigation";
+import type { RootStackParamList } from "../types/navigation";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import {
   chatPeerDisplayName,
@@ -74,7 +74,7 @@ function formatListTime(value?: string | null) {
 
 export default function MessagesScreen() {
   const navigation =
-    useNavigation<NativeStackNavigationProp<InboxStackParamList>>();
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
   const { token, profile } = useAuth();
   const userId = profile?.userProfile?.id ?? null;

@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -21,14 +21,12 @@ export default function SignupMethodScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
       <View style={styles.headerRow}>
-        <Pressable
-          onPress={() => navigation.goBack()}
-          style={styles.backCircle}
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-        >
-          <ArrowLeft size={20} color={Colors.dark} strokeWidth={2.4} />
-        </Pressable>
+        <Button
+          size="icon"
+          variant="secondary"
+          icon={<ArrowLeft size={20} color={Colors.dark} strokeWidth={2.4} />}
+          onPress={() => navigation.navigate("WelcomeScreen")}
+        />
         <StudySpotrLogo
           width={LOGO_SIZE}
           height={LOGO_SIZE}
@@ -85,16 +83,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 28,
-  },
-  backCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#E8E8E8",
-    alignItems: "center",
-    justifyContent: "center",
   },
   headerSpacer: {
     width: 44,

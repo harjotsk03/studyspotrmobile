@@ -27,7 +27,9 @@ import type {
   InboxStackParamList,
   RootStackParamList,
 } from "../types/navigation";
+import { useAuth } from "../context/AuthContext";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
+import { fetchFeedPostById } from "../utils/feedApi";
 
 function formatActorName(actor?: NotificationActor | null) {
   if (!actor) return "";
@@ -84,6 +86,20 @@ function formatNotificationTitle(notification: NotificationItem) {
     return "You've been invited to an event";
   }
 
+  const who = actorName || "Someone";
+  if (notification.type === "liked_your_post") {
+    return `${who} liked your post`;
+  }
+  if (notification.type === "liked_your_comment") {
+    return `${who} liked your comment`;
+  }
+  if (notification.type === "commented_on_your_post") {
+    return `${who} commented on your post`;
+  }
+  if (notification.type === "replied_to_your_comment") {
+    return `${who} replied to your comment`;
+  }
+
   if (actorName && communityName) {
     return `${actorName} in ${communityName}`;
   }
@@ -119,6 +135,15 @@ function formatNotificationBody(notification: NotificationItem) {
     return "Tap to view the event and RSVP.";
   }
 
+  if (
+    notification.type === "liked_your_post" ||
+    notification.type === "liked_your_comment" ||
+    notification.type === "commented_on_your_post" ||
+    notification.type === "replied_to_your_comment"
+  ) {
+    return "Tap to view the post.";
+  }
+
   return "You have a new update.";
 }
 
@@ -126,6 +151,9 @@ function formatNotificationTypeLabel(type?: string | null) {
   if (type === "community_join_request") return "Community request";
   if (type === "accepted_to_community") return "Community";
   if (type === "event_invite") return "Event invite";
+  if (type === "liked_your_post" || type === "liked_your_comment") return "Like";
+  if (type === "commented_on_your_post") return "Comment";
+  if (type === "replied_to_your_comment") return "Reply";
   return "";
 }
 
@@ -154,6 +182,7 @@ export default function InboxScreen() {
     useNavigation<NativeStackNavigationProp<InboxStackParamList>>();
   const rootNavigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const { token } = useAuth();
   const {
     notifications,
     loading,
@@ -283,6 +312,33 @@ export default function InboxScreen() {
     });
   };
 
+  const openFeedInteraction = async (notification: NotificationItem) => {
+    const postId =
+      typeof notification.metadata?.post_id === "string"
+        ? notification.metadata.post_id
+        : null;
+    if (!postId || !token) return;
+    const shouldOpenComments =
+      notification.type === "commented_on_your_post" ||
+      notification.type === "replied_to_your_comment" ||
+      notification.type === "liked_your_comment";
+    const commentId =
+      typeof notification.metadata?.comment_id === "string"
+        ? notification.metadata.comment_id
+        : null;
+    try {
+      const post = await fetchFeedPostById(token, postId);
+      if (!post) return;
+      rootNavigation.navigate("FeedPostDetail", {
+        post,
+        openComments: shouldOpenComments,
+        highlightCommentId: shouldOpenComments ? commentId : null,
+      });
+    } catch {
+      // Row stays put; user can try again.
+    }
+  };
+
   const handleNotificationPress = (notification: NotificationItem) => {
     if (!notification.read_at) {
       void markNotificationRead(notification.id).catch((err) => {
@@ -303,31 +359,25 @@ export default function InboxScreen() {
       openActorProfile(notification);
     } else if (notification.type === "event_invite") {
       openEventInvite(notification);
+    } else if (
+      notification.type === "liked_your_post" ||
+      notification.type === "liked_your_comment" ||
+      notification.type === "commented_on_your_post" ||
+      notification.type === "replied_to_your_comment"
+    ) {
+      void openFeedInteraction(notification);
     }
   };
   const friendRequests = notifications.filter(
     (notification) => notification.type === "friend_request",
   );
-  // Feed-interaction notifications (likes/comments/replies on the current
-  // user's posts) live on their own dedicated screen, opened from the
-  // FeedScreen's heart button. Hide them from the Inbox so the two surfaces
-  // don't double-show the same row.
   const visibleNotifications = notifications.filter(
-    (notification) =>
-      notification.type !== "friend_request" &&
-      notification.type !== "liked_your_post" &&
-      notification.type !== "liked_your_comment" &&
-      notification.type !== "commented_on_your_post" &&
-      notification.type !== "replied_to_your_comment",
+    (notification) => notification.type !== "friend_request",
   );
   const unreadVisibleNotificationIds = visibleNotifications
     .filter((notification) => !notification.read_at)
     .map((notification) => notification.id)
     .join(",");
-  // The context's `unreadCount` includes feed-interaction notifications,
-  // but those don't render on this screen anymore — derive a local count
-  // from the visible subset so the header doesn't show e.g.
-  // "3 unread notifications" while the list looks empty.
   const visibleUnreadCount = visibleNotifications.filter(
     (notification) => !notification.read_at,
   ).length;
@@ -391,21 +441,6 @@ export default function InboxScreen() {
           />
         </View>
 
-        <View style={styles.ctaRow}>
-          <View style={styles.ctaCopy}>
-            <Text style={styles.ctaTitle}>Messages</Text>
-            <Text style={styles.ctaSubtitle}>
-              Jump to your direct messages inbox.
-            </Text>
-          </View>
-          <Button
-            label="Open"
-            variant="default"
-            size="sm"
-            onPress={() => navigation.navigate("Messages")}
-          />
-        </View>
-
         <View style={styles.notificationsSection}>
           {loading && (
             <SkeletonList
@@ -439,7 +474,7 @@ export default function InboxScreen() {
                 <View style={styles.stateCard}>
                   <Text style={styles.emptyTitle}>No notifications yet</Text>
                   <Text style={styles.emptyText}>
-                    Community invites, requests, and updates will show up here.
+                    Likes, comments, community invites, and updates will show up here.
                   </Text>
                 </View>
               }
