@@ -22,7 +22,8 @@ import Button from "../components/Button";
 import Input from "../components/Input";
 import SocialAuthButtons from "../components/SocialAuthButtons";
 import { useAppAlert } from "../components/AppAlertModal";
-import { Circle, CircleCheck, Eye, EyeOff } from "lucide-react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { ArrowLeft, Circle, CircleCheck, Eye, EyeOff } from "lucide-react-native";
 
 import type { AuthStackParamList } from "../types/navigation";
 
@@ -30,6 +31,7 @@ export default function LoginScreen() {
   const { login } = useAuth();
   const { showAlert, modal: alertModal } = useAppAlert();
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
+  const insets = useSafeAreaInsets();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -84,7 +86,15 @@ export default function LoginScreen() {
 
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-      <View style={styles.container}>
+      <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
+        <View style={styles.headerRow}>
+          <Button
+            size="icon"
+            variant="secondary"
+            icon={<ArrowLeft size={20} color={Colors.dark} strokeWidth={2.4} />}
+            onPress={() => navigation.navigate("WelcomeScreen")}
+          />
+        </View>
         <View style={styles.inner}>
           <View style={styles.content}>
             <Text style={styles.title}>Welcome Back!</Text>
@@ -193,10 +203,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.light,
   },
+  headerRow: {
+    paddingHorizontal: 22,
+    marginBottom: 12,
+  },
   inner: {
     flex: 1,
     paddingHorizontal: 28,
-    paddingTop: 130,
+    paddingTop: 12,
     paddingBottom: 36,
   },
   content: {

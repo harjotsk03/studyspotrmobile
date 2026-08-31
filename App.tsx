@@ -195,8 +195,6 @@ function InboxStackScreen() {
         name="FriendRequests"
         component={FriendRequestsScreen}
       />
-      <InboxStack.Screen name="Messages" component={MessagesScreen} />
-      <InboxStack.Screen name="ChatThread" component={ChatThreadScreen} />
     </InboxStack.Navigator>
   );
 }
@@ -252,7 +250,11 @@ function AppContent() {
     return (
       <AuthStack.Navigator
         initialRouteName="WelcomeScreen"
-        screenOptions={{ headerShown: false, animation: "slide_from_right" }}
+        screenOptions={{
+          headerShown: false,
+          animation: "slide_from_right",
+          gestureEnabled: true,
+        }}
       >
         <AuthStack.Screen name="WelcomeScreen" component={WelcomeScreen} />
         <AuthStack.Screen name="LoginScreen" component={LoginScreen} />
@@ -285,7 +287,7 @@ function AppContent() {
 
   const tabs = (
     <Tab.Navigator
-      initialRouteName="Community"
+      initialRouteName="Spots"
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarShowLabel: true,
@@ -351,14 +353,14 @@ function AppContent() {
       })}
     >
       <Tab.Screen
-        name="Community"
-        component={CommunityStackScreen}
-        options={{ tabBarLabel: "Community" }}
-      />
-      <Tab.Screen
         name="Spots"
         component={SpotsStackScreen}
         options={{ tabBarLabel: "Spots" }}
+      />
+      <Tab.Screen
+        name="Community"
+        component={CommunityStackScreen}
+        options={{ tabBarLabel: "Community" }}
       />
       <Tab.Screen
         name="Feed"
@@ -414,6 +416,8 @@ function AppContent() {
           name="FeedInteractions"
           component={FeedInteractionsScreen}
         />
+        <RootStack.Screen name="Messages" component={MessagesScreen} />
+        <RootStack.Screen name="ChatThread" component={ChatThreadScreen} />
         <RootStack.Screen
           name="UserPostsFeed"
           component={UserPostsFeedScreen}
@@ -489,9 +493,7 @@ export default function App() {
                       <FullScreenOverlayProvider>
                         <SafeAreaProvider>
                           <NavigationContainer ref={navigationRef}>
-                            <StatusBar
-                              style={splashVisible ? "light" : "dark"}
-                            />
+                            <StatusBar style="dark" />
                             <AppContent />
                             <PushNotificationBridge />
                           </NavigationContainer>

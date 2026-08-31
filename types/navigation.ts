@@ -20,21 +20,21 @@ export type SpotsStackParamList = {
   EditSpot: { spot: StudySpot };
 };
 
+export type ChatThreadParams = {
+  conversationId: string;
+  peer?: ChatOtherUser;
+  /** One-shot composer prefilled when sharing a post (cleared after apply). */
+  draftMessage?: string;
+};
+
 export type InboxStackParamList = {
   InboxHome: undefined;
   FriendRequests: undefined;
-  Messages: undefined;
-  ChatThread: {
-    conversationId: string;
-    peer?: ChatOtherUser;
-    /** One-shot composer prefilled when sharing a post (cleared after apply). */
-    draftMessage?: string;
-  };
 };
 
 export type MainTabsParamList = {
-  Community: undefined;
   Spots: NavigatorScreenParams<SpotsStackParamList>;
+  Community: undefined;
   Feed: undefined;
   Inbox: NavigatorScreenParams<InboxStackParamList>;
   Profile: undefined;
@@ -51,6 +51,8 @@ export type RootStackParamList = {
     highlightCommentId?: string | null;
   };
   FeedInteractions: undefined;
+  Messages: undefined;
+  ChatThread: ChatThreadParams;
   BlockedUsers: undefined;
   SpotViewer: { spot: StudySpot };
   UserPostsFeed: UserPostsFeedParams;

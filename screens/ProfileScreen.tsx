@@ -31,8 +31,9 @@ import type {
   ProfileStackParamList,
 } from "./ProfileSectionScreen";
 import type { RootStackParamList } from "../types/navigation";
-import { Camera, MapPin, ShieldBan, Share, Star, UserPlus } from "lucide-react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { Camera, MapPin, ShieldBan, Star } from "lucide-react-native";
+import Button from "../components/Button";
+import TopNav from "../components/TopNav";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import {
   fetchFeedLikedPostsByUser,
@@ -49,8 +50,6 @@ import {
   spotReviewSpotLabel,
   type SpotReview,
 } from "../utils/spotsApi";
-import Button from "../components/Button";
-
 type ProfileListRow = FeedPost | StudySpot | SpotReview;
 export default function ProfileScreen() {
   const {
@@ -634,15 +633,6 @@ export default function ProfileScreen() {
 
   const listHeaderEl = (
     <>
-      <View style={styles.topActions}>
-        <Pressable style={styles.headerButton}>
-          <UserPlus size={20} color={Colors.dark} />
-        </Pressable>
-        <Pressable style={styles.headerButton}>
-          <Share size={20} color={Colors.dark} />
-        </Pressable>
-      </View>
-
       <View style={styles.heroRow}>
         <View style={styles.avatarBlock}>
           <Pressable
@@ -752,7 +742,8 @@ export default function ProfileScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top"]}>
+    <View style={styles.safeArea}>
+      <TopNav />
       <View style={styles.container}>
         <FlatList<ProfileListRow>
           style={styles.profileList}
@@ -809,7 +800,7 @@ export default function ProfileScreen() {
           }
         />
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -908,14 +899,6 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingBottom: 60,
   },
-  topActions: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-    paddingTop: 8,
-    paddingHorizontal: 4,
-  },
   heroRow: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -1008,9 +991,6 @@ const styles = StyleSheet.create({
   statCell: {
     flex: 1,
     minWidth: 0,
-  },
-  headerButton: {
-    padding: 8,
   },
   bio: {
     marginTop: 14,

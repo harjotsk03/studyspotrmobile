@@ -502,15 +502,9 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
             }
           : undefined);
 
-      rootNavigation.navigate("MainTabs", {
-        screen: "Inbox",
-        params: {
-          screen: "ChatThread",
-          params: {
-            conversationId: result.conversation.id,
-            peer,
-          },
-        },
+      rootNavigation.navigate("ChatThread", {
+        conversationId: result.conversation.id,
+        peer,
       });
     } catch (e) {
       Alert.alert(

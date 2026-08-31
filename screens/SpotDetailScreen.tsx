@@ -42,11 +42,13 @@ import {
   Coffee,
   Edit3,
   EllipsisVertical,
+  Flag,
   Image as ImageIcon,
   MapPin,
   MessageSquarePlus,
   Plug,
   Presentation,
+  Share2,
   Star,
   Trash2,
   UserRound,
@@ -54,6 +56,11 @@ import {
   Wifi,
   X,
 } from "lucide-react-native";
+import ActionOptionsSheet, {
+  ConfirmActionModal,
+  type ActionOption,
+  type AnchorRect,
+} from "../components/ActionOptionsSheet";
 import ReportConfirmModal from "../components/ReportConfirmModal";
 import ShareToFriendsSheet from "../components/ShareToFriendsSheet";
 import SpotReviewComposerModal, {
@@ -369,6 +376,20 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
   const [lightboxMountKey, setLightboxMountKey] = useState(0);
   const [shareSheetOpen, setShareSheetOpen] = useState(false);
   const [showSpotReportModal, setShowSpotReportModal] = useState(false);
+  const [spotOptionsOpen, setSpotOptionsOpen] = useState(false);
+  const [spotMenuAnchor, setSpotMenuAnchor] = useState<AnchorRect | null>(null);
+  const [reviewMenuReview, setReviewMenuReview] = useState<SpotReview | null>(
+    null,
+  );
+  const [reviewMenuAnchor, setReviewMenuAnchor] = useState<AnchorRect | null>(
+    null,
+  );
+  const [confirmDeleteSpot, setConfirmDeleteSpot] = useState(false);
+  const [confirmDeleteReview, setConfirmDeleteReview] =
+    useState<SpotReview | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const spotMenuWrapRef = useRef<View>(null);
+  const reviewMenuWraps = useRef(new Map<string, View | null>());
   // TODO: wire to saved-spots API
   const [saved, setSaved] = useState(false);
   const [userLocation, setUserLocation] = useState<{
@@ -582,118 +603,148 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
     setComposerOpen(true);
   };
 
-  const confirmDeleteReview = (r: SpotReview) => {
-    const rid = spotReviewPrimaryId(r);
-    if (!rid || !user?.id) return;
-    Alert.alert(
-      "Delete review",
-      "This removes your review and updates the spot rating.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: () => {
-            void (async () => {
-              try {
-                await deleteReviewJson({
-                  review_id: rid,
-                  spot_id: spotId,
-                  user_id: user.id,
-                  deleting_user_points: true,
-                });
-                await loadData();
-                await refetchSpots();
-              } catch (e) {
-                Alert.alert(
-                  "Error",
-                  e instanceof Error ? e.message : "Could not delete review.",
-                );
-              }
-            })();
-          },
-        },
-      ],
+  const measureView = (
+    node: View | null,
+    onDone: (rect: AnchorRect | null) => void,
+  ) => {
+    if (!node) {
+      onDone(null);
+      return;
+    }
+    node.measureInWindow((x, y, width, height) => {
+      onDone({ x, y, width, height });
+    });
+  };
+
+  const openSpotMenu = () => {
+    measureView(spotMenuWrapRef.current, (rect) => {
+      setSpotMenuAnchor(rect);
+      setSpotOptionsOpen(true);
+    });
+  };
+
+  const openReviewMenu = (r: SpotReview, key: string) => {
+    measureView(reviewMenuWraps.current.get(key) ?? null, (rect) => {
+      setReviewMenuAnchor(rect);
+      setReviewMenuReview(r);
+    });
+  };
+
+  const goEditSpot = () => {
+    if (route.name === "SpotViewer") {
+      rootNavigation.navigate("MainTabs", {
+        screen: "Spots",
+        params: { screen: "EditSpot", params: { spot } },
+      });
+      navigation.goBack();
+      return;
+    }
+    (navigation as NativeStackNavigationProp<SpotsStackParamList>).navigate(
+      "EditSpot",
+      { spot },
     );
   };
 
-  const spotMenu = () => {
-    const buttons: {
-      text: string;
-      style?: "cancel" | "destructive";
-      onPress?: () => void;
-    }[] = [
-      {
-        text: "Share",
-        onPress: () => setShareSheetOpen(true),
-      },
-    ];
-
-    if (isSpotOwner && user?.id) {
-      buttons.push({
-        text: "Edit spot",
-        onPress: () => {
-          if (route.name === "SpotViewer") {
-            rootNavigation.navigate("MainTabs", {
-              screen: "Spots",
-              params: { screen: "EditSpot", params: { spot } },
-            });
-            navigation.goBack();
-            return;
-          }
-          (
-            navigation as NativeStackNavigationProp<SpotsStackParamList>
-          ).navigate("EditSpot", { spot });
-        },
+  const handleDeleteSpot = async () => {
+    if (!user?.id) return;
+    setDeleteLoading(true);
+    try {
+      await deleteSpotJson({
+        spot_id: spotId,
+        user_id: user.id,
+        deleting_user_points: true,
       });
-      buttons.push({
-        text: "Delete spot",
-        style: "destructive",
-        onPress: () => {
-          Alert.alert(
-            "Delete this spot?",
-            "Reviews and photos will be removed. This cannot be undone.",
-            [
-              { text: "Cancel", style: "cancel" },
-              {
-                text: "Delete",
-                style: "destructive",
-                onPress: () => {
-                  void (async () => {
-                    try {
-                      await deleteSpotJson({
-                        spot_id: spotId,
-                        user_id: user.id,
-                        deleting_user_points: true,
-                      });
-                      await refetchSpots();
-                      navigation.goBack();
-                    } catch (e) {
-                      Alert.alert(
-                        "Error",
-                        e instanceof Error
-                          ? e.message
-                          : "Could not delete spot.",
-                      );
-                    }
-                  })();
-                },
-              },
-            ],
-          );
-        },
-      });
-    } else if (token) {
-      buttons.push({
-        text: "Report spot",
-        style: "destructive",
-        onPress: () => setShowSpotReportModal(true),
-      });
+      await refetchSpots();
+      setConfirmDeleteSpot(false);
+      navigation.goBack();
+    } catch (e) {
+      Alert.alert(
+        "Error",
+        e instanceof Error ? e.message : "Could not delete spot.",
+      );
+    } finally {
+      setDeleteLoading(false);
     }
-
-    buttons.push({ text: "Cancel", style: "cancel" });
-    Alert.alert(title, undefined, buttons);
   };
+
+  const handleDeleteReview = async () => {
+    const r = confirmDeleteReview;
+    const rid = r ? spotReviewPrimaryId(r) : null;
+    if (!rid || !user?.id) return;
+    setDeleteLoading(true);
+    try {
+      await deleteReviewJson({
+        review_id: rid,
+        spot_id: spotId,
+        user_id: user.id,
+        deleting_user_points: true,
+      });
+      await loadData();
+      await refetchSpots();
+      setConfirmDeleteReview(null);
+    } catch (e) {
+      Alert.alert(
+        "Error",
+        e instanceof Error ? e.message : "Could not delete review.",
+      );
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
+  const spotOptions: ActionOption[] = [
+    {
+      key: "share",
+      icon: Share2,
+      label: "Share",
+      onPress: () => setShareSheetOpen(true),
+    },
+    ...(isSpotOwner && user?.id
+      ? [
+          {
+            key: "edit",
+            icon: Edit3,
+            label: "Edit spot",
+            onPress: goEditSpot,
+          },
+          {
+            key: "delete",
+            icon: Trash2,
+            label: "Delete spot",
+            destructive: true,
+            onPress: () => setConfirmDeleteSpot(true),
+          },
+        ]
+      : token
+        ? [
+            {
+              key: "report",
+              icon: Flag,
+              label: "Report spot",
+              destructive: true,
+              onPress: () => setShowSpotReportModal(true),
+            },
+          ]
+        : []),
+  ];
+
+  const reviewOptions: ActionOption[] = reviewMenuReview
+    ? [
+        {
+          key: "edit",
+          icon: Edit3,
+          label: "Edit review",
+          onPress: () => openComposerEdit(reviewMenuReview),
+        },
+        {
+          key: "delete",
+          icon: Trash2,
+          label: "Delete review",
+          destructive: true,
+          onPress: () => setConfirmDeleteReview(reviewMenuReview),
+        },
+      ]
+    : [];
 
   const heroScrim = (
     <LinearGradient
@@ -1064,6 +1115,34 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
                           {rn}
                         </Text>
                         <ReviewStars value={ratingNum} />
+                        {mine ? (
+                          <View
+                            ref={(node) => {
+                              const key = spotReviewPrimaryId(r) ?? `rev-${idx}`;
+                              reviewMenuWraps.current.set(key, node);
+                            }}
+                            collapsable={false}
+                            style={styles.reviewMenuButton}
+                          >
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              style={styles.reviewMenuIcon}
+                              icon={
+                                <EllipsisVertical
+                                  size={18}
+                                  color={Colors.dark}
+                                />
+                              }
+                              onPress={() =>
+                                openReviewMenu(
+                                  r,
+                                  spotReviewPrimaryId(r) ?? `rev-${idx}`,
+                                )
+                              }
+                            />
+                          </View>
+                        ) : null}
                       </View>
                       {dateLbl ? (
                         <Text style={styles.reviewDate}>{dateLbl}</Text>
@@ -1093,24 +1172,6 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
                             </Pressable>
                           ))}
                         </ScrollView>
-                      ) : null}
-                      {mine ? (
-                        <View style={styles.reviewActions}>
-                          <Button
-                            size="sm"
-                            label="Edit"
-                            icon={<Edit3 size={16} color={Colors.dark} />}
-                            variant="secondary"
-                            onPress={() => openComposerEdit(r)}
-                          />
-                          <Button
-                            size="sm"
-                            label="Delete"
-                            icon={<Trash2 size={16} color="#ffffff" />}
-                            variant="destructive"
-                            onPress={() => confirmDeleteReview(r)}
-                          />
-                        </View>
                       ) : null}
                     </View>
                   </View>
@@ -1158,12 +1219,14 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
           }
           onPress={toggleSave}
         />
-        <Button
-          variant="outline"
-          size="icon"
-          icon={<EllipsisVertical size={18} color={Colors.dark} />}
-          onPress={spotMenu}
-        />
+        <View ref={spotMenuWrapRef} collapsable={false}>
+          <Button
+            variant="outline"
+            size="icon"
+            icon={<EllipsisVertical size={18} color={Colors.dark} />}
+            onPress={openSpotMenu}
+          />
+        </View>
       </View>
 
       <Modal
@@ -1273,6 +1336,46 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
           await loadData();
           await refetchSpots();
         }}
+      />
+
+      <ActionOptionsSheet
+        visible={spotOptionsOpen}
+        onClose={() => setSpotOptionsOpen(false)}
+        title="Spot options"
+        anchor={spotMenuAnchor}
+        options={spotOptions}
+      />
+
+      <ActionOptionsSheet
+        visible={reviewMenuReview !== null}
+        onClose={() => setReviewMenuReview(null)}
+        title="Review options"
+        anchor={reviewMenuAnchor}
+        options={reviewOptions}
+      />
+
+      <ConfirmActionModal
+        visible={confirmDeleteSpot}
+        title="Delete this spot?"
+        body="Reviews and photos will be removed. This cannot be undone."
+        confirmLabel="Delete"
+        loading={deleteLoading}
+        onCancel={() => {
+          if (!deleteLoading) setConfirmDeleteSpot(false);
+        }}
+        onConfirm={() => void handleDeleteSpot()}
+      />
+
+      <ConfirmActionModal
+        visible={confirmDeleteReview !== null}
+        title="Delete review?"
+        body="This removes your review and updates the spot rating."
+        confirmLabel="Delete"
+        loading={deleteLoading}
+        onCancel={() => {
+          if (!deleteLoading) setConfirmDeleteReview(null);
+        }}
+        onConfirm={() => void handleDeleteReview()}
       />
 
       <ShareToFriendsSheet
@@ -1637,6 +1740,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
+  reviewMenuButton: {
+    marginLeft: "auto",
+  },
+  reviewMenuIcon: {
+    marginBottom: 0,
+  },
   reviewerName: {
     flexShrink: 1,
     fontFamily: Fonts.gabarito.semiBold,
@@ -1673,11 +1782,6 @@ const styles = StyleSheet.create({
     height: 76,
     borderRadius: 10,
     backgroundColor: "#eee",
-  },
-  reviewActions: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 12,
   },
   stickyBar: {
     position: "absolute",

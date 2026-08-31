@@ -21,9 +21,9 @@ import {
 } from "@react-navigation/native";
 import type { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { Heart, PlusSquare } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FeedCommentsModal from "../components/FeedCommentsModal";
+import TopNav from "../components/TopNav";
 import FeedEndOfFeedCreate from "../components/FeedEndOfFeedCreate";
 import FeedInstaCard, { type MediaRect } from "../components/FeedInstaCard";
 import FullScreenReelViewer from "../components/FullScreenReelViewer";
@@ -35,7 +35,6 @@ import { Fonts } from "../constants/Fonts";
 import type { UserProfileData } from "../context/AuthContext";
 import { useAuth } from "../context/AuthContext";
 import { useFeedActivity } from "../context/FeedActivityContext";
-import { useFeedInteractions } from "../context/FeedInteractionsContext";
 import type {
   MainTabsParamList,
   RootStackParamList,
@@ -120,7 +119,6 @@ export default function FeedScreen() {
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
   const navigation = useNavigation<FeedTabNavigation>();
-  const { unreadCount } = useFeedInteractions();
   const rootNavigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { token, profile } = useAuth();
@@ -381,8 +379,6 @@ export default function FeedScreen() {
   const emptyCopy =
     "When friends share posts, they’ll show up here. Share something to start the conversation.";
 
-  const headerHeight = useMemo(() => insets.top + 52, [insets.top]);
-
   const listItems = useMemo<FeedListItem[]>(
     () => buildFeedListItems(posts),
     [posts],
@@ -471,9 +467,7 @@ export default function FeedScreen() {
       >
       {!token ? (
         <>
-          <View style={[styles.topHeader, { paddingTop: insets.top + 8 }]}>
-            <Text style={styles.brand}>Study Spotr</Text>
-          </View>
+          <TopNav />
           <View style={styles.centerMessage}>
             <Text style={styles.centerTitle}>Sign in for your feed</Text>
             <Text style={styles.centerSubtitle}>
@@ -483,41 +477,7 @@ export default function FeedScreen() {
         </>
       ) : (
         <>
-          <View
-            style={[
-              styles.topHeader,
-              { paddingTop: insets.top + 8, height: headerHeight },
-            ]}
-          >
-            <Text style={styles.brand}>Study Spotr</Text>
-            <View style={styles.topActions}>
-              <Pressable
-                onPress={() => rootNavigation.navigate("FeedComposer")}
-                hitSlop={10}
-                style={styles.topIconBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Create post"
-              >
-                <PlusSquare size={26} color={Colors.dark} strokeWidth={2} />
-              </Pressable>
-              <Pressable
-                onPress={() => rootNavigation.navigate("FeedInteractions")}
-                hitSlop={10}
-                style={styles.topIconBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Feed activity"
-              >
-                <Heart size={26} color={Colors.dark} strokeWidth={2} />
-                {unreadCount > 0 ? (
-                  <View style={styles.activityBadge}>
-                    <Text style={styles.activityBadgeText}>
-                      {unreadCount > 99 ? "99+" : unreadCount}
-                    </Text>
-                  </View>
-                ) : null}
-              </Pressable>
-            </View>
-          </View>
+          <TopNav />
 
           <FlatList
             ref={listRef}
@@ -710,54 +670,6 @@ const styles = StyleSheet.create({
   },
   contentLayer: {
     flex: 1,
-  },
-  topHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingBottom: 10,
-    backgroundColor: "#fff",
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#EEE",
-    zIndex: 10,
-  },
-  brand: {
-    fontFamily: Fonts.gabarito.bold,
-    fontSize: 22,
-    color: Colors.dark,
-    letterSpacing: 0.2,
-  },
-  topActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-  },
-  topIconBtn: {
-    position: "relative",
-    width: 32,
-    height: 32,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  activityBadge: {
-    position: "absolute",
-    top: -2,
-    right: -4,
-    minWidth: 16,
-    height: 16,
-    paddingHorizontal: 4,
-    borderRadius: 8,
-    backgroundColor: Colors.accent,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1.5,
-    borderColor: "#fff",
-  },
-  activityBadgeText: {
-    fontFamily: Fonts.gabarito.bold,
-    fontSize: 9,
-    color: "#fff",
   },
   listContent: {
     paddingBottom: 40,

@@ -62,7 +62,7 @@ function communityStub(payload: PushPayload) {
 }
 
 function navigateInbox(
-  screen: "InboxHome" | "FriendRequests" | "ChatThread",
+  screen: "InboxHome" | "FriendRequests",
   params?: Record<string, unknown>,
 ) {
   navigationRef.dispatch(
@@ -86,7 +86,9 @@ export function openNotificationFromPush(payload: PushPayload) {
   }
 
   if (payload.kind === "chat" && payload.conversationId) {
-    navigateInbox("ChatThread", { conversationId: payload.conversationId });
+    navigationRef.navigate("ChatThread", {
+      conversationId: payload.conversationId,
+    });
     return;
   }
 
@@ -137,7 +139,7 @@ export function openNotificationFromPush(payload: PushPayload) {
     payload.type === "commented_on_your_post" ||
     payload.type === "replied_to_your_comment"
   ) {
-    navigationRef.navigate("FeedInteractions");
+    navigateInbox("InboxHome");
     return;
   }
 

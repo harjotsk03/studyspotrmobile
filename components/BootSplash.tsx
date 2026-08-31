@@ -1,35 +1,32 @@
 import { useCallback, useEffect, useRef } from "react";
 import { Animated, Easing, StyleSheet } from "react-native";
+import { StatusBar } from "expo-status-bar";
 import StudySpotrLogo from "../assets/studyspotrlogo.svg";
 import { Colors } from "../constants/Colors";
 
-const LOGO_SIZE = 132;
-const START_SCALE = 18;
-const SHRINK_MS = 1200;
+const LOGO_SIZE = 72;
+const FADE_IN_MS = 2500;
 const FADE_OUT_MS = 560;
 
 type Props = {
-  /** Session/fonts are ready — splash can dismiss after the shrink. */
+  /** Session/fonts are ready — splash can dismiss after the fade-in. */
   ready?: boolean;
   onFinished?: () => void;
 };
 
-/**
- * Full-screen launch animation: oversized white pin shrinks into place,
- * then the blue field and logo fade away together.
- */
+/** White load screen: black logo fades in over 2.5s, then the overlay lifts. */
 export default function BootSplash({ ready = false, onFinished }: Props) {
   const overlayOpacity = useRef(new Animated.Value(1)).current;
-  const logoScale = useRef(new Animated.Value(START_SCALE)).current;
+  const logoOpacity = useRef(new Animated.Value(0)).current;
   const readyRef = useRef(ready);
-  const shrinkDoneRef = useRef(false);
+  const introDoneRef = useRef(false);
   const finishedRef = useRef(false);
   const onFinishedRef = useRef(onFinished);
   readyRef.current = ready;
   onFinishedRef.current = onFinished;
 
   const dismiss = useCallback(() => {
-    if (finishedRef.current || !readyRef.current || !shrinkDoneRef.current) {
+    if (finishedRef.current || !readyRef.current || !introDoneRef.current) {
       return;
     }
     finishedRef.current = true;
@@ -47,17 +44,17 @@ export default function BootSplash({ ready = false, onFinished }: Props) {
   }, [overlayOpacity]);
 
   useEffect(() => {
-    Animated.timing(logoScale, {
+    Animated.timing(logoOpacity, {
       toValue: 1,
-      duration: SHRINK_MS,
-      easing: Easing.bezier(0.16, 1, 0.3, 1),
+      duration: FADE_IN_MS,
+      easing: Easing.out(Easing.quad),
       useNativeDriver: true,
     }).start(({ finished }) => {
       if (!finished) return;
-      shrinkDoneRef.current = true;
+      introDoneRef.current = true;
       dismiss();
     });
-  }, [dismiss, logoScale]);
+  }, [dismiss, logoOpacity]);
 
   useEffect(() => {
     if (ready) {
@@ -70,12 +67,13 @@ export default function BootSplash({ ready = false, onFinished }: Props) {
       pointerEvents="auto"
       style={[styles.overlay, { opacity: overlayOpacity }]}
     >
-      <Animated.View style={{ transform: [{ scale: logoScale }] }}>
+      <StatusBar style="dark" />
+      <Animated.View style={{ opacity: logoOpacity }}>
         <StudySpotrLogo
           width={LOGO_SIZE}
           height={LOGO_SIZE}
-          color="#FFFFFF"
-          fill="#FFFFFF"
+          color={Colors.dark}
+          fill={Colors.dark}
         />
       </Animated.View>
     </Animated.View>
@@ -85,7 +83,7 @@ export default function BootSplash({ ready = false, onFinished }: Props) {
 const styles = StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: Colors.primary,
+    backgroundColor: "#fff",
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",

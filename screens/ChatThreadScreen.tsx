@@ -24,7 +24,7 @@ import EventDetailDrawer, {
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { useAuth } from "../context/AuthContext";
-import type { InboxStackParamList } from "../types/navigation";
+import type { RootStackParamList } from "../types/navigation";
 import {
   chatPeerDisplayName,
   fetchChatMessages,
@@ -54,7 +54,7 @@ import {
   getOrCreateChatSocket,
 } from "../utils/chatSocket";
 
-type Props = NativeStackScreenProps<InboxStackParamList, "ChatThread">;
+type Props = NativeStackScreenProps<RootStackParamList, "ChatThread">;
 
 const LIVE_TAG = "[chat/live]";
 

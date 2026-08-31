@@ -52,6 +52,7 @@ import { getSpotTitle } from "../utils/getSpotTitle";
 import { toNumber } from "../utils/toNumber";
 import type { SpotsStackParamList } from "../types/navigation";
 import Button from "../components/Button";
+import TopNav from "../components/TopNav";
 import {
   Coffee,
   Filter,
@@ -792,14 +793,8 @@ export default function SpotsScreen() {
 
   return (
     <View style={styles.screen}>
-      <View
-        style={[
-          styles.header,
-          {
-            paddingTop: insets.top + 8,
-          },
-        ]}
-      >
+      <TopNav />
+      <View style={styles.header}>
         <View style={styles.searchRow}>
           <View style={styles.searchField}>
             <Ionicons name="search" size={20} color="#8C8C8C" />
@@ -886,21 +881,6 @@ export default function SpotsScreen() {
               icon={<Filter size={16} color={Colors.dark} />}
               variant="secondary"
               onPress={() => setFiltersOpen(true)}
-            />
-            <Button
-              size="sm"
-              label="Add Spot"
-              variant="accent"
-              onPress={() => {
-                if (!profile?.userProfile?.id) {
-                  Alert.alert(
-                    "Sign in",
-                    "Sign in or create an account to list a study spot.",
-                  );
-                  return;
-                }
-                navigation.navigate("CreateSpot");
-              }}
             />
           </View>
         </View>
