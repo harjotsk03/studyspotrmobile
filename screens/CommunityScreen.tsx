@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import {
   ActivityIndicator,
   Animated,
@@ -11,7 +12,6 @@ import {
   View,
   type LayoutChangeEvent,
 } from "react-native";
-import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
@@ -236,6 +236,9 @@ function CommunityEventCard({
 export default function CommunityScreen() {
   const navigation =
     useNavigation<NativeStackNavigationProp<CommunityStackParamList>>();
+  const route = useRoute<RouteProp<CommunityStackParamList, "CommunityList">>();
+  const openEventId = route.params?.openEventId;
+  const openEventNonce = route.params?.openEventNonce;
   const { token } = useAuth();
   const { removedCommunityIds } = useCommunityCache();
 
@@ -398,6 +401,51 @@ export default function CommunityScreen() {
     void fetchCommunities();
     void fetchEvents();
   }, [token]);
+
+  const consumedOpenKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!openEventId || !token) return;
+    const consumeKey = `${openEventId}:${openEventNonce ?? 0}`;
+    if (consumedOpenKeyRef.current === consumeKey) return;
+
+    setActiveTab("events");
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/v1/events/${openEventId}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+        });
+        const json: unknown = await res.json().catch(() => null);
+        if (!res.ok || cancelled || !json || typeof json !== "object") return;
+        const raw =
+          (json as Record<string, unknown>).event ??
+          (json as Record<string, unknown>);
+        if (!raw || typeof raw !== "object" || !("id" in raw)) return;
+        const ev = toBrowseEvent(raw as ApiBrowseEvent);
+        if (!ev.id || cancelled) return;
+        consumedOpenKeyRef.current = consumeKey;
+        setEvents((current) => {
+          const idx = current.findIndex((item) => item.id === ev.id);
+          if (idx === -1) return [ev, ...current];
+          const next = [...current];
+          next[idx] = { ...next[idx], ...ev };
+          return next;
+        });
+        setSelectedEvent(ev);
+        setDrawerOpen(true);
+        void fetchEvents(true);
+      } catch {
+        // List refresh below still runs; drawer stays closed if fetch failed.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [openEventId, openEventNonce, token]);
 
   const onRefresh = () => {
     if (activeTab === "communities") {
@@ -774,6 +822,11 @@ export default function CommunityScreen() {
         communityIsPublic={selectedEvent?.communityIsPublic ?? true}
         userCommunityRole={selectedEvent?.userCommunityRole}
         onAttendanceChange={handleAttendanceChange}
+        onEventDeleted={(eventId) => {
+          setEvents((current) => current.filter((event) => event.id !== eventId));
+          setSelectedEvent(null);
+          setDrawerOpen(false);
+        }}
       />
     </View>
   );

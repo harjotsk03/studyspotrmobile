@@ -570,6 +570,7 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
       communityId={openEventDrawer?.communityId ?? ""}
       token={token}
       communityIsPublic
+      onEventDeleted={() => handleCloseSharedEvent()}
       onAttendanceChange={(eventId, newCount, newStatus) => {
         // Keep the cached event in sync so re-rendering the message bubble's
         // preview card (or re-opening the drawer) shows the latest count /

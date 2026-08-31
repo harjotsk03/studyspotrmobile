@@ -34,7 +34,7 @@ export type InboxStackParamList = {
 
 export type MainTabsParamList = {
   Spots: NavigatorScreenParams<SpotsStackParamList>;
-  Community: undefined;
+  Community: NavigatorScreenParams<CommunityStackParamList> | undefined;
   Feed: undefined;
   Inbox: NavigatorScreenParams<InboxStackParamList>;
   Profile: undefined;

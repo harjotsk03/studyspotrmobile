@@ -109,7 +109,10 @@ export interface CommunityData {
 }
 
 export type CommunityStackParamList = {
-  CommunityList: undefined;
+  CommunityList: {
+    openEventId?: string;
+    openEventNonce?: number;
+  } | undefined;
   CommunityDetail: {
     community: CommunityData;
     openMembers?: boolean;
@@ -127,10 +130,25 @@ export type CommunityStackParamList = {
     /** Optional: opens the EventDetailDrawer for this event id as soon as
      * the list mounts. Used by shared-event preview cards in chat. */
     openEventId?: string;
+    /** Bump this so the same event can be reopened after an edit. */
+    openEventNonce?: number;
   };
   CreateEvent: {
     communityId?: string;
     communityName?: string;
+    event?: {
+      id: string;
+      title?: string;
+      description?: string;
+      event_type?: string;
+      start_time?: string;
+      end_time?: string;
+      location?: string;
+      is_online?: boolean;
+      meeting_url?: string;
+      community_id?: string;
+      created_by?: string;
+    };
   };
   InviteEvent: {
     communityId: string;

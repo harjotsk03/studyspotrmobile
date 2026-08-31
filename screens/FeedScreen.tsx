@@ -675,7 +675,7 @@ const styles = StyleSheet.create({
   },
   cardGap: {
     height: 6,
-    backgroundColor: "#FAFAFA",
+    backgroundColor: "#fff",
   },
   suggestionsBlock: {
     paddingTop: 18,

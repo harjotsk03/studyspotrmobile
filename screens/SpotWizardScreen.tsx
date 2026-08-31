@@ -33,9 +33,11 @@ import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { useAuth } from "../context/AuthContext";
 import { type StudySpot, useSpots } from "../context/SpotsContext";
+import { useToast } from "../context/ToastContext";
 import type { RootStackParamList, SpotsStackParamList } from "../types/navigation";
 import {
   createSpotMultipart,
+  fetchSpotById,
   SpotDuplicateError,
   updateSpotMultipart,
 } from "../utils/spotsApi";
@@ -207,6 +209,18 @@ function formatTimeLabel(raw: string, fallbackHour: number): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function asStudySpot(raw: unknown): StudySpot | null {
+  if (!raw || typeof raw !== "object") return null;
+  const rec = raw as Record<string, unknown>;
+  const nested = rec.spot;
+  const candidate =
+    nested && typeof nested === "object" ? (nested as Record<string, unknown>) : rec;
+  if (typeof candidate.id === "string" && candidate.id.trim()) {
+    return candidate as StudySpot;
+  }
+  return null;
 }
 
 function formatGeocodedAddress(
@@ -572,6 +586,7 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
   const mapRef = useRef<MapView | null>(null);
   const { profile } = useAuth();
   const { refetchSpots } = useSpots();
+  const { showToast } = useToast();
   const user = profile?.userProfile;
 
   const isEdit = route.name === "EditSpot";
@@ -676,6 +691,10 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
     }, 350);
     return () => clearTimeout(t);
   }, [initialEditCoords, animateMapTo]);
+
+  useEffect(() => {
+    navigation.setOptions({ gestureEnabled: !loading });
+  }, [loading, navigation]);
 
   const setCoords = (lat: number, lng: number) => {
     setLatStr(lat.toFixed(6));
@@ -892,9 +911,19 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
   };
 
   const goBackStep = () => {
+    if (loading) return;
     setFieldErrors({});
     if (step > 0) setStep((x) => x - 1);
     else navigation.goBack();
+  };
+
+  const openSpotAfterWizard = (spot: StudySpot) => {
+    const names = navigation.getState()?.routeNames ?? [];
+    if (names.includes("SpotDetail")) {
+      navigation.replace("SpotDetail", { spot });
+      return;
+    }
+    navigation.replace("SpotViewer", { spot });
   };
 
   const submit = async () => {
@@ -944,7 +973,7 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
         return;
       }
 
-      await createSpotMultipart(
+      const created = await createSpotMultipart(
         {
           ...basePayload,
           rating,
@@ -957,9 +986,16 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
         })),
       );
       await refetchSpots();
-      Alert.alert("Spot listed", `"${name.trim()}" is live.`, [
-        { text: "OK", onPress: () => navigation.goBack() },
-      ]);
+      let listed = asStudySpot(created);
+      if (!listed && typeof (created as { id?: unknown }).id === "string") {
+        listed = await fetchSpotById((created as { id: string }).id).catch(() => null);
+      }
+      showToast("Spot listed");
+      if (listed) {
+        openSpotAfterWizard(listed);
+      } else {
+        navigation.goBack();
+      }
     } catch (e) {
       if (e instanceof SpotDuplicateError) {
         const existing = e.duplicate.spot;
@@ -1370,7 +1406,6 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
             label={step === 0 ? "Cancel" : "Back"}
             variant="outline"
             fullWidth
-            disabled={loading}
             onPress={goBackStep}
           />
         </View>

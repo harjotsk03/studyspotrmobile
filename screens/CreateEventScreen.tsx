@@ -1,11 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Alert,
   Animated,
   Easing,
   KeyboardAvoidingView,
-  LayoutAnimation,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -13,7 +11,6 @@ import {
   Switch,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from "react-native";
 import DateTimePicker, {
@@ -33,24 +30,49 @@ import {
   LinkIcon,
   MapPinIcon,
   Plus,
-  Users2Icon,
-  FileTextIcon,
-  TypeIcon,
   TagIcon,
 } from "lucide-react-native";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
 import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
 import {
   fetchCommunityMembership,
   isCommunityAdminOrOwner,
 } from "../utils/communityMembership";
 import Button from "../components/Button";
+import FadeInUp from "../components/FadeInUp";
 import Input from "../components/Input";
+import SmoothProgressBar from "../components/SmoothProgressBar";
 import type { CommunityStackParamList } from "./CommunityDetailScreen";
+import type { RootStackParamList } from "../types/navigation";
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+const STEPS_CREATE = ["Basics", "Type", "When", "Where", "Community"] as const;
+const STEPS_EDIT = ["Basics", "Type", "When", "Where"] as const;
+
+const STEP_COPY: Record<(typeof STEPS_CREATE)[number], { title: string; subtitle: string }> = {
+  Basics: {
+    title: "What's the event?",
+    subtitle: "Give it a name and a short description.",
+  },
+  Type: {
+    title: "What kind of event?",
+    subtitle: "Tap everything that fits.",
+  },
+  When: {
+    title: "When is it?",
+    subtitle: "Set the start and end with the wheels.",
+  },
+  Where: {
+    title: "Where is it?",
+    subtitle: "In person or online — people need a place to show up.",
+  },
+  Community: {
+    title: "Link a community?",
+    subtitle: "Optional. You can publish this event on its own.",
+  },
+};
 
 const EVENT_TYPES = [
   "study",
@@ -67,10 +89,60 @@ const EVENT_TYPES = [
 type EventType = (typeof EVENT_TYPES)[number];
 type PickerTarget = "startDate" | "startTime" | "endDate" | "endTime";
 type AdminCommunityOption = { id: string; name: string };
-
 type Props = NativeStackScreenProps<CommunityStackParamList, "CreateEvent">;
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+function snapMinutes(date: Date): Date {
+  const next = new Date(date);
+  let hours = next.getHours();
+  let minutes = Math.round(next.getMinutes() / 5) * 5;
+  if (minutes === 60) {
+    hours = (hours + 1) % 24;
+    minutes = 0;
+  }
+  next.setHours(hours, minutes, 0, 0);
+  return next;
+}
+
+function defaultStart(): Date {
+  return snapMinutes(new Date());
+}
+
+function defaultEnd(): Date {
+  const next = defaultStart();
+  next.setHours(next.getHours() + 2);
+  return next;
+}
+
+function parseEventTypes(raw: string | undefined): { selected: string[]; custom: string[] } {
+  const parts = (raw ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const selected: string[] = [];
+  const custom: string[] = [];
+  for (const part of parts) {
+    const lower = part.toLowerCase();
+    if (EVENT_TYPES.includes(lower as EventType)) {
+      if (!selected.includes(lower)) selected.push(lower);
+    } else {
+      selected.push(part);
+      if (!custom.some((c) => c.toLowerCase() === lower)) custom.push(part);
+    }
+  }
+  return { selected, custom };
+}
+
+function applyDatePart(base: Date, picked: Date): Date {
+  const next = new Date(base);
+  next.setFullYear(picked.getFullYear(), picked.getMonth(), picked.getDate());
+  return next;
+}
+
+function applyTimePart(base: Date, picked: Date): Date {
+  const next = new Date(base);
+  next.setHours(picked.getHours(), picked.getMinutes(), 0, 0);
+  return snapMinutes(next);
+}
 
 function formatDate(d: Date) {
   return d.toLocaleDateString("en-US", {
@@ -85,100 +157,20 @@ function formatTime(d: Date) {
   return d.toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
-    hour12: true,
   });
 }
 
-function toISO(date: Date, time: Date): string {
-  const combined = new Date(date);
-  combined.setHours(time.getHours(), time.getMinutes(), 0, 0);
-  return combined.toISOString();
-}
-
-function getPickerTitle(target: PickerTarget | null) {
-  if (target === "startDate") return "Start Date";
-  if (target === "startTime") return "Start Time";
-  if (target === "endDate") return "End Date";
-  if (target === "endTime") return "End Time";
-  return "";
-}
-
-function getDurationSummary(
-  startDate: Date | null,
-  startTime: Date | null,
-  endDate: Date | null,
-  endTime: Date | null,
-) {
-  if (!startDate || !startTime || !endDate || !endTime) {
-    return null;
-  }
-
-  const start = new Date(toISO(startDate, startTime));
-  const end = new Date(toISO(endDate, endTime));
+function getDurationSummary(start: Date, end: Date) {
   const totalMinutes = Math.floor((end.getTime() - start.getTime()) / 60000);
-
-  if (totalMinutes <= 0) {
-    return "End must be after start.";
-  }
+  if (totalMinutes <= 0) return "End must be after start.";
 
   const days = Math.floor(totalMinutes / (24 * 60));
   const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
   const minutes = totalMinutes % 60;
-
   return `${days} days ${hours} hours ${minutes} mins`;
 }
 
-// ─── Sub-components ──────────────────────────────────────────────────────────
-
-function SectionHeader({
-  title,
-  isOpen,
-  onToggle,
-}: {
-  title: string;
-  isOpen: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <Pressable style={sectionStyles.header} onPress={onToggle}>
-      <Text style={sectionStyles.title}>{title}</Text>
-      <ChevronDown
-        size={18}
-        color="#888"
-        strokeWidth={2}
-        style={{ transform: [{ rotate: isOpen ? "180deg" : "0deg" }] }}
-      />
-    </Pressable>
-  );
-}
-
-function DateTimeField({
-  label,
-  icon,
-  value,
-  placeholder,
-  onPress,
-}: {
-  label: string;
-  icon: React.ReactNode;
-  value: string | null;
-  placeholder: string;
-  onPress: () => void;
-}) {
-  return (
-    <View style={dtStyles.wrapper}>
-      <Text style={dtStyles.label}>{label}</Text>
-      <Pressable style={dtStyles.field} onPress={onPress}>
-        <View style={dtStyles.iconWrap}>{icon}</View>
-        <Text style={[dtStyles.value, !value && dtStyles.placeholder]}>
-          {value ?? placeholder}
-        </Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function ToggleRow({
+function SwitchRow({
   label,
   description,
   value,
@@ -190,96 +182,156 @@ function ToggleRow({
   onValueChange: (v: boolean) => void;
 }) {
   return (
-    <View style={toggleRowStyles.row}>
-      <View style={toggleRowStyles.text}>
-        <Text style={toggleRowStyles.label}>{label}</Text>
-        {!!description && (
-          <Text style={toggleRowStyles.description}>{description}</Text>
-        )}
+    <View style={styles.switchRow}>
+      <View style={styles.switchText}>
+        <Text style={styles.switchLabel}>{label}</Text>
+        {description ? (
+          <Text style={styles.switchDescription}>{description}</Text>
+        ) : null}
       </View>
       <Switch
-        value={value}
-        onValueChange={onValueChange}
         trackColor={{ false: "#ddd", true: Colors.accent }}
         thumbColor="#fff"
+        value={value}
+        onValueChange={onValueChange}
       />
     </View>
   );
 }
 
-// ─── Screen ──────────────────────────────────────────────────────────────────
+function WheelField({
+  label,
+  icon,
+  display,
+  mode,
+  value,
+  open,
+  onToggle,
+  onChange,
+}: {
+  label: string;
+  icon: ReactNode;
+  display: string;
+  mode: "date" | "time";
+  value: Date;
+  open: boolean;
+  onToggle: () => void;
+  onChange: (next: Date) => void;
+}) {
+  const onPickerChange = (event: DateTimePickerEvent, date?: Date) => {
+    if (Platform.OS === "android") {
+      if (event.type === "dismissed") {
+        onToggle();
+        return;
+      }
+      if (date) onChange(date);
+      onToggle();
+      return;
+    }
+    if (date) onChange(date);
+  };
+
+  return (
+    <View style={styles.timeBlock}>
+      <Pressable
+        onPress={onToggle}
+        disabled={Platform.OS === "ios"}
+        style={[styles.timeRow, open && styles.timeRowOpen]}
+      >
+        {icon}
+        <Text style={styles.timeLabel}>{label}</Text>
+        <Text style={[styles.timeValue, open && styles.timeValueOpen]}>{display}</Text>
+      </Pressable>
+      {open ? (
+        <DateTimePicker
+          value={value}
+          mode={mode}
+          display="spinner"
+          is24Hour={false}
+          minuteInterval={mode === "time" ? 5 : undefined}
+          locale="en-US"
+          themeVariant="light"
+          accentColor={Colors.primary}
+          textColor={Colors.dark}
+          style={styles.timePicker}
+          onChange={onPickerChange}
+        />
+      ) : null}
+    </View>
+  );
+}
 
 export default function CreateEventScreen({ route }: Props) {
-  const prefillCommunityId = route.params?.communityId?.trim() ?? "";
+  const editEvent = route.params?.event;
+  const isEdit = Boolean(editEvent?.id);
+  const prefillCommunityId =
+    route.params?.communityId?.trim() ||
+    (typeof editEvent?.community_id === "string" ? editEvent.community_id.trim() : "") ||
+    "";
   const prefillCommunityName = route.params?.communityName?.trim() ?? "";
   const navigation =
     useNavigation<NativeStackNavigationProp<CommunityStackParamList>>();
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
+  const { showToast } = useToast();
 
-  // Primary fields
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
+  const steps = isEdit ? STEPS_EDIT : STEPS_CREATE;
+  const [step, setStep] = useState(0);
+  const LAST_STEP_IDX = steps.length - 1;
+
+  const [title, setTitle] = useState(editEvent?.title?.trim() ?? "");
+  const [description, setDescription] = useState(editEvent?.description?.trim() ?? "");
   const [titleError, setTitleError] = useState("");
-  const [linkToCommunity, setLinkToCommunity] = useState(
-    Boolean(prefillCommunityId),
-  );
+
+  const [linkToCommunity, setLinkToCommunity] = useState(Boolean(prefillCommunityId));
   const [linkedCommunityId, setLinkedCommunityId] = useState(prefillCommunityId);
-  const [linkedCommunityName, setLinkedCommunityName] = useState(
-    prefillCommunityName,
-  );
+  const [linkedCommunityName, setLinkedCommunityName] = useState(prefillCommunityName);
   const [communityError, setCommunityError] = useState("");
   const [communityPickerOpen, setCommunityPickerOpen] = useState(false);
-  const [adminCommunities, setAdminCommunities] = useState<AdminCommunityOption[]>(
-    [],
-  );
+  const [adminCommunities, setAdminCommunities] = useState<AdminCommunityOption[]>([]);
 
-  // Type section
-  const [typeOpen, setTypeOpen] = useState(true);
-  const [eventTypes, setEventTypes] = useState<string[]>([]);
-  const [customEventTypes, setCustomEventTypes] = useState<string[]>([]);
+  const initialTypes = parseEventTypes(editEvent?.event_type);
+  const [eventTypes, setEventTypes] = useState<string[]>(initialTypes.selected);
+  const [customEventTypes, setCustomEventTypes] = useState<string[]>(initialTypes.custom);
   const [customEventTypeInput, setCustomEventTypeInput] = useState("");
   const [typeError, setTypeError] = useState("");
-  // Drives the "Other" input/+ row's slide-fade animation. 0 = hidden,
-  // 1 = visible. Height is JS-driven (useNativeDriver: false) so opacity
-  // and translateY stay in lockstep with the height interpolation.
   const otherTypeAnim = useRef(new Animated.Value(0)).current;
   const isOtherTypeSelected = eventTypes.includes("other");
 
-  // Date & Time section
-  const [dateTimeOpen, setDateTimeOpen] = useState(true);
-  const [startDate, setStartDate] = useState<Date | null>(null);
-  const [startTime, setStartTime] = useState<Date | null>(null);
-  const [endDate, setEndDate] = useState<Date | null>(null);
-  const [endTime, setEndTime] = useState<Date | null>(null);
+  const [startsAt, setStartsAt] = useState(() => {
+    const raw = editEvent?.start_time ? new Date(editEvent.start_time) : null;
+    return raw && !Number.isNaN(raw.getTime()) ? snapMinutes(raw) : defaultStart();
+  });
+  const [endsAt, setEndsAt] = useState(() => {
+    const raw = editEvent?.end_time
+      ? new Date(editEvent.end_time)
+      : editEvent?.start_time
+        ? new Date(editEvent.start_time)
+        : null;
+    if (raw && !Number.isNaN(raw.getTime())) {
+      if (!editEvent?.end_time) raw.setHours(raw.getHours() + 2);
+      return snapMinutes(raw);
+    }
+    return defaultEnd();
+  });
   const [startError, setStartError] = useState("");
   const [endError, setEndError] = useState("");
+  const [hoursPicker, setHoursPicker] = useState<PickerTarget | null>(null);
 
-  // Location section
-  const [locationOpen, setLocationOpen] = useState(true);
-  const [isOnline, setIsOnline] = useState(false);
-  const [location, setLocation] = useState("");
-  const [meetingUrl, setMeetingUrl] = useState("");
+  const [isOnline, setIsOnline] = useState(Boolean(editEvent?.is_online));
+  const [location, setLocation] = useState(editEvent?.location?.trim() ?? "");
+  const [meetingUrl, setMeetingUrl] = useState(editEvent?.meeting_url?.trim() ?? "");
   const [locationError, setLocationError] = useState("");
 
-  // Attendance section
-  const [attendanceOpen, setAttendanceOpen] = useState(false);
-  const [discoverableToAll, setDiscoverableToAll] = useState(true);
-  const [maxAttendees, setMaxAttendees] = useState("");
-
-  // Date picker state
-  const [pickerTarget, setPickerTarget] = useState<PickerTarget | null>(null);
-  const [pickerMode, setPickerMode] = useState<"date" | "time">("date");
-  const [pickerValue, setPickerValue] = useState(new Date());
-  const pickerAnimation = useRef(new Animated.Value(0)).current;
-
   const [loading, setLoading] = useState(false);
-  const durationSummary = getDurationSummary(
-    startDate,
-    startTime,
-    endDate,
-    endTime,
+  const durationSummary = useMemo(
+    () => getDurationSummary(startsAt, endsAt),
+    [startsAt, endsAt],
   );
+
+  useEffect(() => {
+    navigation.setOptions({ gestureEnabled: !loading });
+  }, [loading, navigation]);
 
   useEffect(() => {
     if (!token) return;
@@ -326,21 +378,7 @@ export default function CreateEventScreen({ route }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [
-    token,
-    prefillCommunityId,
-    prefillCommunityName,
-    linkedCommunityName,
-  ]);
-
-  // ── Section toggles ──────────────────────────────────────────────────────
-
-  const toggle = (setter: React.Dispatch<React.SetStateAction<boolean>>) => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setter((v) => !v);
-  };
-
-  // ── Event types: multi-select + custom ───────────────────────────────────
+  }, [token, prefillCommunityId, prefillCommunityName, linkedCommunityName]);
 
   useEffect(() => {
     Animated.timing(otherTypeAnim, {
@@ -362,8 +400,6 @@ export default function CreateEventScreen({ route }: Props) {
     const trimmed = customEventTypeInput.trim();
     if (!trimmed) return;
     const lower = trimmed.toLowerCase();
-    // Don't add duplicates of either a built-in or an existing custom —
-    // case-insensitive so "Trivia" and "trivia" collapse to the same pill.
     const duplicate =
       EVENT_TYPES.some((c) => c.toLowerCase() === lower) ||
       customEventTypes.some((c) => c.toLowerCase() === lower);
@@ -379,146 +415,106 @@ export default function CreateEventScreen({ route }: Props) {
 
   const formatTypeLabel = (t: string) => {
     if (!t) return t;
-    // Built-in types are stored lowercase ("study"); show them title-cased.
-    // Custom types are stored as the user typed them — leave them as-is.
     return EVENT_TYPES.includes(t as EventType)
       ? t.charAt(0).toUpperCase() + t.slice(1)
       : t;
   };
 
-  // ── Date picker ──────────────────────────────────────────────────────────
+  const wheelOpen = useCallback(
+    (target: PickerTarget) => Platform.OS === "ios" || hoursPicker === target,
+    [hoursPicker],
+  );
 
-  const openPicker = (target: PickerTarget) => {
-    const mode: "date" | "time" = target.includes("Date") ? "date" : "time";
-    const current =
-      target === "startDate"
-        ? startDate
-        : target === "startTime"
-          ? startTime
-          : target === "endDate"
-            ? endDate
-            : endTime;
-    setPickerValue(current ?? new Date());
-    setPickerMode(mode);
-    setPickerTarget(target);
+  const toggleWheel = (target: PickerTarget) => {
+    setHoursPicker((current) => (current === target ? null : target));
   };
 
-  useEffect(() => {
-    if (!pickerTarget) return;
-
-    pickerAnimation.setValue(0);
-    Animated.timing(pickerAnimation, {
-      toValue: 1,
-      duration: 220,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }, [pickerAnimation, pickerTarget]);
-
-  const closePicker = () => {
-    Animated.timing(pickerAnimation, {
-      toValue: 0,
-      duration: 160,
-      easing: Easing.in(Easing.cubic),
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) {
-        setPickerTarget(null);
+  const validateStep = (s: number): boolean => {
+    if (s === 0) {
+      if (!title.trim()) {
+        setTitleError("Required");
+        return false;
       }
+      if (title.trim().length > 80) {
+        setTitleError("80 characters or fewer");
+        return false;
+      }
+      setTitleError("");
+      return true;
+    }
+    if (s === 1) {
+      if (eventTypes.length === 0) {
+        setTypeError("Pick at least one type");
+        return false;
+      }
+      setTypeError("");
+      return true;
+    }
+    if (s === 2) {
+      if (endsAt.getTime() <= startsAt.getTime()) {
+        setEndError("End must be after start");
+        setStartError("");
+        return false;
+      }
+      setStartError("");
+      setEndError("");
+      return true;
+    }
+    if (s === 3) {
+      if (isOnline && !meetingUrl.trim()) {
+        setLocationError("Required");
+        return false;
+      }
+      if (!isOnline && !location.trim()) {
+        setLocationError("Required");
+        return false;
+      }
+      setLocationError("");
+      return true;
+    }
+    if (s === 4) {
+      if (linkToCommunity && !linkedCommunityId) {
+        setCommunityError("Choose a community or turn linking off.");
+        return false;
+      }
+      setCommunityError("");
+      return true;
+    }
+    return true;
+  };
+
+  const goNext = () => {
+    if (!validateStep(step)) return;
+    if (step < LAST_STEP_IDX) setStep((x) => x + 1);
+    else void handleCreate();
+  };
+
+  const goBackStep = () => {
+    if (loading) return;
+    if (step > 0) setStep((x) => x - 1);
+    else navigation.goBack();
+  };
+
+  const openEventOnCommunityHome = (eventId: string) => {
+    const params = { openEventId: eventId, openEventNonce: Date.now() };
+    const names = navigation.getState()?.routeNames ?? [];
+    if (names.includes("CommunityList")) {
+      navigation.navigate("CommunityList", params);
+      return;
+    }
+    (
+      navigation as unknown as NativeStackNavigationProp<RootStackParamList>
+    ).navigate("MainTabs", {
+      screen: "Community",
+      params: { screen: "CommunityList", params },
     });
   };
 
-  const selectPickerValue = (date = pickerValue) => {
-    applyPickerValue(date);
-    closePicker();
-  };
-
-  const applyPickerValue = (date: Date) => {
-    if (pickerTarget === "startDate") setStartDate(date);
-    else if (pickerTarget === "startTime") setStartTime(date);
-    else if (pickerTarget === "endDate") setEndDate(date);
-    else if (pickerTarget === "endTime") setEndTime(date);
-  };
-
-  const onPickerChange = (_event: DateTimePickerEvent, date?: Date) => {
-    if (!date) return;
-
-    setPickerValue(date);
-
-    if (Platform.OS === "android") {
-      selectPickerValue(date);
-    }
-  };
-
-  // ── Validation ───────────────────────────────────────────────────────────
-
-  const validate = (): boolean => {
-    let valid = true;
-
-    if (linkToCommunity && !linkedCommunityId) {
-      setCommunityError("Choose a community or disable linking.");
-      valid = false;
-    } else {
-      setCommunityError("");
-    }
-
-    if (!title.trim()) {
-      setTitleError("Title is required.");
-      valid = false;
-    } else if (title.trim().length > 80) {
-      setTitleError("Title must be 80 characters or fewer.");
-      valid = false;
-    } else {
-      setTitleError("");
-    }
-
-    if (eventTypes.length === 0) {
-      setTypeError("Select at least one event type.");
-      valid = false;
-    } else {
-      setTypeError("");
-    }
-
-    if (!startDate || !startTime) {
-      setStartError("Start date and time are required.");
-      valid = false;
-    } else {
-      setStartError("");
-    }
-
-    if (endDate && endTime && startDate && startTime) {
-      const s = new Date(toISO(startDate, startTime));
-      const e = new Date(toISO(endDate, endTime));
-      if (e <= s) {
-        setEndError("End time must be after start time.");
-        valid = false;
-      } else {
-        setEndError("");
-      }
-    } else {
-      setEndError("");
-    }
-
-    if (isOnline && !meetingUrl.trim()) {
-      setLocationError("Meeting URL is required for online events.");
-      valid = false;
-    } else if (!isOnline && !location.trim()) {
-      setLocationError("Location is required for in-person events.");
-      valid = false;
-    } else {
-      setLocationError("");
-    }
-
-    return valid;
-  };
-
-  // ── Submit ───────────────────────────────────────────────────────────────
-
   const handleCreate = async () => {
     if (!token) return;
-    if (!validate()) return;
+    if (!validateStep(step)) return;
 
-    if (linkToCommunity && linkedCommunityId) {
+    if (!isEdit && linkToCommunity && linkedCommunityId) {
       try {
         const membership = await fetchCommunityMembership(token, linkedCommunityId);
         if (!(membership.is_member && isCommunityAdminOrOwner(membership))) {
@@ -535,68 +531,64 @@ export default function CreateEventScreen({ route }: Props) {
       }
     }
 
-    const startISO = toISO(startDate!, startTime!);
-    const endISO = endDate && endTime ? toISO(endDate, endTime) : undefined;
-
-    const maxAttendeesNum = maxAttendees.trim()
-      ? parseInt(maxAttendees.trim(), 10)
-      : null;
+    const payload = {
+      title: title.trim(),
+      description: description.trim() || undefined,
+      type: eventTypes.join(", "),
+      start_time: startsAt.toISOString(),
+      end_time: endsAt.toISOString(),
+      is_online: isOnline,
+      location: isOnline ? undefined : location.trim(),
+      meeting_url: isOnline ? meetingUrl.trim() : undefined,
+    };
 
     setLoading(true);
     try {
-      const res = await fetch(
-        `${API_BASE_URL}/api/v1/events/create-event`,
-        {
-          method: "POST",
+      if (isEdit && editEvent?.id) {
+        const res = await fetch(`${API_BASE_URL}/api/v1/events/${editEvent.id}`, {
+          method: "PATCH",
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
             Accept: "application/json",
           },
-          body: JSON.stringify({
-            title: title.trim(),
-            description: description.trim() || undefined,
-            type: eventTypes.join(", "),
-            start_time: startISO,
-            end_time: endISO,
-            is_online: isOnline,
-            location: isOnline ? undefined : location.trim(),
-            meeting_url: isOnline ? meetingUrl.trim() : undefined,
-            discoverable_to_all: discoverableToAll,
-            max_attendees: maxAttendeesNum,
-            community_id: linkToCommunity ? linkedCommunityId : undefined,
-          }),
+          body: JSON.stringify(payload),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
+        showToast("Event updated");
+        openEventOnCommunityHome(editEvent.id);
+        return;
+      }
+
+      const res = await fetch(`${API_BASE_URL}/api/v1/events/create-event`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
         },
-      );
+        body: JSON.stringify({
+          ...payload,
+          community_id: linkToCommunity ? linkedCommunityId : undefined,
+        }),
+      });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
       const createdEventId =
         json.event?.id ?? json.event_id ?? json.id ?? json.event?.event_id;
 
+      showToast("Event created");
+
       if (!createdEventId || typeof createdEventId !== "string") {
-        Alert.alert(
-          "Event created!",
-          "The event is live, but the server did not return an event id for invites.",
-          [{ text: "OK", onPress: () => navigation.goBack() }],
-        );
+        navigation.goBack();
         return;
       }
 
-      if (linkToCommunity && linkedCommunityId && linkedCommunityName) {
-        navigation.replace("InviteEvent", {
-          communityId: linkedCommunityId,
-          communityName: linkedCommunityName,
-          eventId: createdEventId,
-          eventTitle: title.trim(),
-        });
-      } else {
-        Alert.alert("Event created", "Your event is now live.", [
-          { text: "OK", onPress: () => navigation.goBack() },
-        ]);
-      }
+      openEventOnCommunityHome(createdEventId);
     } catch (err) {
       Alert.alert(
-        "Failed to create event",
+        isEdit ? "Failed to update event" : "Failed to create event",
         err instanceof Error ? err.message : "Please try again.",
       );
     } finally {
@@ -604,640 +596,505 @@ export default function CreateEventScreen({ route }: Props) {
     }
   };
 
-  // ── Render ───────────────────────────────────────────────────────────────
+  const stepKey = steps[step] ?? "Basics";
+  const copy = STEP_COPY[stepKey];
+  const progress = (step + 1) / steps.length;
 
-  return (
-    <View style={styles.screen}>
-      {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.iconButton}
-          activeOpacity={0.7}
+  let stepBody = null;
+  if (step === 0) {
+    stepBody = (
+      <>
+        <Input
+          label="Event title"
+          placeholder="e.g. Study Night at the Library"
+          value={title}
+          onChangeText={(t) => {
+            setTitle(t);
+            if (t.trim()) setTitleError("");
+          }}
+          autoCapitalize="words"
+          error={titleError}
+        />
+        <Input
+          label="Description"
+          placeholder="Tell people what to expect…"
+          value={description}
+          onChangeText={setDescription}
+          autoCapitalize="sentences"
+          multiline
+          numberOfLines={4}
+          containerStyle={styles.fieldGap}
+          inputStyle={styles.textArea}
+        />
+      </>
+    );
+  } else if (step === 1) {
+    stepBody = (
+      <>
+        <View style={styles.chipsGrid}>
+          {EVENT_TYPES.filter((t) => t !== "other").map((t) => {
+            const selected = eventTypes.includes(t);
+            return (
+              <Pressable
+                key={t}
+                style={[styles.chip, selected && styles.chipSelected]}
+                onPress={() => toggleEventType(t)}
+              >
+                <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
+                  {formatTypeLabel(t)}
+                </Text>
+              </Pressable>
+            );
+          })}
+          {customEventTypes.map((t) => {
+            const selected = eventTypes.includes(t);
+            return (
+              <Pressable
+                key={`custom:${t}`}
+                style={[
+                  styles.chip,
+                  selected && styles.chipSelected,
+                  !selected && styles.chipCustomDisabled,
+                ]}
+                onPress={() => toggleEventType(t)}
+              >
+                <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
+                  {formatTypeLabel(t)}
+                </Text>
+              </Pressable>
+            );
+          })}
+          <Pressable
+            key="other"
+            style={[styles.chip, isOtherTypeSelected && styles.chipSelected]}
+            onPress={() => toggleEventType("other")}
+          >
+            <Text
+              style={[styles.chipText, isOtherTypeSelected && styles.chipTextSelected]}
+            >
+              Other
+            </Text>
+          </Pressable>
+        </View>
+        <Animated.View
+          pointerEvents={isOtherTypeSelected ? "auto" : "none"}
+          style={{
+            opacity: otherTypeAnim,
+            transform: [
+              {
+                translateY: otherTypeAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [-8, 0],
+                }),
+              },
+            ],
+            height: otherTypeAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0, 56],
+            }),
+            overflow: "hidden",
+          }}
         >
-          <ArrowLeft size={22} color={Colors.dark} strokeWidth={2.2} />
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle}>Create Event</Text>
-          <Text style={styles.headerSubtitle} numberOfLines={1}>
-            {linkToCommunity && linkedCommunityName
-              ? linkedCommunityName
-              : "Standalone or community-linked"}
+          <View style={styles.customTypeRow}>
+            <TextInput
+              style={styles.customTypeInput}
+              value={customEventTypeInput}
+              onChangeText={setCustomEventTypeInput}
+              placeholder="Add your own event type"
+              placeholderTextColor="#999"
+              returnKeyType="done"
+              autoCapitalize="words"
+              onSubmitEditing={addCustomEventType}
+              editable={isOtherTypeSelected}
+            />
+            <Pressable
+              style={({ pressed }) => [
+                styles.customTypeAddBtn,
+                !customEventTypeInput.trim() && styles.customTypeAddBtnDisabled,
+                pressed && styles.customTypeAddBtnPressed,
+              ]}
+              disabled={!customEventTypeInput.trim()}
+              onPress={addCustomEventType}
+              accessibilityRole="button"
+              accessibilityLabel="Add custom event type"
+            >
+              <Plus size={20} color="#fff" strokeWidth={2.6} />
+            </Pressable>
+          </View>
+        </Animated.View>
+        {typeError ? <Text style={styles.errorText}>{typeError}</Text> : null}
+      </>
+    );
+  } else if (step === 2) {
+    stepBody = (
+      <>
+        <Text style={styles.groupLabel}>Starts</Text>
+        <WheelField
+          label="Date"
+          icon={
+            <CalendarIcon
+              size={18}
+              color={wheelOpen("startDate") ? Colors.primary : "#999"}
+              strokeWidth={2.1}
+            />
+          }
+          display={formatDate(startsAt)}
+          mode="date"
+          value={startsAt}
+          open={wheelOpen("startDate")}
+          onToggle={() => toggleWheel("startDate")}
+          onChange={(picked) => {
+            setStartsAt((current) => applyDatePart(current, picked));
+            if (startError) setStartError("");
+          }}
+        />
+        <WheelField
+          label="Time"
+          icon={
+            <ClockIcon
+              size={18}
+              color={wheelOpen("startTime") ? Colors.primary : "#999"}
+              strokeWidth={2.1}
+            />
+          }
+          display={formatTime(startsAt)}
+          mode="time"
+          value={startsAt}
+          open={wheelOpen("startTime")}
+          onToggle={() => toggleWheel("startTime")}
+          onChange={(picked) => {
+            setStartsAt((current) => applyTimePart(current, picked));
+            if (startError) setStartError("");
+          }}
+        />
+        {startError ? <Text style={styles.errorText}>{startError}</Text> : null}
+
+        <Text style={[styles.groupLabel, styles.groupLabelSpaced]}>Ends</Text>
+        <WheelField
+          label="Date"
+          icon={
+            <CalendarIcon
+              size={18}
+              color={wheelOpen("endDate") ? Colors.primary : "#999"}
+              strokeWidth={2.1}
+            />
+          }
+          display={formatDate(endsAt)}
+          mode="date"
+          value={endsAt}
+          open={wheelOpen("endDate")}
+          onToggle={() => toggleWheel("endDate")}
+          onChange={(picked) => {
+            setEndsAt((current) => applyDatePart(current, picked));
+            if (endError) setEndError("");
+          }}
+        />
+        <WheelField
+          label="Time"
+          icon={
+            <ClockIcon
+              size={18}
+              color={wheelOpen("endTime") ? Colors.primary : "#999"}
+              strokeWidth={2.1}
+            />
+          }
+          display={formatTime(endsAt)}
+          mode="time"
+          value={endsAt}
+          open={wheelOpen("endTime")}
+          onToggle={() => toggleWheel("endTime")}
+          onChange={(picked) => {
+            setEndsAt((current) => applyTimePart(current, picked));
+            if (endError) setEndError("");
+          }}
+        />
+        <View style={styles.durationCard}>
+          <Text style={styles.durationLabel}>Duration</Text>
+          <Text
+            style={[
+              styles.durationValue,
+              durationSummary === "End must be after start." && styles.durationError,
+            ]}
+          >
+            {durationSummary}
           </Text>
         </View>
-        <View style={[styles.iconButton, { opacity: 0 }]} />
-      </View>
-
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={styles.scroll}
-          scrollEnabled={pickerTarget === null}
-        >
-          <View style={styles.card}>
-            <Text style={styles.sectionTitleStatic}>Community Link</Text>
-            <View style={styles.fieldGap}>
-              <ToggleRow
-                label="Link to a community"
-                description="Optional. You can publish this event without a community."
-                value={linkToCommunity}
-                onValueChange={(v) => {
-                  setLinkToCommunity(v);
-                  if (!v) {
-                    setLinkedCommunityId("");
-                    setLinkedCommunityName("");
-                    setCommunityError("");
-                  }
-                }}
-              />
-            </View>
-            {linkToCommunity ? (
-              <View style={styles.fieldGap}>
-                <Text style={styles.selectLabel}>Community *</Text>
-                <Pressable
-                  style={styles.selectField}
-                  onPress={() => setCommunityPickerOpen(true)}
-                >
-                  <TagIcon size={16} color="#999" />
-                  <Text
-                    style={[
-                      styles.selectValue,
-                      !linkedCommunityName && styles.selectPlaceholder,
-                    ]}
-                  >
-                    {linkedCommunityName || "Choose one of your admin communities"}
-                  </Text>
-                  <ChevronDown size={16} color="#999" />
-                </Pressable>
-                {!!communityError && (
-                  <Text style={styles.errorText}>{communityError}</Text>
-                )}
-              </View>
+        {endError ? <Text style={styles.errorText}>{endError}</Text> : null}
+      </>
+    );
+  } else if (step === 3) {
+    stepBody = (
+      <>
+        <SwitchRow
+          label="Online event"
+          value={isOnline}
+          onValueChange={(v) => {
+            setIsOnline(v);
+            setLocationError("");
+          }}
+        />
+        {isOnline ? (
+          <Input
+            label="Meeting URL"
+            placeholder="https://meet.google.com/…"
+            value={meetingUrl}
+            onChangeText={(t) => {
+              setMeetingUrl(t);
+              if (t.trim()) setLocationError("");
+            }}
+            autoCapitalize="none"
+            keyboardType="url"
+            icon={<LinkIcon size={18} color="#999" />}
+            error={locationError}
+            containerStyle={styles.fieldGap}
+          />
+        ) : (
+          <Input
+            label="Location"
+            placeholder="e.g. Koerner Library, UBC"
+            value={location}
+            onChangeText={(t) => {
+              setLocation(t);
+              if (t.trim()) setLocationError("");
+            }}
+            autoCapitalize="words"
+            icon={<MapPinIcon size={18} color="#999" />}
+            error={locationError}
+            containerStyle={styles.fieldGap}
+          />
+        )}
+      </>
+    );
+  } else {
+    stepBody = (
+      <>
+        <SwitchRow
+          label="Link to a community"
+          description="Only communities you admin can be linked."
+          value={linkToCommunity}
+          onValueChange={(v) => {
+            setLinkToCommunity(v);
+            if (!v) {
+              setLinkedCommunityId("");
+              setLinkedCommunityName("");
+              setCommunityError("");
+            }
+          }}
+        />
+        {linkToCommunity ? (
+          <View style={styles.fieldGap}>
+            <Text style={styles.selectLabel}>Community</Text>
+            <Pressable
+              style={[
+                styles.selectField,
+                communityError ? styles.selectFieldError : null,
+              ]}
+              onPress={() => setCommunityPickerOpen(true)}
+            >
+              <TagIcon size={16} color="#999" />
+              <Text
+                style={[
+                  styles.selectValue,
+                  !linkedCommunityName && styles.selectPlaceholder,
+                ]}
+              >
+                {linkedCommunityName || "Choose one of your admin communities"}
+              </Text>
+              <ChevronDown size={16} color="#999" />
+            </Pressable>
+            {communityError ? (
+              <Text style={styles.errorText}>{communityError}</Text>
             ) : null}
           </View>
+        ) : null}
+      </>
+    );
+  }
 
-          {/* ── Primary fields ────────────────────────────────────────── */}
-          <View style={styles.card}>
-            <Input
-              label="Event Title"
-              placeholder="e.g. Study Night at the Library"
-              value={title}
-              onChangeText={(t) => {
-                setTitle(t);
-                if (titleError) setTitleError("");
-              }}
-              autoCapitalize="words"
-              icon={<TypeIcon size={18} color="#999" />}
-              error={titleError}
-            />
-            <Input
-              label="Description"
-              placeholder="Tell people what to expect…"
-              value={description}
-              onChangeText={setDescription}
-              autoCapitalize="sentences"
-              multiline
-              numberOfLines={4}
-              icon={<FileTextIcon size={18} color="#999" />}
-              containerStyle={styles.fieldGap}
-              inputStyle={styles.textArea}
-            />
-          </View>
+  return (
+    <KeyboardAvoidingView
+      style={styles.screen}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <View style={styles.headerRow}>
+          <Pressable
+            onPress={goBackStep}
+            disabled={loading}
+            style={styles.backCircle}
+            accessibilityRole="button"
+            accessibilityLabel={step === 0 ? "Cancel" : "Back"}
+          >
+            <ArrowLeft size={20} color={Colors.dark} strokeWidth={2.4} />
+          </Pressable>
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            {isEdit ? "Edit event" : "Create event"}
+          </Text>
+          <View style={styles.headerSpacer} />
+        </View>
+        <SmoothProgressBar progress={progress} />
+      </View>
 
-          {/* ── Event Type ────────────────────────────────────────────── */}
-          <View style={styles.card}>
-            <SectionHeader
-              title="Event Type"
-              isOpen={typeOpen}
-              onToggle={() => toggle(setTypeOpen)}
-            />
-            {typeOpen && (
-              <>
-                <View style={styles.chipsGrid}>
-                  {EVENT_TYPES.filter((t) => t !== "other").map((t) => {
-                    const selected = eventTypes.includes(t);
-                    return (
-                      <Pressable
-                        key={t}
-                        style={[styles.chip, selected && styles.chipSelected]}
-                        onPress={() => toggleEventType(t)}
-                      >
-                        <Text
-                          style={[
-                            styles.chipText,
-                            selected && styles.chipTextSelected,
-                          ]}
-                        >
-                          {formatTypeLabel(t)}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                  {customEventTypes.map((t) => {
-                    const selected = eventTypes.includes(t);
-                    return (
-                      <Pressable
-                        key={`custom:${t}`}
-                        style={[
-                          styles.chip,
-                          selected && styles.chipSelected,
-                          // Faded look while toggled off — communicates
-                          // "you added this and turned it off" while
-                          // keeping it tappable to re-enable, per the
-                          // same spec as community categories.
-                          !selected && styles.chipCustomDisabled,
-                        ]}
-                        onPress={() => toggleEventType(t)}
-                      >
-                        <Text
-                          style={[
-                            styles.chipText,
-                            selected && styles.chipTextSelected,
-                          ]}
-                        >
-                          {formatTypeLabel(t)}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <FadeInUp replayKey={step}>
+          <Text style={styles.title}>{copy.title}</Text>
+          <Text style={styles.subtitle}>{copy.subtitle}</Text>
+          {stepBody}
+        </FadeInUp>
+      </ScrollView>
+
+      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom - 16, 16) }]}>
+        <View style={styles.footerBack}>
+          <Button
+            label={step === 0 ? "Cancel" : "Back"}
+            variant="outline"
+            fullWidth
+            onPress={goBackStep}
+          />
+        </View>
+        <View style={styles.footerContinue}>
+          <Button
+            label={
+              step === LAST_STEP_IDX
+                ? isEdit
+                  ? "Save changes"
+                  : "Create event"
+                : "Continue"
+            }
+            variant="default"
+            fullWidth
+            loading={loading}
+            disabled={loading}
+            onPress={goNext}
+          />
+        </View>
+      </View>
+
+      <Pressable
+        style={[styles.modalRoot, !communityPickerOpen && styles.modalHidden]}
+        pointerEvents={communityPickerOpen ? "auto" : "none"}
+        onPress={() => setCommunityPickerOpen(false)}
+      >
+        <Pressable style={styles.modalCard} onPress={() => {}}>
+          <Text style={styles.modalTitle}>Link to community</Text>
+          <Text style={styles.modalBody}>
+            Select one of your communities where you are admin/owner.
+          </Text>
+          <ScrollView style={styles.modalList} showsVerticalScrollIndicator={false}>
+            {adminCommunities.length === 0 ? (
+              <Text style={styles.modalEmpty}>No admin communities available.</Text>
+            ) : (
+              adminCommunities.map((community) => {
+                const selected = community.id === linkedCommunityId;
+                return (
                   <Pressable
-                    key="other"
-                    style={[
-                      styles.chip,
-                      isOtherTypeSelected && styles.chipSelected,
-                    ]}
-                    onPress={() => toggleEventType("other")}
+                    key={community.id}
+                    style={[styles.modalOption, selected && styles.modalOptionSelected]}
+                    onPress={() => {
+                      setLinkedCommunityId(community.id);
+                      setLinkedCommunityName(community.name);
+                      setCommunityError("");
+                      setCommunityPickerOpen(false);
+                    }}
                   >
                     <Text
                       style={[
-                        styles.chipText,
-                        isOtherTypeSelected && styles.chipTextSelected,
+                        styles.modalOptionText,
+                        selected && styles.modalOptionTextSelected,
                       ]}
                     >
-                      Other
+                      {community.name}
                     </Text>
                   </Pressable>
-                </View>
-
-                {/* Slide + fade-in row for typing a custom event type.
-                    Height is animated so the layout doesn't reserve
-                    space when hidden, and pointerEvents is gated so
-                    the input can't be focused-into while collapsed. */}
-                <Animated.View
-                  pointerEvents={isOtherTypeSelected ? "auto" : "none"}
-                  style={{
-                    opacity: otherTypeAnim,
-                    transform: [
-                      {
-                        translateY: otherTypeAnim.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [-8, 0],
-                        }),
-                      },
-                    ],
-                    height: otherTypeAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0, 56],
-                    }),
-                    overflow: "hidden",
-                  }}
-                >
-                  <View style={styles.customTypeRow}>
-                    <TextInput
-                      style={styles.customTypeInput}
-                      value={customEventTypeInput}
-                      onChangeText={setCustomEventTypeInput}
-                      placeholder="Add your own event type"
-                      placeholderTextColor="#999"
-                      returnKeyType="done"
-                      autoCapitalize="words"
-                      onSubmitEditing={addCustomEventType}
-                      editable={isOtherTypeSelected}
-                    />
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.customTypeAddBtn,
-                        !customEventTypeInput.trim() &&
-                          styles.customTypeAddBtnDisabled,
-                        pressed && styles.customTypeAddBtnPressed,
-                      ]}
-                      disabled={!customEventTypeInput.trim()}
-                      onPress={addCustomEventType}
-                      accessibilityRole="button"
-                      accessibilityLabel="Add custom event type"
-                    >
-                      <Plus size={20} color="#fff" strokeWidth={2.6} />
-                    </Pressable>
-                  </View>
-                </Animated.View>
-                {!!typeError && (
-                  <Text style={styles.errorText}>{typeError}</Text>
-                )}
-              </>
+                );
+              })
             )}
-          </View>
-
-          {/* ── Date & Time ───────────────────────────────────────────── */}
-          <View style={styles.card}>
-            <SectionHeader
-              title="Date & Time"
-              isOpen={dateTimeOpen}
-              onToggle={() => toggle(setDateTimeOpen)}
-            />
-            {dateTimeOpen && (
-              <>
-                <View style={styles.dateRow}>
-                  <DateTimeField
-                    label="Start Date *"
-                    icon={<CalendarIcon size={16} color="#999" />}
-                    value={startDate ? formatDate(startDate) : null}
-                    placeholder="Select date"
-                    onPress={() => openPicker("startDate")}
-                  />
-                  <DateTimeField
-                    label="Start Time *"
-                    icon={<ClockIcon size={16} color="#999" />}
-                    value={startTime ? formatTime(startTime) : null}
-                    placeholder="Select time"
-                    onPress={() => openPicker("startTime")}
-                  />
-                </View>
-                {!!startError && (
-                  <Text style={styles.errorText}>{startError}</Text>
-                )}
-
-                <View style={[styles.dateRow, styles.fieldGap]}>
-                  <DateTimeField
-                    label="End Date"
-                    icon={<CalendarIcon size={16} color="#999" />}
-                    value={endDate ? formatDate(endDate) : null}
-                    placeholder="Optional"
-                    onPress={() => openPicker("endDate")}
-                  />
-                  <DateTimeField
-                    label="End Time"
-                    icon={<ClockIcon size={16} color="#999" />}
-                    value={endTime ? formatTime(endTime) : null}
-                    placeholder="Optional"
-                    onPress={() => openPicker("endTime")}
-                  />
-                </View>
-                <View style={styles.durationCard}>
-                  <Text style={styles.durationLabel}>Duration</Text>
-                  <Text
-                    style={[
-                      styles.durationValue,
-                      !durationSummary && styles.durationPlaceholder,
-                      durationSummary === "End must be after start." &&
-                        styles.durationError,
-                    ]}
-                  >
-                    {durationSummary ??
-                      "Select start and end date/time to calculate."}
-                  </Text>
-                </View>
-                {!!endError && <Text style={styles.errorText}>{endError}</Text>}
-              </>
-            )}
-          </View>
-
-          {/* ── Location ──────────────────────────────────────────────── */}
-          <View style={styles.card}>
-            <SectionHeader
-              title="Location"
-              isOpen={locationOpen}
-              onToggle={() => toggle(setLocationOpen)}
-            />
-            {locationOpen && (
-              <>
-                <ToggleRow
-                  label="Online event"
-                  value={isOnline}
-                  onValueChange={(v) => {
-                    setIsOnline(v);
-                    setLocationError("");
-                  }}
-                />
-                {isOnline ? (
-                  <Input
-                    label="Meeting URL"
-                    placeholder="https://meet.google.com/…"
-                    value={meetingUrl}
-                    onChangeText={(t) => {
-                      setMeetingUrl(t);
-                      if (locationError) setLocationError("");
-                    }}
-                    autoCapitalize="none"
-                    keyboardType="url"
-                    icon={<LinkIcon size={18} color="#999" />}
-                    error={locationError}
-                    containerStyle={styles.fieldGap}
-                  />
-                ) : (
-                  <Input
-                    label="Location"
-                    placeholder="e.g. Koerner Library, UBC"
-                    value={location}
-                    onChangeText={(t) => {
-                      setLocation(t);
-                      if (locationError) setLocationError("");
-                    }}
-                    autoCapitalize="words"
-                    icon={<MapPinIcon size={18} color="#999" />}
-                    error={locationError}
-                    containerStyle={styles.fieldGap}
-                  />
-                )}
-              </>
-            )}
-          </View>
-
-          {/* ── Attendance & Rules ────────────────────────────────────── */}
-          <View style={styles.card}>
-            <SectionHeader
-              title="Attendance & Rules"
-              isOpen={attendanceOpen}
-              onToggle={() => toggle(setAttendanceOpen)}
-            />
-            {attendanceOpen && (
-              <>
-                <ToggleRow
-                  label="Discoverable to all"
-                  description="Show this event to users outside the community"
-                  value={discoverableToAll}
-                  onValueChange={setDiscoverableToAll}
-                />
-                <Input
-                  label="Max Attendees"
-                  placeholder="Leave blank for unlimited"
-                  value={maxAttendees}
-                  onChangeText={(t) =>
-                    setMaxAttendees(t.replace(/[^0-9]/g, ""))
-                  }
-                  keyboardType="number-pad"
-                  icon={<Users2Icon size={18} color="#999" />}
-                  containerStyle={styles.fieldGap}
-                />
-              </>
-            )}
-          </View>
-
-          <Button
-            label="Create Event"
-            variant="default"
-            loading={loading}
-            onPress={handleCreate}
-            style={styles.submitButton}
-          />
-        </ScrollView>
-      </KeyboardAvoidingView>
-
-      <Modal
-        visible={communityPickerOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setCommunityPickerOpen(false)}
-      >
-        <Pressable
-          style={styles.modalBackdrop}
-          onPress={() => setCommunityPickerOpen(false)}
-        >
-          <Pressable style={styles.modalCard} onPress={() => {}}>
-            <Text style={styles.modalTitle}>Link to community</Text>
-            <Text style={styles.modalBody}>
-              Select one of your communities where you are admin/owner.
-            </Text>
-            <ScrollView
-              style={styles.modalList}
-              showsVerticalScrollIndicator={false}
-            >
-              {adminCommunities.length === 0 ? (
-                <Text style={styles.modalEmpty}>
-                  No admin communities available.
-                </Text>
-              ) : (
-                adminCommunities.map((community) => {
-                  const selected = community.id === linkedCommunityId;
-                  return (
-                    <Pressable
-                      key={community.id}
-                      style={[
-                        styles.modalOption,
-                        selected && styles.modalOptionSelected,
-                      ]}
-                      onPress={() => {
-                        setLinkedCommunityId(community.id);
-                        setLinkedCommunityName(community.name);
-                        setCommunityError("");
-                        setCommunityPickerOpen(false);
-                      }}
-                    >
-                      <Text
-                        style={[
-                          styles.modalOptionText,
-                          selected && styles.modalOptionTextSelected,
-                        ]}
-                      >
-                        {community.name}
-                      </Text>
-                    </Pressable>
-                  );
-                })
-              )}
-            </ScrollView>
-          </Pressable>
+          </ScrollView>
         </Pressable>
-      </Modal>
-
-      <Modal
-        visible={pickerTarget !== null}
-        transparent
-        animationType="none"
-        onRequestClose={closePicker}
-      >
-        <View style={pickerStyles.backdrop}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={closePicker} />
-          <Animated.View
-            style={[
-              pickerStyles.modalCard,
-              {
-                opacity: pickerAnimation,
-                transform: [
-                  {
-                    translateY: pickerAnimation.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [24, 0],
-                    }),
-                  },
-                  {
-                    scale: pickerAnimation.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.96, 1],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          >
-            <View style={pickerStyles.modalHeader}>
-              <Text style={pickerStyles.modalLabel}>
-                {getPickerTitle(pickerTarget)}
-              </Text>
-              <View style={pickerStyles.modalActions}>
-                <Pressable onPress={closePicker} style={pickerStyles.modalBtn}>
-                  <Text style={pickerStyles.cancelText}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => selectPickerValue()}
-                  style={[pickerStyles.modalBtn, pickerStyles.doneBtn]}
-                >
-                  <Text style={pickerStyles.doneText}>Select</Text>
-                </Pressable>
-              </View>
-            </View>
-            <DateTimePicker
-              value={pickerValue}
-              mode={pickerMode}
-              display="spinner"
-              onChange={onPickerChange}
-              textColor={Colors.dark}
-              themeVariant="light"
-              accentColor={Colors.primary}
-              style={pickerStyles.picker}
-            />
-          </Animated.View>
-        </View>
-      </Modal>
-    </View>
+      </Pressable>
+    </KeyboardAvoidingView>
   );
 }
 
-// ─── Styles ──────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: Colors.light },
+  screen: {
+    flex: 1,
+    backgroundColor: Colors.light,
+  },
   header: {
+    paddingHorizontal: 22,
+    paddingBottom: 10,
+    gap: 14,
+  },
+  headerRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-    backgroundColor: Colors.light,
   },
-  iconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#EBEBEB",
+  backCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#E8E8E8",
     alignItems: "center",
     justifyContent: "center",
   },
-  headerCenter: { flex: 1, alignItems: "center", marginHorizontal: 12 },
   headerTitle: {
+    flex: 1,
+    textAlign: "center",
     fontFamily: Fonts.gabarito.semiBold,
     fontSize: 18,
     color: Colors.dark,
+    marginHorizontal: 12,
   },
-  headerSubtitle: {
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 13,
-    color: "#888",
-    marginTop: 1,
+  headerSpacer: {
+    width: 44,
+    height: 44,
   },
-  scroll: { padding: 16, gap: 12, paddingBottom: 48 },
-  card: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#eee",
-    padding: 16,
-    gap: 0,
+  scroll: { flex: 1 },
+  scrollContent: {
+    paddingHorizontal: 28,
+    paddingTop: 18,
+    paddingBottom: 24,
   },
-  sectionTitleStatic: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 15,
+  title: {
+    fontSize: 32,
+    fontFamily: Fonts.gabarito.bold,
     color: Colors.dark,
-  },
-  fieldGap: { marginTop: 14 },
-  selectLabel: {
-    fontFamily: Fonts.gabarito.medium,
-    fontSize: 13,
-    color: "#666",
     marginBottom: 6,
-    marginLeft: 2,
   },
-  selectField: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: Colors.light,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#ddd",
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-  },
-  selectValue: {
-    flex: 1,
+  subtitle: {
     fontFamily: Fonts.instrument.regular,
-    fontSize: 14,
-    color: Colors.dark,
+    fontSize: 16,
+    color: "#666",
+    marginBottom: 24,
+    lineHeight: 22,
   },
-  selectPlaceholder: {
-    color: "#999",
-  },
+  fieldGap: { marginTop: 16 },
   textArea: { minHeight: 90, alignItems: "flex-start" },
-  dateRow: { flexDirection: "column", gap: 10 },
-  durationCard: {
-    marginTop: 12,
-    borderRadius: 12,
-    backgroundColor: Colors.light,
-    borderWidth: 1,
-    borderColor: "#eee",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+  chipsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
   },
-  durationLabel: {
-    fontFamily: Fonts.gabarito.medium,
-    fontSize: 12,
-    color: "#777",
-    marginBottom: 2,
-  },
-  durationValue: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 15,
-    color: Colors.dark,
-  },
-  durationPlaceholder: {
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 13,
-    color: "#999",
-  },
-  durationError: {
-    color: "#DC2626",
-  },
-  errorText: {
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 12,
-    color: "#DC2626",
-    marginTop: 6,
-  },
-  chipsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
   chip: {
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1.5,
     borderColor: "#ddd",
-    backgroundColor: Colors.light,
+    backgroundColor: "#fff",
   },
   chipSelected: {
-    borderColor: Colors.accent,
-    backgroundColor: Colors.accent + "18",
+    borderColor: Colors.primary,
+    backgroundColor: "#fff",
   },
   chipText: {
     fontFamily: Fonts.instrument.regular,
@@ -1245,7 +1102,7 @@ const styles = StyleSheet.create({
     color: "#555",
   },
   chipTextSelected: {
-    color: Colors.dark,
+    color: Colors.primary,
     fontFamily: Fonts.gabarito.medium,
   },
   chipCustomDisabled: {
@@ -1273,7 +1130,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 10,
-    backgroundColor: Colors.accent,
+    backgroundColor: Colors.primary,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1283,12 +1140,164 @@ const styles = StyleSheet.create({
   customTypeAddBtnPressed: {
     opacity: 0.8,
   },
-  modalBackdrop: {
+  groupLabel: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 11,
+    letterSpacing: 1.2,
+    textTransform: "uppercase",
+    color: "#8A8A8A",
+    marginBottom: 10,
+  },
+  groupLabelSpaced: {
+    marginTop: 22,
+  },
+  timeBlock: {
+    marginTop: 12,
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    overflow: "hidden",
+  },
+  timeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  timeRowOpen: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#eee",
+  },
+  timeLabel: {
     flex: 1,
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 15,
+    color: Colors.dark,
+  },
+  timeValue: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 16,
+    color: Colors.dark,
+  },
+  timeValueOpen: {
+    color: Colors.primary,
+  },
+  timePicker: {
+    height: 196,
+    marginTop: -8,
+  },
+  durationCard: {
+    marginTop: 16,
+    borderRadius: 14,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#ddd",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  durationLabel: {
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 12,
+    color: "#777",
+    marginBottom: 2,
+  },
+  durationValue: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 15,
+    color: Colors.dark,
+  },
+  durationError: {
+    color: "#DC2626",
+  },
+  switchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  switchText: {
+    flex: 1,
+    marginRight: 12,
+  },
+  switchLabel: {
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 15,
+    color: Colors.dark,
+  },
+  switchDescription: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 13,
+    color: "#888",
+    marginTop: 2,
+  },
+  selectLabel: {
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 13,
+    color: "#666",
+    marginBottom: 6,
+    marginLeft: 2,
+  },
+  selectField: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  selectFieldError: {
+    borderColor: "#DC2626",
+    borderWidth: 1.5,
+  },
+  selectValue: {
+    flex: 1,
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14,
+    color: Colors.dark,
+  },
+  selectPlaceholder: {
+    color: "#999",
+  },
+  errorText: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 12,
+    color: "#DC2626",
+    marginTop: 8,
+  },
+  footer: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 28,
+    paddingTop: 16,
+    gap: 10,
+    backgroundColor: Colors.light,
+  },
+  footerBack: {
+    flex: 1,
+  },
+  footerContinue: {
+    flex: 2,
+  },
+  modalRoot: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0, 0, 0, 0.45)",
     alignItems: "center",
     justifyContent: "center",
     padding: 28,
+    zIndex: 30,
+  },
+  modalHidden: {
+    display: "none",
   },
   modalCard: {
     width: "100%",
@@ -1339,130 +1348,5 @@ const styles = StyleSheet.create({
     color: "#888",
     textAlign: "center",
     paddingVertical: 14,
-  },
-  submitButton: { marginTop: 8 },
-});
-
-const sectionStyles = StyleSheet.create({
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingBottom: 2,
-  },
-  title: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 15,
-    color: Colors.dark,
-  },
-});
-
-const dtStyles = StyleSheet.create({
-  wrapper: { flex: 1 },
-  label: {
-    fontFamily: Fonts.gabarito.medium,
-    fontSize: 13,
-    color: "#666",
-    marginBottom: 6,
-    marginLeft: 2,
-  },
-  field: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: Colors.light,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#ddd",
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    gap: 8,
-  },
-  iconWrap: { opacity: 0.6 },
-  value: {
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 14,
-    color: Colors.dark,
-    flex: 1,
-  },
-  placeholder: { color: "#999" },
-});
-
-const toggleRowStyles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f5f5f5",
-  },
-  text: { flex: 1, marginRight: 12 },
-  label: {
-    fontFamily: Fonts.gabarito.medium,
-    fontSize: 15,
-    color: Colors.dark,
-  },
-  description: {
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 13,
-    color: "#888",
-    marginTop: 2,
-  },
-});
-
-const pickerStyles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.52)",
-    justifyContent: "center",
-    padding: 20,
-  },
-  modalCard: {
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: "#e8e8e8",
-    backgroundColor: "#fff",
-    overflow: "hidden",
-  },
-  modalHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#e8e8e8",
-  },
-  modalLabel: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 15,
-    color: Colors.dark,
-  },
-  modalActions: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  modalBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 20,
-  },
-  doneBtn: {
-    backgroundColor: Colors.primary,
-  },
-  cancelText: {
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 14,
-    color: "#888",
-  },
-  doneText: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 14,
-    color: "#fff",
-  },
-  picker: {
-    width: "100%",
-    height: 216,
-    backgroundColor: "#fff",
   },
 });

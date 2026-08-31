@@ -527,8 +527,7 @@ export default function FeedInstaCard({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: "#fff",
-    marginBottom: 4,
+    backgroundColor: Colors.light,
   },
   header: {
     flexDirection: "row",
