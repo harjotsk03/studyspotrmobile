@@ -1,7 +1,10 @@
 import {
+  ActivityIndicator,
   Alert,
+  Animated,
   Image,
   KeyboardAvoidingView,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -9,23 +12,32 @@ import {
   Switch,
   Text,
   View,
+  type LayoutChangeEvent,
 } from "react-native";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
+import DateTimePicker, {
+  type DateTimePickerEvent,
+} from "@react-native-community/datetimepicker";
 import MapView, { Marker } from "react-native-maps";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { ArrowLeft, ArrowRightIcon, ImagePlus, MapPin, Star } from "lucide-react-native";
+import { ArrowLeft, ImagePlus, MapPin, Star, VolumeX, Volume1, Volume2, AudioLines, Moon, Sun, Armchair, LayoutGrid, Grid2x2, Wifi, Plug, Coffee, Presentation, Users, Check, Clock } from "lucide-react-native";
+import type { LucideIcon } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Button from "../components/Button";
+import FadeInUp from "../components/FadeInUp";
 import Input from "../components/Input";
+import SmoothProgressBar from "../components/SmoothProgressBar";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { useAuth } from "../context/AuthContext";
 import { type StudySpot, useSpots } from "../context/SpotsContext";
-import type { SpotsStackParamList } from "../types/navigation";
+import { useToast } from "../context/ToastContext";
+import type { RootStackParamList, SpotsStackParamList } from "../types/navigation";
 import {
   createSpotMultipart,
+  fetchSpotById,
   SpotDuplicateError,
   updateSpotMultipart,
 } from "../utils/spotsApi";
@@ -36,15 +48,117 @@ import { isSpotAlwaysOpen } from "../utils/spotHours";
 const STEPS_CREATE = ["Place", "Atmosphere", "Amenities", "Hours", "Photos & review"] as const;
 const STEPS_EDIT = ["Place", "Atmosphere", "Amenities", "Hours"] as const;
 
+const STEP_COPY: Record<
+  (typeof STEPS_CREATE)[number],
+  { title: string; subtitle: string }
+> = {
+  Place: {
+    title: "Where is this spot?",
+    subtitle: "Give it a name, add the address, and drop a pin on the map.",
+  },
+  Atmosphere: {
+    title: "What's the vibe?",
+    subtitle: "Three quick reads. You can change them later.",
+  },
+  Amenities: {
+    title: "What's available?",
+    subtitle: "Tap everything this spot has.",
+  },
+  Hours: {
+    title: "When is it open?",
+    subtitle: "Set the hours or mark it as always open.",
+  },
+  "Photos & review": {
+    title: "Photos & a first review",
+    subtitle: "Add 1–5 photos and tell people what it's like to study here.",
+  },
+};
+
 const MAP_HEIGHT = 220;
 /** Default map framing (Toronto) before the user chooses a pin. */
 const FALLBACK_LAT = 43.653226;
 const FALLBACK_LNG = -79.383184;
 const MAP_DELTA = { latitudeDelta: 0.014, longitudeDelta: 0.014 };
 
-const NOICE_OPTIONS = ["Quiet", "Moderate", "Lively", "Variable"];
-const LIGHTING_OPTIONS = ["Dim", "Moderate", "Bright"];
-const TABLES_OPTIONS = ["Limited", "Enough", "Plenty"];
+const NOICE_OPTIONS = ["Quiet", "Moderate", "Lively", "Variable"] as const;
+const LIGHTING_OPTIONS = ["Dim", "Moderate", "Bright"] as const;
+const TABLES_OPTIONS = ["Limited", "Enough", "Plenty"] as const;
+
+type VibeChoice = {
+  value: string;
+  label: string;
+  hint: string;
+  Icon: LucideIcon;
+};
+
+const NOISE_CHOICES: VibeChoice[] = [
+  {
+    value: "Quiet",
+    label: "Quiet",
+    hint: "Almost silent — laptops and the occasional whisper.",
+    Icon: VolumeX,
+  },
+  {
+    value: "Moderate",
+    label: "Moderate",
+    hint: "Some background chatter — most people still work solo.",
+    Icon: Volume1,
+  },
+  {
+    value: "Lively",
+    label: "Lively",
+    hint: "A buzz of conversation — better with headphones.",
+    Icon: Volume2,
+  },
+  {
+    value: "Variable",
+    label: "Varies",
+    hint: "It changes by time of day — check before you settle.",
+    Icon: AudioLines,
+  },
+];
+
+const LIGHTING_CHOICES: VibeChoice[] = [
+  {
+    value: "Dim",
+    label: "Dim",
+    hint: "Low light — lamps, evenings, a cozier feel.",
+    Icon: Moon,
+  },
+  {
+    value: "Moderate",
+    label: "Moderate",
+    hint: "Even lighting — comfortable for most work.",
+    Icon: Sun,
+  },
+  {
+    value: "Bright",
+    label: "Bright",
+    hint: "Big windows or strong overheads — good for daytime.",
+    Icon: Sun,
+  },
+];
+
+const TABLES_CHOICES: VibeChoice[] = [
+  {
+    value: "Limited",
+    label: "Limited",
+    hint: "Seats go fast — arrive early or have a backup.",
+    Icon: Armchair,
+  },
+  {
+    value: "Enough",
+    label: "Enough",
+    hint: "You'll usually find a seat, but not at 4pm.",
+    Icon: LayoutGrid,
+  },
+  {
+    value: "Plenty",
+    label: "Plenty",
+    hint: "Lots of tables — easy to spread out.",
+    Icon: Grid2x2,
+  },
+];
 
 function pickChipOption(raw: unknown, options: readonly string[], fallback: string): string {
   const t = typeof raw === "string" ? raw.trim() : "";
@@ -66,35 +180,317 @@ function parseCoordinates(latRaw: string, lngRaw: string): { lat: number; lng: n
   return { lat, lng };
 }
 
-function ChipRow({
+function timeStringToDate(raw: string, fallbackHour: number): Date {
+  const date = new Date();
+  const match = /^(\d{1,2}):(\d{2})/.exec(raw.trim());
+  if (!match) {
+    date.setHours(fallbackHour, 0, 0, 0);
+    return date;
+  }
+  let hours = Math.min(23, Math.max(0, Number(match[1])));
+  let minutes = Math.min(59, Math.max(0, Number(match[2])));
+  minutes = Math.round(minutes / 5) * 5;
+  if (minutes === 60) {
+    hours = (hours + 1) % 24;
+    minutes = 0;
+  }
+  date.setHours(hours, minutes, 0, 0);
+  return date;
+}
+
+function dateToTimeString(date: Date): string {
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+function formatTimeLabel(raw: string, fallbackHour: number): string {
+  return timeStringToDate(raw, fallbackHour).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function asStudySpot(raw: unknown): StudySpot | null {
+  if (!raw || typeof raw !== "object") return null;
+  const rec = raw as Record<string, unknown>;
+  const nested = rec.spot;
+  const candidate =
+    nested && typeof nested === "object" ? (nested as Record<string, unknown>) : rec;
+  if (typeof candidate.id === "string" && candidate.id.trim()) {
+    return candidate as StudySpot;
+  }
+  return null;
+}
+
+function formatGeocodedAddress(
+  result: Location.LocationGeocodedAddress,
+  fallback: string,
+): string {
+  const line =
+    [result.streetNumber, result.street].filter(Boolean).join(" ") ||
+    result.name ||
+    result.district ||
+    "";
+  const cityLine = [result.city, result.region, result.postalCode, result.country]
+    .filter(Boolean)
+    .join(", ");
+  const composed = line && cityLine ? `${line}, ${cityLine}` : line || cityLine;
+  return composed || fallback;
+}
+
+type WizardField =
+  | "name"
+  | "description"
+  | "address"
+  | "location"
+  | "review"
+  | "photos";
+
+const FIELD_ORDER: WizardField[] = [
+  "name",
+  "description",
+  "address",
+  "location",
+  "review",
+  "photos",
+];
+
+function VibePicker({
   label,
-  options,
+  choices,
   value,
   onChange,
 }: {
   label: string;
-  options: readonly string[];
+  choices: readonly VibeChoice[];
   value: string;
   onChange: (v: string) => void;
 }) {
+  const INSET = 3;
+  const count = choices.length;
+  const index = Math.max(
+    0,
+    choices.findIndex((choice) => choice.value === value),
+  );
+  const selected = choices[index] ?? choices[0];
+  const [segmentW, setSegmentW] = useState(0);
+  const slideX = useRef(new Animated.Value(INSET)).current;
+  const startX = useRef(INSET);
+  const indexRef = useRef(index);
+  const segmentWRef = useRef(0);
+  const onChangeRef = useRef(onChange);
+  const choicesRef = useRef(choices);
+  indexRef.current = index;
+  onChangeRef.current = onChange;
+  choicesRef.current = choices;
+
+  const xForIndex = (i: number, width: number) => i * width + INSET;
+
+  useEffect(() => {
+    if (segmentW <= 0) return;
+    Animated.spring(slideX, {
+      toValue: xForIndex(index, segmentW),
+      friction: 7,
+      tension: 80,
+      useNativeDriver: true,
+    }).start();
+  }, [index, segmentW, slideX]);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, g) =>
+        Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy),
+      onPanResponderGrant: () => {
+        startX.current = xForIndex(indexRef.current, segmentWRef.current);
+        slideX.stopAnimation();
+      },
+      onPanResponderMove: (_, g) => {
+        const n = choicesRef.current.length;
+        const width = segmentWRef.current;
+        if (width <= 0) return;
+        const min = INSET;
+        const max = xForIndex(n - 1, width);
+        slideX.setValue(Math.max(min, Math.min(max, startX.current + g.dx)));
+      },
+      onPanResponderRelease: (_, g) => {
+        const n = choicesRef.current.length;
+        const width = segmentWRef.current;
+        if (width <= 0) return;
+        const raw = startX.current + g.dx;
+        const next = Math.max(
+          0,
+          Math.min(n - 1, Math.round((raw - INSET) / width)),
+        );
+        Animated.spring(slideX, {
+          toValue: xForIndex(next, width),
+          friction: 7,
+          tension: 80,
+          useNativeDriver: true,
+        }).start();
+        onChangeRef.current(choicesRef.current[next].value);
+      },
+      onPanResponderTerminate: () => {
+        const width = segmentWRef.current;
+        if (width <= 0) return;
+        Animated.spring(slideX, {
+          toValue: xForIndex(indexRef.current, width),
+          friction: 7,
+          tension: 80,
+          useNativeDriver: true,
+        }).start();
+      },
+    }),
+  ).current;
+
+  const thumbW = segmentW > 0 ? segmentW - INSET * 2 : 0;
+
   return (
-    <View style={styles.fieldBlock}>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      <View style={styles.chipRow}>
-        {options.map((opt) => {
-          const active = opt === value;
-          return (
-            <Pressable
-              key={opt}
-              onPress={() => onChange(opt)}
-              style={[styles.chip, active && styles.chipActive]}
-            >
-              <Text style={[styles.chipText, active && styles.chipTextActive]}>{opt}</Text>
-            </Pressable>
-          );
-        })}
+    <View style={styles.vibeBlock}>
+      <Text style={styles.vibeLabel}>{label}</Text>
+      <View
+        style={styles.vibeTrack}
+        onLayout={(e) => {
+          const width = e.nativeEvent.layout.width / count;
+          const firstMeasure = segmentWRef.current === 0;
+          segmentWRef.current = width;
+          if (firstMeasure) {
+            slideX.setValue(xForIndex(indexRef.current, width));
+          }
+          setSegmentW(width);
+        }}
+        {...panResponder.panHandlers}
+      >
+        {thumbW > 0 ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.vibeThumb,
+              { width: thumbW, transform: [{ translateX: slideX }] },
+            ]}
+          />
+        ) : null}
+        <View style={styles.vibeRow}>
+          {choices.map((choice) => {
+            const active = choice.value === value;
+            const Icon = choice.Icon;
+            return (
+              <Pressable
+                key={choice.value}
+                onPress={() => onChange(choice.value)}
+                style={styles.vibeOption}
+              >
+                <Icon
+                  size={18}
+                  color={active ? "#fff" : "#8B8B8B"}
+                  strokeWidth={2.1}
+                />
+                <Text
+                  style={[
+                    styles.vibeTileText,
+                    active && styles.vibeTileTextActive,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {choice.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
+      <Text style={styles.vibeHint}>{selected.hint}</Text>
     </View>
+  );
+}
+
+function AmenityCard({
+  title,
+  subtitle,
+  Icon,
+  selected,
+  onToggle,
+  wide,
+}: {
+  title: string;
+  subtitle: string;
+  Icon: LucideIcon;
+  selected: boolean;
+  onToggle: () => void;
+  wide?: boolean;
+}) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const check = useRef(new Animated.Value(selected ? 1 : 0)).current;
+
+  useEffect(() => {
+    Animated.spring(check, {
+      toValue: selected ? 1 : 0,
+      friction: 6,
+      tension: 160,
+      useNativeDriver: true,
+    }).start();
+  }, [check, selected]);
+
+  const pressIn = () => {
+    Animated.spring(scale, {
+      toValue: 0.96,
+      speed: 20,
+      bounciness: 0,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const pressOut = () => {
+    Animated.spring(scale, {
+      toValue: 1,
+      speed: 22,
+      bounciness: 9,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  return (
+    <Animated.View
+      style={[
+        wide ? styles.amenityCardWide : styles.amenityCardWrap,
+        { transform: [{ scale }] },
+      ]}
+    >
+      <Pressable
+        onPress={onToggle}
+        onPressIn={pressIn}
+        onPressOut={pressOut}
+        style={[
+          styles.amenityCard,
+          selected ? styles.amenityCardOn : styles.amenityCardOff,
+        ]}
+      >
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.amenityCheck,
+            { opacity: check, transform: [{ scale: check }] },
+          ]}
+        >
+          <Check size={12} color="#fff" strokeWidth={3} />
+        </Animated.View>
+        <Icon
+          size={22}
+          color={selected ? Colors.primary : "#9A9A9A"}
+          strokeWidth={2.1}
+        />
+        <Text
+          style={[styles.amenityTitle, !selected && styles.amenityMuted]}
+        >
+          {title}
+        </Text>
+        <Text
+          style={[styles.amenitySubtitle, !selected && styles.amenityMuted]}
+        >
+          {subtitle}
+        </Text>
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -120,13 +516,77 @@ function SwitchRow({
   );
 }
 
-type WizardProps = NativeStackScreenProps<SpotsStackParamList, "CreateSpot" | "EditSpot">;
+function TimeSelectRow({
+  label,
+  value,
+  fallbackHour,
+  open,
+  onToggle,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  fallbackHour: number;
+  open: boolean;
+  onToggle: () => void;
+  onChange: (next: string) => void;
+}) {
+  const onPickerChange = (event: DateTimePickerEvent, date?: Date) => {
+    if (Platform.OS === "android") {
+      if (event.type === "dismissed") {
+        onToggle();
+        return;
+      }
+      if (date) onChange(dateToTimeString(date));
+      onToggle();
+      return;
+    }
+    if (date) onChange(dateToTimeString(date));
+  };
+
+  return (
+    <View style={styles.timeBlock}>
+      <Pressable
+        onPress={onToggle}
+        disabled={Platform.OS === "ios"}
+        style={[styles.timeRow, open && styles.timeRowOpen]}
+      >
+        <Clock size={18} color={open ? Colors.primary : "#999"} strokeWidth={2.1} />
+        <Text style={styles.timeLabel}>{label}</Text>
+        <Text style={[styles.timeValue, open && styles.timeValueOpen]}>
+          {formatTimeLabel(value, fallbackHour)}
+        </Text>
+      </Pressable>
+      {open ? (
+        <DateTimePicker
+          value={timeStringToDate(value, fallbackHour)}
+          mode="time"
+          display="spinner"
+          is24Hour={false}
+          minuteInterval={5}
+          locale="en-US"
+          themeVariant="light"
+          accentColor={Colors.primary}
+          textColor={Colors.dark}
+          style={styles.timePicker}
+          onChange={onPickerChange}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+type WizardProps = NativeStackScreenProps<
+  SpotsStackParamList & Pick<RootStackParamList, "CreateSpot" | "SpotViewer">,
+  "CreateSpot" | "EditSpot"
+>;
 
 export default function SpotWizardScreen({ route, navigation }: WizardProps) {
   const insets = useSafeAreaInsets();
   const mapRef = useRef<MapView | null>(null);
   const { profile } = useAuth();
   const { refetchSpots } = useSpots();
+  const { showToast } = useToast();
   const user = profile?.userProfile;
 
   const isEdit = route.name === "EditSpot";
@@ -137,9 +597,19 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
 
   const initialEditCoords = useMemo(() => (editSpot ? getSpotCoordinates(editSpot) : null), [editSpot]);
 
+  const lastGeocodedAddress = useRef(
+    typeof editSpot?.address === "string" ? editSpot.address.trim() : "",
+  );
+
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [geocoding, setGeocoding] = useState(false);
+  const [findingOnMap, setFindingOnMap] = useState(false);
+  const [locatingMe, setLocatingMe] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<WizardField, string>>>(
+    {},
+  );
+  const scrollRef = useRef<ScrollView>(null);
+  const fieldOffsets = useRef<Partial<Record<WizardField, number>>>({});
 
   const [name, setName] = useState(() =>
     editSpot ? getSpotTitle(editSpot) : "",
@@ -184,6 +654,7 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
       : "22:00",
   );
   const [is24Hours, setIs24Hours] = useState(() => isSpotAlwaysOpen(editSpot));
+  const [hoursPicker, setHoursPicker] = useState<"open" | "close" | null>(null);
 
   const [rating, setRating] = useState(5);
   const [reviewContent, setReviewContent] = useState("");
@@ -221,9 +692,35 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
     return () => clearTimeout(t);
   }, [initialEditCoords, animateMapTo]);
 
+  useEffect(() => {
+    navigation.setOptions({ gestureEnabled: !loading });
+  }, [loading, navigation]);
+
   const setCoords = (lat: number, lng: number) => {
     setLatStr(lat.toFixed(6));
     setLngStr(lng.toFixed(6));
+    clearFieldError("location");
+  };
+
+  const clearFieldError = (key: WizardField) => {
+    setFieldErrors((current) => {
+      if (!current[key]) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const markFieldOffset = (key: WizardField) => (e: LayoutChangeEvent) => {
+    fieldOffsets.current[key] = e.nativeEvent.layout.y;
+  };
+
+  const scrollToField = (key: WizardField) => {
+    const y = fieldOffsets.current[key];
+    if (y == null) return;
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ y: Math.max(0, y - 16), animated: true });
+    });
   };
 
   const mapInitialRegion = useMemo(
@@ -235,12 +732,34 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
     [],
   );
 
-  const locateFromAddress = async () => {
+  const applyAddressFromCoords = async (lat: number, lng: number) => {
+    const fallback = "Pinned location";
+    try {
+      const rev = await Location.reverseGeocodeAsync({
+        latitude: lat,
+        longitude: lng,
+      });
+      const composed = rev?.[0]
+        ? formatGeocodedAddress(rev[0], fallback)
+        : fallback;
+      setAddress(composed);
+      lastGeocodedAddress.current = composed.trim();
+      if (composed.trim()) clearFieldError("address");
+    } catch {
+      setAddress(fallback);
+      lastGeocodedAddress.current = fallback;
+      clearFieldError("address");
+    }
+  };
+
+  const locateFromAddress = async (opts?: { silent?: boolean }) => {
     if (!address.trim()) {
-      Alert.alert("Address needed", "Enter an address first.");
+      if (!opts?.silent) {
+        Alert.alert("Address needed", "Enter an address first.");
+      }
       return;
     }
-    setGeocoding(true);
+    setFindingOnMap(true);
     try {
       const results = await Location.geocodeAsync(address.trim());
       if (!results?.length) {
@@ -250,14 +769,23 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
       const lng = results[0].longitude;
       setCoords(lat, lng);
       animateMapTo(lat, lng);
+      lastGeocodedAddress.current = address.trim();
     } catch {
-      Alert.alert(
-        "Could not geocode",
-        "Try a fuller address, use your location, or enter latitude and longitude manually.",
-      );
+      if (!opts?.silent) {
+        Alert.alert(
+          "Could not find that address",
+          "Try a fuller address, or drop a pin on the map.",
+        );
+      }
     } finally {
-      setGeocoding(false);
+      setFindingOnMap(false);
     }
+  };
+
+  const onAddressBlur = () => {
+    const next = address.trim();
+    if (!next || next === lastGeocodedAddress.current) return;
+    void locateFromAddress({ silent: true });
   };
 
   const useCurrentLocation = async () => {
@@ -266,7 +794,7 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
       Alert.alert("Permission needed", "Allow location to place this spot.");
       return;
     }
-    setGeocoding(true);
+    setLocatingMe(true);
     try {
       const pos = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
@@ -275,23 +803,14 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
       const lng = pos.coords.longitude;
       setCoords(lat, lng);
       animateMapTo(lat, lng);
-      const rev = await Location.reverseGeocodeAsync({
-        latitude: lat,
-        longitude: lng,
-      });
-      if (rev?.[0]) {
-        const r = rev[0];
-        const line =
-          [r.streetNumber, r.street].filter(Boolean).join(" ") || r.name || r.district || "";
-        const cityLine = [r.city, r.region].filter(Boolean).join(", ");
-        const composed =
-          line && cityLine ? `${line}, ${cityLine}` : line || cityLine || address;
-        if (composed) setAddress(composed);
-      }
+      await applyAddressFromCoords(lat, lng);
     } catch {
-      Alert.alert("Location error", "Could not read GPS. Try again or enter coordinates.");
+      Alert.alert(
+        "Location error",
+        "Could not read GPS. Try again or drop a pin on the map.",
+      );
     } finally {
-      setGeocoding(false);
+      setLocatingMe(false);
     }
   };
 
@@ -300,16 +819,27 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
     const { latitude: lat, longitude: lng } = e.nativeEvent.coordinate;
     setCoords(lat, lng);
     animateMapTo(lat, lng);
+    void (async () => {
+      setFindingOnMap(true);
+      try {
+        await applyAddressFromCoords(lat, lng);
+      } finally {
+        setFindingOnMap(false);
+      }
+    })();
   };
 
   const onPinDragEnd = (e: { nativeEvent: { coordinate: { latitude: number; longitude: number } } }) => {
     const { latitude: lat, longitude: lng } = e.nativeEvent.coordinate;
     setCoords(lat, lng);
-  };
-
-  const recenterFromInputsIfValid = () => {
-    const parsed = parseCoordinates(latStr, lngStr);
-    if (parsed) animateMapTo(parsed.lat, parsed.lng);
+    void (async () => {
+      setFindingOnMap(true);
+      try {
+        await applyAddressFromCoords(lat, lng);
+      } finally {
+        setFindingOnMap(false);
+      }
+    })();
   };
 
   const pickPhotos = async () => {
@@ -331,6 +861,7 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
     });
     if (result.canceled || !result.assets?.length) return;
     setImages((prev) => [...prev, ...result.assets].slice(0, 5));
+    clearFieldError("photos");
   };
 
   const removePhoto = (idx: number) => {
@@ -343,50 +874,56 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
         Alert.alert("Sign in", isEdit ? "You need an account to edit this spot." : "You need an account to list a spot.");
         return false;
       }
-      if (!name.trim()) {
-        Alert.alert("Name required", "Give this study spot a name.");
-        return false;
-      }
-      if (!description.trim()) {
-        Alert.alert("Description", "Add a short description.");
-        return false;
-      }
-      if (!address.trim()) {
-        Alert.alert("Address", "Where is this place?");
-        return false;
-      }
-      if (!coordsValid) {
-        Alert.alert(
-          "Location coordinates",
-          "Place a pin (tap map, GPS, match address), or enter valid latitude and longitude.",
-        );
+      const next: Partial<Record<WizardField, string>> = {};
+      if (!name.trim()) next.name = "Required";
+      if (!description.trim()) next.description = "Required";
+      if (!address.trim()) next.address = "Required";
+      if (!coordsValid) next.location = "Drop a pin on the map";
+      setFieldErrors(next);
+      const first = FIELD_ORDER.find((key) => next[key]);
+      if (first) {
+        scrollToField(first);
         return false;
       }
       return true;
     }
     if (s === 4 && !isEdit) {
-      if (reviewContent.trim().length < 4) {
-        Alert.alert("Review", "Write a few words for your first review.");
-        return false;
-      }
-      if (images.length < 1) {
-        Alert.alert("Photos", "Add at least one photo for the listing (API requires 1–5).");
+      const next: Partial<Record<WizardField, string>> = {};
+      if (reviewContent.trim().length < 4) next.review = "Write a few words";
+      if (images.length < 1) next.photos = "Add at least one photo";
+      setFieldErrors(next);
+      const first = FIELD_ORDER.find((key) => next[key]);
+      if (first) {
+        scrollToField(first);
         return false;
       }
       return true;
     }
+    setFieldErrors({});
     return true;
   };
 
   const goNext = () => {
     if (!validateStep(step)) return;
+    setFieldErrors({});
     if (step < LAST_STEP_IDX) setStep((x) => x + 1);
     else void submit();
   };
 
   const goBackStep = () => {
+    if (loading) return;
+    setFieldErrors({});
     if (step > 0) setStep((x) => x - 1);
     else navigation.goBack();
+  };
+
+  const openSpotAfterWizard = (spot: StudySpot) => {
+    const names = navigation.getState()?.routeNames ?? [];
+    if (names.includes("SpotDetail")) {
+      navigation.replace("SpotDetail", { spot });
+      return;
+    }
+    navigation.replace("SpotViewer", { spot });
   };
 
   const submit = async () => {
@@ -436,7 +973,7 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
         return;
       }
 
-      await createSpotMultipart(
+      const created = await createSpotMultipart(
         {
           ...basePayload,
           rating,
@@ -449,9 +986,16 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
         })),
       );
       await refetchSpots();
-      Alert.alert("Spot listed", `"${name.trim()}" is live.`, [
-        { text: "OK", onPress: () => navigation.goBack() },
-      ]);
+      let listed = asStudySpot(created);
+      if (!listed && typeof (created as { id?: unknown }).id === "string") {
+        listed = await fetchSpotById((created as { id: string }).id).catch(() => null);
+      }
+      showToast("Spot listed");
+      if (listed) {
+        openSpotAfterWizard(listed);
+      } else {
+        navigation.goBack();
+      }
     } catch (e) {
       if (e instanceof SpotDuplicateError) {
         const existing = e.duplicate.spot;
@@ -466,11 +1010,16 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
             {
               text: "View spot",
               onPress: () => {
-                if (route.name === "CreateSpot") {
-                  navigation.replace("SpotDetail", { spot: existing });
-                } else {
-                  navigation.navigate("SpotDetail", { spot: existing });
+                const names = navigation.getState()?.routeNames ?? [];
+                if (names.includes("SpotDetail")) {
+                  if (route.name === "CreateSpot") {
+                    navigation.replace("SpotDetail", { spot: existing });
+                  } else {
+                    navigation.navigate("SpotDetail", { spot: existing });
+                  }
+                  return;
                 }
+                navigation.replace("SpotViewer", { spot: existing });
               },
             },
           ],
@@ -488,41 +1037,104 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
   if (step === 0) {
     stepBody = (
       <>
-        <Text style={styles.sectionHint}>
-          Give the address, place a pin from your location or by tapping the map, then tweak by dragging.
-        </Text>
-        <Input label="Spot name" value={name} onChangeText={setName} placeholder="e.g. Robarts Library, 9th floor" />
-        <Input
-          label="Description"
-          value={description}
-          onChangeText={setDescription}
-          multiline
-          textAlignVertical="top"
-          inputStyle={{ minHeight: 100 }}
-          placeholder="What makes this a great place to study?"
-          containerStyle={styles.fieldGap}
-        />
-        <Input label="Address" value={address} onChangeText={setAddress} placeholder="Street, city, country" containerStyle={styles.fieldGap} />
-        <View style={styles.geoRow}>
-          <Button label="Match address" variant="outline" size="sm" loading={geocoding} onPress={() => void locateFromAddress()} />
-          <Button
-            label="Use my location"
-            variant="secondary"
-            size="sm"
-            loading={geocoding}
-            onPress={() => void useCurrentLocation()}
-            icon={<MapPin size={16} color={Colors.dark} />}
+        <View onLayout={markFieldOffset("name")}>
+          <Input
+            label="Spot name"
+            value={name}
+            error={fieldErrors.name}
+            onChangeText={(value) => {
+              setName(value);
+              if (value.trim()) clearFieldError("name");
+            }}
+            placeholder="e.g. Robarts Library, 9th floor"
           />
         </View>
+        <View onLayout={markFieldOffset("description")} style={styles.fieldGap}>
+          <Input
+            label="Description"
+            value={description}
+            error={fieldErrors.description}
+            onChangeText={(value) => {
+              setDescription(value);
+              if (value.trim()) clearFieldError("description");
+            }}
+            multiline
+            textAlignVertical="top"
+            inputStyle={{ minHeight: 100 }}
+            placeholder="What makes this a great place to study?"
+          />
+        </View>
+        <View onLayout={markFieldOffset("address")} style={styles.fieldGap}>
+          <Input
+            label="Address"
+            value={address}
+            error={fieldErrors.address}
+            onChangeText={(value) => {
+              setAddress(value);
+              if (value.trim()) clearFieldError("address");
+            }}
+            onBlur={onAddressBlur}
+            placeholder="Street, city, country"
+            rightIcon={
+              <Pressable
+                onPress={() => void locateFromAddress()}
+                disabled={findingOnMap}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Find on map"
+              >
+                {findingOnMap ? (
+                  <ActivityIndicator size="small" color={Colors.primary} />
+                ) : (
+                  <Text style={styles.findOnMap}>Find on map</Text>
+                )}
+              </Pressable>
+            }
+          />
+        </View>
+        <Button
+          label="Use my location"
+          variant="secondary"
+          size="sm"
+          loading={locatingMe}
+          onPress={() => void useCurrentLocation()}
+          icon={<MapPin size={16} color={Colors.dark} />}
+          style={styles.locationBtn}
+        />
 
-        {Platform.OS === "web" ? (
-          <View style={styles.mapWebFallback}>
-            <Text style={styles.mapWebFallbackText}>
-              Interactive map pinning is available in the mobile app. Use latitude and longitude below to submit from web.
-            </Text>
-          </View>
-        ) : (
-          <View style={styles.mapWrap}>
+        <View onLayout={markFieldOffset("location")} style={styles.locationSection}>
+          {Platform.OS === "web" ? (
+            <View
+              style={[
+                styles.mapWebFallback,
+                fieldErrors.location ? styles.mapWrapError : null,
+              ]}
+            >
+              <View style={styles.labelErrorRow}>
+                <Text style={styles.labelErrorText}>Location</Text>
+                {fieldErrors.location ? (
+                  <Text style={styles.inlineError}>{fieldErrors.location}</Text>
+                ) : null}
+              </View>
+              <Text style={styles.mapWebFallbackText}>
+                Interactive map pinning is available in the mobile app. We'll
+                place the pin from the address you enter.
+              </Text>
+            </View>
+          ) : (
+            <>
+              <View style={styles.labelErrorRow}>
+                <Text style={styles.labelErrorText}>Location</Text>
+                {fieldErrors.location ? (
+                  <Text style={styles.inlineError}>{fieldErrors.location}</Text>
+                ) : null}
+              </View>
+              <View
+                style={[
+                  styles.mapWrap,
+                  fieldErrors.location ? styles.mapWrapError : null,
+                ]}
+              >
             <MapView
               ref={mapRef}
               style={StyleSheet.absoluteFill}
@@ -544,7 +1156,10 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
                   anchor={{ x: 0.5, y: 1 }}
                   onDragEnd={onPinDragEnd}
                 >
-                  <View style={styles.pinCircle} accessibilityLabel="Spot location pin">
+                  <View
+                    style={styles.pinCircle}
+                    accessibilityLabel="Spot location pin"
+                  >
                     <MapPin color="#fff" size={20} strokeWidth={2.4} />
                   </View>
                 </Marker>
@@ -552,90 +1167,128 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
             </MapView>
             <View style={styles.mapHintOverlay} pointerEvents="none">
               <Text style={styles.mapHintText}>
-                {coordsValid ? "Tap elsewhere or drag the pin to fine‑tune." : "Tap the map to drop a pin, or use GPS / match address."}
+                {findingOnMap || locatingMe
+                  ? "Finding that address…"
+                  : coordsValid
+                    ? "Tap elsewhere or drag the pin to fine‑tune."
+                    : "Tap the map, find the address, or use your location."}
               </Text>
             </View>
-          </View>
-        )}
-
-        <Text style={styles.coordsCaption}>Latitude & longitude</Text>
-        <View style={styles.coordsInputs}>
-          <View style={{ flex: 1 }}>
-            <Input
-              label="Latitude"
-              value={latStr}
-              onChangeText={setLatStr}
-              placeholder="43.6598"
-              keyboardType="numbers-and-punctuation"
-              onBlur={recenterFromInputsIfValid}
-            />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Input
-              label="Longitude"
-              value={lngStr}
-              onChangeText={setLngStr}
-              placeholder="-79.3967"
-              keyboardType="numbers-and-punctuation"
-              onBlur={recenterFromInputsIfValid}
-            />
-          </View>
+              </View>
+            </>
+          )}
         </View>
-        {coordsValid ? (
-          <Text style={styles.coordsOk}>Location looks valid.</Text>
-        ) : (
-          <Text style={styles.coordsBad}>Enter valid coordinates (or geocode / GPS).</Text>
-        )}
       </>
     );
   } else if (step === 1) {
     stepBody = (
       <>
-        <Text style={styles.sectionHint}>Noise, lighting, and seating — the API field is spelled `noice_level`.</Text>
-        <ChipRow label="Noise level" options={NOICE_OPTIONS} value={noiceLevel} onChange={setNoiceLevel} />
-        <ChipRow label="Lighting" options={LIGHTING_OPTIONS} value={lighting} onChange={setLighting} />
-        <ChipRow label="Tables / seating" options={TABLES_OPTIONS} value={tables} onChange={setTables} />
+        <VibePicker
+          label="Noise level"
+          choices={NOISE_CHOICES}
+          value={noiceLevel}
+          onChange={setNoiceLevel}
+        />
+        <VibePicker
+          label="Lighting"
+          choices={LIGHTING_CHOICES}
+          value={lighting}
+          onChange={setLighting}
+        />
+        <VibePicker
+          label="Tables & seating"
+          choices={TABLES_CHOICES}
+          value={tables}
+          onChange={setTables}
+        />
       </>
     );
   } else if (step === 2) {
+    const amenityCount =
+      Number(wifi) +
+      Number(outlets) +
+      Number(foodDrink) +
+      Number(whiteboards) +
+      Number(groupWork);
     stepBody = (
       <>
-        <Text style={styles.sectionHint}>What’s available while you study?</Text>
-        <SwitchRow label="Food & drinks allowed" value={foodDrink} onValueChange={setFoodDrink} />
-        <SwitchRow label="Wi‑Fi available" value={wifi} onValueChange={setWifi} />
-        <SwitchRow label="Power outlets" value={outlets} onValueChange={setOutlets} />
-        <SwitchRow label="Whiteboards" value={whiteboards} onValueChange={setWhiteboards} />
-        <SwitchRow label="Group work friendly" value={groupWork} onValueChange={setGroupWork} />
+        <View style={styles.amenityRow}>
+          <AmenityCard
+            title="Wi-Fi"
+            subtitle="Free and reliable"
+            Icon={Wifi}
+            selected={wifi}
+            onToggle={() => setWifi((v) => !v)}
+          />
+          <AmenityCard
+            title="Outlets"
+            subtitle="Power at the tables"
+            Icon={Plug}
+            selected={outlets}
+            onToggle={() => setOutlets((v) => !v)}
+          />
+        </View>
+        <View style={styles.amenityRow}>
+          <AmenityCard
+            title="Food & drink"
+            subtitle="Allowed inside"
+            Icon={Coffee}
+            selected={foodDrink}
+            onToggle={() => setFoodDrink((v) => !v)}
+          />
+          <AmenityCard
+            title="Whiteboards"
+            subtitle="For working things out"
+            Icon={Presentation}
+            selected={whiteboards}
+            onToggle={() => setWhiteboards((v) => !v)}
+          />
+        </View>
+        <AmenityCard
+          title="Group work friendly"
+          wide
+          subtitle="Talking won't get you shushed"
+          Icon={Users}
+          selected={groupWork}
+          onToggle={() => setGroupWork((v) => !v)}
+        />
+        <Text style={styles.amenityCount}>
+          {amenityCount} selected · leave anything you're unsure about off.
+        </Text>
       </>
     );
   } else if (step === 3) {
     stepBody = (
       <>
-        <Text style={styles.sectionHint}>
-          {is24Hours
-            ? "This spot will show as always open."
-            : "Use simple times like 08:00 — 22:00"}
-        </Text>
         <SwitchRow
           label="Open 24 hours"
           value={is24Hours}
-          onValueChange={setIs24Hours}
+          onValueChange={(next) => {
+            setIs24Hours(next);
+            if (next) setHoursPicker(null);
+          }}
         />
         {!is24Hours ? (
           <>
-            <Input
+            <TimeSelectRow
               label="Opens"
               value={openTime}
-              onChangeText={setOpenTime}
-              placeholder="08:00"
-              containerStyle={styles.fieldGap}
+              fallbackHour={8}
+              open={Platform.OS === "ios" || hoursPicker === "open"}
+              onToggle={() =>
+                setHoursPicker((current) => (current === "open" ? null : "open"))
+              }
+              onChange={setOpenTime}
             />
-            <Input
+            <TimeSelectRow
               label="Closes"
               value={closeTime}
-              onChangeText={setCloseTime}
-              placeholder="22:00"
-              containerStyle={styles.fieldGap}
+              fallbackHour={22}
+              open={Platform.OS === "ios" || hoursPicker === "close"}
+              onToggle={() =>
+                setHoursPicker((current) => (current === "close" ? null : "close"))
+              }
+              onChange={setCloseTime}
             />
           </>
         ) : null}
@@ -644,9 +1297,6 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
   } else if (step === 4 && !isEdit) {
     stepBody = (
       <>
-        <Text style={styles.sectionHint}>
-          Listings require 1–5 photos and your opening review — same multipart request as `createSpot` on the server.
-        </Text>
         <Text style={styles.fieldLabel}>Your rating</Text>
         <View style={styles.starsRow}>
           {[1, 2, 3, 4, 5].map((n) => (
@@ -655,21 +1305,39 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
             </Pressable>
           ))}
         </View>
-        <Input
-          label="First review"
-          value={reviewContent}
-          onChangeText={setReviewContent}
-          multiline
-          textAlignVertical="top"
-          inputStyle={{ minHeight: 100 }}
-          placeholder="Share what it's like to study here…"
-          containerStyle={styles.fieldGap}
-        />
-        <Text style={styles.fieldLabel}>Photos ({images.length}/5)</Text>
-        <Pressable style={styles.addPhotoCard} onPress={() => void pickPhotos()}>
-          <ImagePlus size={28} color={Colors.primary} strokeWidth={2} />
-          <Text style={styles.addPhotoText}>Add photos</Text>
-        </Pressable>
+        <View onLayout={markFieldOffset("review")}>
+          <Input
+            label="First review"
+            value={reviewContent}
+            error={fieldErrors.review}
+            onChangeText={(value) => {
+              setReviewContent(value);
+              if (value.trim().length >= 4) clearFieldError("review");
+            }}
+            multiline
+            textAlignVertical="top"
+            inputStyle={{ minHeight: 100 }}
+            placeholder="Share what it's like to study here…"
+            containerStyle={styles.fieldGap}
+          />
+        </View>
+        <View onLayout={markFieldOffset("photos")} style={styles.fieldGap}>
+          <View style={styles.labelErrorRow}>
+            <Text style={styles.labelErrorText}>Photos ({images.length}/5)</Text>
+            {fieldErrors.photos ? (
+              <Text style={styles.inlineError}>{fieldErrors.photos}</Text>
+            ) : null}
+          </View>
+          <Pressable
+            style={[
+              styles.addPhotoCard,
+              fieldErrors.photos ? styles.addPhotoCardError : null,
+            ]}
+            onPress={() => void pickPhotos()}
+          >
+            <ImagePlus size={28} color={Colors.primary} strokeWidth={2} />
+            <Text style={styles.addPhotoText}>Add photos</Text>
+          </Pressable>
         {images.length > 0 ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.thumbScroll}>
             {images.map((a, i) => (
@@ -682,68 +1350,83 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
             ))}
           </ScrollView>
         ) : null}
+        </View>
       </>
     );
   }
 
+  const stepKey = steps[step] ?? "Place";
+  const copy = STEP_COPY[stepKey];
+  const progress = (step + 1) / steps.length;
+
   return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
-      >
-        <View style={styles.topBar}>
-          <Pressable onPress={goBackStep} style={styles.iconCircle} hitSlop={10}>
-            <ArrowLeft size={22} color={Colors.dark} strokeWidth={2.2} />
+    <KeyboardAvoidingView
+      style={styles.screen}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <View style={styles.headerRow}>
+          <Pressable
+            onPress={goBackStep}
+            disabled={loading}
+            style={styles.backCircle}
+            accessibilityRole="button"
+            accessibilityLabel={step === 0 ? "Cancel" : "Back"}
+          >
+            <ArrowLeft size={20} color={Colors.dark} strokeWidth={2.4} />
           </Pressable>
-          <View style={styles.topBarCenter}>
-            <Text style={styles.screenTitle}>{isEdit ? "Edit spot" : "List a spot"}</Text>
-            <Text style={styles.stepLine}>
-              Step {step + 1} of {steps.length} · {steps[step] ?? ""}
-            </Text>
-          </View>
-          <View style={styles.iconCirclePlaceholder} />
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            {isEdit ? "Edit spot" : "List a spot"}
+          </Text>
+          <View style={styles.headerSpacer} />
         </View>
+        <SmoothProgressBar progress={progress} />
+      </View>
 
-        <View style={styles.progressRow}>
-          {steps.map((_, i) => (
-            <View key={String(i)} style={[styles.progressBar, i <= step ? styles.progressActive : styles.progressInactive]} />
-          ))}
-        </View>
-
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-          nestedScrollEnabled
-          showsVerticalScrollIndicator={false}
-        >
+      <ScrollView
+        ref={scrollRef}
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
+        showsVerticalScrollIndicator={false}
+      >
+        <FadeInUp replayKey={step}>
+          <Text style={styles.title}>{copy.title}</Text>
+          <Text style={styles.subtitle}>{copy.subtitle}</Text>
           {stepBody}
+        </FadeInUp>
+      </ScrollView>
 
-          <View style={styles.buttonRow}>
-            <Button
-              label={step === 0 ? "Cancel" : "Back"}
-              variant="accent"
-              onPress={goBackStep}
-              disabled={loading}
-              style={styles.backButton}
-            />
-            <Button
-              label={
-                step === LAST_STEP_IDX ? (isEdit ? "Save changes" : "Publish spot") : "Next"
-              }
-              variant="default"
-              loading={loading}
-              icon={<ArrowRightIcon size={16} strokeWidth={3} color={Colors.light} />}
-              iconPosition="right"
-              onPress={goNext}
-              style={styles.nextButton}
-            />
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </View>
+      <View
+        style={[styles.footer, { paddingBottom: Math.max(insets.bottom - 16, 16) }]}
+      >
+        <View style={styles.footerBack}>
+          <Button
+            label={step === 0 ? "Cancel" : "Back"}
+            variant="outline"
+            fullWidth
+            onPress={goBackStep}
+          />
+        </View>
+        <View style={styles.footerContinue}>
+          <Button
+            label={
+              step === LAST_STEP_IDX
+                ? isEdit
+                  ? "Save changes"
+                  : "Publish spot"
+                : "Continue"
+            }
+            variant="default"
+            fullWidth
+            loading={loading}
+            disabled={loading}
+            onPress={goNext}
+          />
+        </View>
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -752,53 +1435,55 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.light,
   },
-  flex: { flex: 1 },
-  topBar: {
+  header: {
+    paddingHorizontal: 22,
+    paddingBottom: 10,
+    gap: 14,
+  },
+  headerRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 16,
-    paddingBottom: 8,
+    justifyContent: "space-between",
   },
-  iconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#EBEBEB",
+  backCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#E8E8E8",
     alignItems: "center",
     justifyContent: "center",
   },
-  iconCirclePlaceholder: { width: 40, height: 40 },
-  topBarCenter: { flex: 1, alignItems: "center" },
-  screenTitle: {
-    fontFamily: Fonts.gabarito.bold,
+  headerTitle: {
+    flex: 1,
+    textAlign: "center",
+    fontFamily: Fonts.gabarito.semiBold,
     fontSize: 18,
     color: Colors.dark,
+    marginHorizontal: 12,
   },
-  stepLine: {
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 13,
-    color: "#777",
-    marginTop: 2,
+  headerSpacer: {
+    width: 44,
+    height: 44,
   },
-  progressRow: {
-    flexDirection: "row",
-    gap: 6,
-    paddingHorizontal: 16,
-    marginBottom: 12,
-  },
-  progressBar: { flex: 1, height: 4, borderRadius: 2 },
-  progressActive: { backgroundColor: Colors.accent },
-  progressInactive: { backgroundColor: "#ddd" },
   scroll: { flex: 1 },
   scrollContent: {
     paddingHorizontal: 28,
-    paddingBottom: 40,
+    paddingTop: 18,
+    paddingBottom: 24,
   },
-  sectionHint: {
+  title: {
+    fontSize: 32,
+    fontFamily: Fonts.gabarito.bold,
+    color: Colors.dark,
+    marginBottom: 6,
+  },
+  subtitle: {
     fontFamily: Fonts.instrument.regular,
-    fontSize: 15,
+    fontSize: 16,
     color: "#666",
-    marginBottom: 16,
+    marginBottom: 24,
     lineHeight: 22,
   },
   fieldGap: { marginTop: 16 },
@@ -809,34 +1494,168 @@ const styles = StyleSheet.create({
     color: "#666",
     marginBottom: 8,
   },
-  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1.5,
-    borderColor: "#ddd",
-    backgroundColor: "#fff",
+  vibeBlock: {
+    marginBottom: 22,
   },
-  chipActive: {
-    borderColor: Colors.accent,
-    backgroundColor: Colors.accent + "18",
+  vibeLabel: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 11,
+    letterSpacing: 1.2,
+    textTransform: "uppercase",
+    color: "#8A8A8A",
+    marginBottom: 10,
   },
-  chipText: {
+  vibeTrack: {
+    position: "relative",
+    backgroundColor: "#EFEFEF",
+    borderRadius: 18,
+    paddingVertical: 4,
+    overflow: "hidden",
+  },
+  vibeThumb: {
+    position: "absolute",
+    top: 4,
+    bottom: 4,
+    borderRadius: 14,
+    backgroundColor: Colors.primary,
+  },
+  vibeRow: {
+    flexDirection: "row",
+    zIndex: 1,
+  },
+  vibeOption: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 2,
+  },
+  vibeTileText: {
     fontFamily: Fonts.gabarito.medium,
-    fontSize: 14,
-    color: "#555",
+    fontSize: 11,
+    color: "#9A9A9A",
   },
-  chipTextActive: { color: Colors.dark },
-  geoRow: { flexDirection: "row", gap: 10, marginTop: 12, flexWrap: "wrap" },
+  vibeTileTextActive: {
+    color: "#fff",
+    fontFamily: Fonts.gabarito.semiBold,
+  },
+  vibeHint: {
+    marginTop: 10,
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 13,
+    lineHeight: 18,
+    color: "#8A8A8A",
+  },
+  amenityRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 10,
+  },
+  amenityCardWrap: {
+    flex: 1,
+  },
+  amenityCard: {
+    position: "relative",
+    flex: 1,
+    backgroundColor: "#EFEFEF",
+    borderRadius: 18,
+    padding: 16,
+    paddingRight: 28,
+    borderWidth: 1.5,
+    borderColor: "transparent",
+    gap: 8,
+  },
+  amenityCardWide: {
+    width: "100%",
+    flexGrow: 0,
+    marginBottom: 10,
+  },
+  amenityCardOn: {
+    backgroundColor: "#fff",
+    borderColor: Colors.primary,
+  },
+  amenityCardOff: {
+    backgroundColor: "#EFEFEF",
+  },
+  amenityCheck: {
+    position: "absolute",
+    top: 12,
+    right: 12,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: Colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  amenityTitle: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 16,
+    color: Colors.dark,
+  },
+  amenitySubtitle: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 13,
+    lineHeight: 18,
+    color: "#8A8A8A",
+  },
+  amenityMuted: {
+    color: "#9A9A9A",
+  },
+  amenityCount: {
+    marginTop: 6,
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 13,
+    color: "#8A8A8A",
+  },
+  findOnMap: {
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 13,
+    color: Colors.primary,
+  },
+  locationBtn: {
+    marginTop: 12,
+    alignSelf: "stretch",
+  },
+  locationSection: {
+    marginTop: 16,
+  },
+  labelErrorRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 8,
+  },
+  labelErrorText: {
+    flex: 1,
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 13,
+    color: "#666",
+  },
+  inlineError: {
+    flexShrink: 1,
+    maxWidth: "62%",
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 12,
+    lineHeight: 16,
+    color: "#DC2626",
+    textAlign: "right",
+  },
   mapWrap: {
-    marginTop: 14,
     height: MAP_HEIGHT,
     borderRadius: 14,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: "#E0E0E0",
     backgroundColor: "#EAEAEA",
+  },
+  mapWrapError: {
+    borderColor: "#DC2626",
+    borderWidth: 1.5,
   },
   mapHintOverlay: {
     position: "absolute",
@@ -884,25 +1703,6 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     textAlign: "center",
   },
-  coordsCaption: {
-    marginTop: 16,
-    fontFamily: Fonts.gabarito.medium,
-    fontSize: 13,
-    color: "#666",
-  },
-  coordsInputs: { flexDirection: "row", gap: 10, marginTop: 8 },
-  coordsOk: {
-    marginTop: 8,
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 13,
-    color: Colors.accent,
-  },
-  coordsBad: {
-    marginTop: 8,
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 13,
-    color: "#DC2626",
-  },
   switchRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -922,6 +1722,43 @@ const styles = StyleSheet.create({
     color: Colors.dark,
     marginRight: 12,
   },
+  timeBlock: {
+    marginTop: 12,
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    overflow: "hidden",
+  },
+  timeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  timeRowOpen: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#eee",
+  },
+  timeLabel: {
+    flex: 1,
+    fontFamily: Fonts.gabarito.medium,
+    fontSize: 15,
+    color: Colors.dark,
+  },
+  timeValue: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 16,
+    color: Colors.dark,
+  },
+  timeValueOpen: {
+    color: Colors.primary,
+  },
+  timePicker: {
+    height: 196,
+    marginTop: -8,
+  },
   starsRow: {
     flexDirection: "row",
     gap: 10,
@@ -939,6 +1776,9 @@ const styles = StyleSheet.create({
     padding: 18,
     marginTop: 8,
     marginBottom: 12,
+  },
+  addPhotoCardError: {
+    borderColor: "#DC2626",
   },
   addPhotoText: {
     fontFamily: Fonts.gabarito.medium,
@@ -973,12 +1813,18 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.gabarito.bold,
     marginTop: -2,
   },
-  buttonRow: {
+  footer: {
     flexDirection: "row",
-    gap: 12,
-    marginTop: 28,
-    marginBottom: 32,
+    alignItems: "center",
+    paddingHorizontal: 28,
+    paddingTop: 16,
+    gap: 10,
+    backgroundColor: Colors.light,
   },
-  backButton: { flex: 1 },
-  nextButton: { flex: 2 },
+  footerBack: {
+    flex: 1,
+  },
+  footerContinue: {
+    flex: 2,
+  },
 });

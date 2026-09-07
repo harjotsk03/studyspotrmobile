@@ -291,6 +291,7 @@ export default function CommunityEventsScreen({ route }: Props) {
     communityIsPublic,
     userCommunityRole,
     openEventId,
+    openEventNonce,
   } = route.params;
   const navigation =
     useNavigation<NativeStackNavigationProp<CommunityStackParamList>>();
@@ -392,30 +393,14 @@ export default function CommunityEventsScreen({ route }: Props) {
     }, [validateCommunityAccess, fetchEvents]),
   );
 
-  // If we arrived here from a shared-event preview card in chat, open the
-  // matching event drawer automatically. We only do this once per
-  // `openEventId` so repeatedly tapping list items doesn't re-trigger it.
-  const consumedOpenEventIdRef = useRef<string | null>(null);
+  // Open the drawer for `openEventId`. A new `openEventNonce` (after edit)
+  // re-fetches so the list and drawer show the latest fields.
+  const consumedOpenKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!openEventId || !token) return;
-    if (consumedOpenEventIdRef.current === openEventId) return;
+    const consumeKey = `${openEventId}:${openEventNonce ?? 0}`;
+    if (consumedOpenKeyRef.current === consumeKey) return;
 
-    // Fast path: the event is already in the loaded list.
-    const local = events.find((e) => e.id === openEventId);
-    if (local) {
-      consumedOpenEventIdRef.current = openEventId;
-      setSelectedEvent(local);
-      setDrawerOpen(true);
-      return;
-    }
-
-    // Otherwise fetch the single event directly so we can open the drawer
-    // even when it lives outside the current filter (e.g. shared past
-    // event while user is on "Upcoming").
-    //
-    // We try the community-scoped endpoint first when we know the community,
-    // then fall back to the flat `/events/:id` endpoint (which also covers
-    // standalone events shared without a community context).
     let cancelled = false;
     (async () => {
       const urls: string[] = [];
@@ -443,7 +428,14 @@ export default function CommunityEventsScreen({ route }: Props) {
             (json as Record<string, unknown>);
           const ev = raw as CommunityEvent | null;
           if (!ev || typeof ev !== "object" || !ev.id) continue;
-          consumedOpenEventIdRef.current = openEventId;
+          consumedOpenKeyRef.current = consumeKey;
+          setEvents((prev) => {
+            const idx = prev.findIndex((item) => item.id === ev.id);
+            if (idx === -1) return prev;
+            const next = [...prev];
+            next[idx] = { ...next[idx], ...ev };
+            return next;
+          });
           setSelectedEvent(ev);
           setDrawerOpen(true);
           return;
@@ -451,14 +443,19 @@ export default function CommunityEventsScreen({ route }: Props) {
           // Try the next URL.
         }
       }
-      // Silent — leaves the user on the events list, which is still a
-      // valid landing surface.
+
+      const local = events.find((e) => e.id === openEventId);
+      if (local && !cancelled) {
+        consumedOpenKeyRef.current = consumeKey;
+        setSelectedEvent(local);
+        setDrawerOpen(true);
+      }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [openEventId, token, communityId, events]);
+  }, [openEventId, openEventNonce, token, communityId, events]);
 
   const handleRefresh = useCallback(async () => {
     if (await validateCommunityAccess({ alertOnDenied: true })) {

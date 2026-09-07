@@ -11,7 +11,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { ArrowLeft } from "lucide-react-native";
+import { ArrowLeft, MessageCircle } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
@@ -281,7 +281,10 @@ export default function MessagesScreen() {
           data={rows}
           keyExtractor={(item) => item.id}
           renderItem={renderRow}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[
+            styles.listContent,
+            rows.length === 0 && styles.listContentEmpty,
+          ]}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -306,9 +309,16 @@ export default function MessagesScreen() {
                 </TouchableOpacity>
               </View>
             ) : (
-              <View style={styles.emptyCard}>
-                <Text style={styles.emptyTitle}>No conversations yet</Text>
-                <Text style={styles.emptyBody}>
+              <View style={styles.emptyCenter}>
+                <MessageCircle
+                  size={44}
+                  color="#C5C9CE"
+                  strokeWidth={1.6}
+                />
+                <Text style={styles.emptyCenterTitle}>
+                  No conversations yet
+                </Text>
+                <Text style={styles.emptyCenterBody}>
                   Message someone from their profile to start a chat.
                 </Text>
               </View>
@@ -357,6 +367,34 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 28,
     gap: 10,
+  },
+  listContentEmpty: {
+    flexGrow: 1,
+    paddingBottom: 0,
+    gap: 0,
+  },
+  emptyCenter: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 36,
+    paddingBottom: 72,
+  },
+  emptyCenterTitle: {
+    marginTop: 14,
+    color: Colors.dark,
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 18,
+    textAlign: "center",
+  },
+  emptyCenterBody: {
+    marginTop: 6,
+    maxWidth: 220,
+    color: "#8A8F96",
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: "center",
   },
   row: {
     flexDirection: "row",

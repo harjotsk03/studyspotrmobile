@@ -19,6 +19,7 @@ import {
   Check,
   Flag,
   MapPin,
+  Pencil,
   Share2,
   Trash2,
 } from "lucide-react-native";
@@ -31,6 +32,8 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { API_BASE_URL } from "../constants/Api";
+import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import type { RootStackParamList } from "../types/navigation";
 import ShareToFriendsSheet from "../components/ShareToFriendsSheet";
@@ -62,6 +65,9 @@ export interface CommunityEvent {
   attendee_count?: number;
   attendees?: Attendee[];
   user_rsvp_status?: RsvpStatus;
+  created_by?: string;
+  created_by_id?: string;
+  community_id?: string;
 }
 
 // ─── Shared Helper ────────────────────────────────────────────────────────────
@@ -325,8 +331,11 @@ export default function EventDetailDrawer({
   onEventDeleted,
 }: EventDetailDrawerProps) {
   const insets = useSafeAreaInsets();
+  const { profile } = useAuth();
+  const { showToast } = useToast();
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const currentUserId = profile?.userProfile?.id;
   const translateY = useRef(new Animated.Value(800)).current;
   const backdropOpacity = useRef(new Animated.Value(0)).current;
   const [modalVisible, setModalVisible] = useState(false);
@@ -771,13 +780,32 @@ export default function EventDetailDrawer({
     }
   }
 
+  const isCreator = Boolean(
+    currentUserId &&
+      detailEvent &&
+      (detailEvent.created_by === currentUserId ||
+        detailEvent.created_by_id === currentUserId),
+  );
+  const isCommunityAdmin =
+    userCommunityRole === "admin" || userCommunityRole === "owner";
+  const canManageEvent = canDeleteEvent || isCreator || isCommunityAdmin;
+
+  function handleEditEvent() {
+    if (!detailEvent) return;
+    onClose();
+    navigation.navigate("CreateEvent", {
+      communityId: communityId || undefined,
+      event: detailEvent,
+    });
+  }
+
   async function handleDeleteEvent() {
-    if (!token || !detailEvent || !canDeleteEvent) return;
+    if (!token || !detailEvent || !canManageEvent) return;
 
     setDeleteLoading(true);
     try {
       const res = await fetch(
-        `${API_BASE_URL}/api/v1/communities/${communityId}/events/${detailEvent.id}`,
+        `${API_BASE_URL}/api/v1/events/${detailEvent.id}`,
         {
           method: "DELETE",
           headers: {
@@ -795,6 +823,7 @@ export default function EventDetailDrawer({
       }
 
       const deletedEventId = detailEvent.id;
+      showToast("Event deleted");
       closeDeleteConfirm(() => {
         animateOut(() => {
           onEventDeleted?.(deletedEventId);
@@ -1128,7 +1157,7 @@ export default function EventDetailDrawer({
               onPress={handleShare}
             />
           )}
-          {!canDeleteEvent && token && (
+          {!canManageEvent && token && (
             <Button
               icon={<Flag size={20} color="#DC3545" strokeWidth={2} />}
               variant="outline"
@@ -1136,13 +1165,21 @@ export default function EventDetailDrawer({
               onPress={() => setShowEventReportModal(true)}
             />
           )}
-          {canDeleteEvent && (
-            <Button
-              icon={<Trash2 size={20} color="#fff" strokeWidth={2} />}
-              variant="destructive"
-              size="icon"
-              onPress={openDeleteConfirm}
-            />
+          {canManageEvent && (
+            <>
+              <Button
+                icon={<Pencil size={20} color={Colors.dark} strokeWidth={2} />}
+                variant="outline"
+                size="icon"
+                onPress={handleEditEvent}
+              />
+              <Button
+                icon={<Trash2 size={20} color="#fff" strokeWidth={2} />}
+                variant="destructive"
+                size="icon"
+                onPress={openDeleteConfirm}
+              />
+            </>
           )}
         </View>
       </Animated.View>

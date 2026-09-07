@@ -21,8 +21,10 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import {
   ArrowLeft,
+  ChevronRight,
   EllipsisVertical,
   Flag,
+  LayoutGrid,
   Lock,
   MapPin,
   ShieldBan,
@@ -44,11 +46,7 @@ import { useSpots } from "../context/SpotsContext";
 import { useAuth } from "../context/AuthContext";
 import type { RootStackParamList } from "../types/navigation";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
-import {
-  fetchFeedPostsByUser,
-  fetchFeedLikedPostsByUser,
-  type FeedPost,
-} from "../utils/feedApi";
+import { fetchFeedPostsByUser, type FeedPost } from "../utils/feedApi";
 import { getSpotTitle } from "../utils/getSpotTitle";
 import { openSpotViewerFromRoot } from "../utils/openSpotFromAnyTab";
 import {
@@ -60,6 +58,10 @@ import {
   type SpotReview,
 } from "../utils/spotsApi";
 import { createDirectConversation } from "../utils/chatApi";
+import ActionOptionsSheet, {
+  type ActionOption,
+  type AnchorRect,
+} from "../components/ActionOptionsSheet";
 import Button from "../components/Button";
 import ReportConfirmModal from "../components/ReportConfirmModal";
 
@@ -130,7 +132,6 @@ function getResponseMessage(data: unknown, fallback: string) {
 
 function tabEmptyLabel(mainTab: PublicProfileMainTabKey): string {
   if (mainTab === "posts") return "No posts yet.";
-  if (mainTab === "liked") return "No liked posts yet.";
   if (mainTab === "spots") return "No spots listed yet.";
   return "No reviews yet.";
 }
@@ -235,6 +236,10 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
   const [avatarLightbox, setAvatarLightbox] = useState(false);
 
   const [showProfileOptions, setShowProfileOptions] = useState(false);
+  const [profileMenuAnchor, setProfileMenuAnchor] = useState<AnchorRect | null>(
+    null,
+  );
+  const profileMenuWrapRef = useRef<View>(null);
   const [showBlockConfirm, setShowBlockConfirm] = useState(false);
   const [blockLoading, setBlockLoading] = useState(false);
   const [isBlocked, setIsBlocked] = useState(false);
@@ -247,11 +252,6 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
   const [publishedLoading, setPublishedLoading] = useState(false);
   const [publishedError, setPublishedError] = useState<string | null>(null);
 
-  const [likedPosts, setLikedPosts] = useState<FeedPost[]>([]);
-  const [likedCursor, setLikedCursor] = useState<string | null>(null);
-  const [likedLoading, setLikedLoading] = useState(false);
-  const [likedError, setLikedError] = useState<string | null>(null);
-
   const [reviewsList, setReviewsList] = useState<SpotReview[]>([]);
   const [reviewsLoading, setReviewsLoading] = useState(false);
   const [reviewsError, setReviewsError] = useState<string | null>(null);
@@ -260,7 +260,7 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
 
   const loadingMoreRef = useRef(false);
 
-  const unlocked = relationship === "friends" || relationship === "self";
+  const canSeePosts = relationship === "friends" || relationship === "self";
 
   const avatarUri =
     typeof user?.profile_photo === "string" && user.profile_photo.trim()
@@ -420,6 +420,46 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
     }
   }, [token, userId]);
 
+  const openProfileMenu = () => {
+    const node = profileMenuWrapRef.current;
+    if (!node) {
+      setProfileMenuAnchor(null);
+      setShowProfileOptions(true);
+      return;
+    }
+    node.measureInWindow((x, y, width, height) => {
+      setProfileMenuAnchor({ x, y, width, height });
+      setShowProfileOptions(true);
+    });
+  };
+
+  const profileMenuOptions = useMemo<ActionOption[]>(
+    () => [
+      isBlocked
+        ? {
+            key: "unblock",
+            icon: ShieldCheck,
+            label: "Unblock",
+            onPress: () => void handleUnblock(),
+          }
+        : {
+            key: "block",
+            icon: ShieldBan,
+            label: "Block",
+            destructive: true,
+            onPress: () => setShowBlockConfirm(true),
+          },
+      {
+        key: "report",
+        icon: Flag,
+        label: "Report",
+        destructive: true,
+        onPress: () => setShowReportModal(true),
+      },
+    ],
+    [isBlocked, handleUnblock],
+  );
+
   async function sendProfileAction(nextRelationship: PublicRelationship) {
     if (!token) return;
 
@@ -517,61 +557,38 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
   }
 
   const loadMorePosts = useCallback(async () => {
-    if (!unlocked || !token || loadingMoreRef.current) return;
-
-    if (mainTab === "posts") {
-      if (!publishedCursor) return;
-      loadingMoreRef.current = true;
-      setPostsTailLoading(true);
-      try {
-        const page = await fetchFeedPostsByUser(token, userId, {
-          limit: 20,
-          cursor: publishedCursor,
-        });
-        setPublishedPosts((prev) => [
-          ...prev,
-          ...page.posts.map((p) => enrichPost(p)!).filter(Boolean),
-        ]);
-        setPublishedCursor(page.next_cursor);
-      } catch {
-        //
-      } finally {
-        loadingMoreRef.current = false;
-        setPostsTailLoading(false);
-      }
-    } else if (mainTab === "liked") {
-      if (!likedCursor) return;
-      loadingMoreRef.current = true;
-      setPostsTailLoading(true);
-      try {
-        const page = await fetchFeedLikedPostsByUser(token, userId, {
-          limit: 20,
-          cursor: likedCursor,
-        });
-        setLikedPosts((prev) => [
-          ...prev,
-          ...page.posts.map((p) => enrichPost(p)!).filter(Boolean),
-        ]);
-        setLikedCursor(page.next_cursor);
-      } catch {
-        //
-      } finally {
-        loadingMoreRef.current = false;
-        setPostsTailLoading(false);
-      }
+    if (
+      !canSeePosts ||
+      !token ||
+      loadingMoreRef.current ||
+      mainTab !== "posts" ||
+      !publishedCursor
+    ) {
+      return;
     }
-  }, [
-    unlocked,
-    token,
-    userId,
-    mainTab,
-    publishedCursor,
-    likedCursor,
-    enrichPost,
-  ]);
+
+    loadingMoreRef.current = true;
+    setPostsTailLoading(true);
+    try {
+      const page = await fetchFeedPostsByUser(token, userId, {
+        limit: 20,
+        cursor: publishedCursor,
+      });
+      setPublishedPosts((prev) => [
+        ...prev,
+        ...page.posts.map((p) => enrichPost(p)!).filter(Boolean),
+      ]);
+      setPublishedCursor(page.next_cursor);
+    } catch {
+      //
+    } finally {
+      loadingMoreRef.current = false;
+      setPostsTailLoading(false);
+    }
+  }, [canSeePosts, token, userId, mainTab, publishedCursor, enrichPost]);
 
   useEffect(() => {
-    if (mainTab !== "posts" || !unlocked || !token || !user?.id || loading)
+    if (mainTab !== "posts" || !canSeePosts || !token || !user?.id || loading)
       return;
 
     const authToken = token;
@@ -605,45 +622,10 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [mainTab, unlocked, token, userId, user?.id, loading, enrichPost]);
+  }, [mainTab, canSeePosts, token, userId, user?.id, loading, enrichPost]);
 
   useEffect(() => {
-    if (mainTab !== "liked" || !unlocked || !token || !user?.id || loading)
-      return;
-
-    const authToken = token;
-
-    let cancelled = false;
-
-    async function load() {
-      setLikedLoading(true);
-      setLikedError(null);
-      try {
-        const page = await fetchFeedLikedPostsByUser(authToken, userId, {
-          limit: 20,
-        });
-        if (cancelled) return;
-        setLikedPosts(page.posts.map((p) => enrichPost(p)!).filter(Boolean));
-        setLikedCursor(page.next_cursor);
-      } catch (e) {
-        if (!cancelled)
-          setLikedError(
-            e instanceof Error ? e.message : "Could not load liked posts.",
-          );
-      } finally {
-        if (!cancelled) setLikedLoading(false);
-      }
-    }
-
-    void load();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [mainTab, unlocked, token, userId, user?.id, loading, enrichPost]);
-
-  useEffect(() => {
-    if (!unlocked || !userId || mainTab !== "reviews" || loading) return;
+    if (!userId || mainTab !== "reviews" || loading) return;
     let cancelled = false;
     void (async () => {
       setReviewsLoading(true);
@@ -664,41 +646,28 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [mainTab, userId, token, unlocked, loading]);
+  }, [mainTab, userId, token, loading]);
 
   const listData = useMemo(() => {
-    if (!unlocked) return [];
-    if (mainTab === "posts") return publishedPosts;
-    if (mainTab === "liked") return likedPosts;
+    if (mainTab === "posts") return canSeePosts ? publishedPosts : [];
     if (mainTab === "spots") return userSpots;
     if (mainTab === "reviews") return reviewsList;
     return [];
-  }, [
-    unlocked,
-    mainTab,
-    publishedPosts,
-    likedPosts,
-    userSpots,
-    reviewsList,
-  ]) as ProfileListRow[];
+  }, [canSeePosts, mainTab, publishedPosts, userSpots, reviewsList]) as ProfileListRow[];
 
   const listLoading =
     mainTab === "posts"
-      ? publishedLoading
-      : mainTab === "liked"
-        ? likedLoading
-        : mainTab === "reviews"
-          ? reviewsLoading
-          : false;
+      ? canSeePosts && publishedLoading
+      : mainTab === "reviews"
+        ? reviewsLoading
+        : false;
 
   const listError =
     mainTab === "posts"
       ? publishedError
-      : mainTab === "liked"
-        ? likedError
-        : mainTab === "reviews"
-          ? reviewsError
-          : null;
+      : mainTab === "reviews"
+        ? reviewsError
+        : null;
 
   const primaryAction =
     relationship === "friends"
@@ -716,11 +685,11 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
               };
 
   async function reloadTabDataWhileRefreshingProfile() {
-    if (!token || !userId || !unlocked) return;
+    if (!userId) return;
     const authTok = token;
 
     try {
-      if (mainTab === "posts") {
+      if (mainTab === "posts" && canSeePosts && authTok) {
         setPublishedLoading(true);
         const page = await fetchFeedPostsByUser(authTok, userId, {
           limit: 20,
@@ -729,23 +698,15 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
           page.posts.map((p) => enrichPost(p)!).filter(Boolean),
         );
         setPublishedCursor(page.next_cursor);
-      } else if (mainTab === "liked") {
-        setLikedLoading(true);
-        const page = await fetchFeedLikedPostsByUser(authTok, userId, {
-          limit: 20,
-        });
-        setLikedPosts(page.posts.map((p) => enrichPost(p)!).filter(Boolean));
-        setLikedCursor(page.next_cursor);
       } else if (mainTab === "reviews") {
         setReviewsLoading(true);
-        const r = await fetchReviewsByUserId(userId, { token });
+        const r = await fetchReviewsByUserId(userId, { token: authTok });
         setReviewsList(r);
       }
     } catch {
       //
     } finally {
       setPublishedLoading(false);
-      setLikedLoading(false);
       setReviewsLoading(false);
     }
   }
@@ -811,6 +772,9 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
           </Text>
         ) : null}
       </View>
+      <View style={styles.spotChevron}>
+        <ChevronRight size={18} color="#B0B4BA" strokeWidth={2.2} />
+      </View>
     </TouchableOpacity>
   );
 
@@ -839,12 +803,15 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
           <Text style={styles.reviewSpotName} numberOfLines={2}>
             {spotLabel}
           </Text>
-          {!Number.isNaN(rating) && rating >= 0 ? (
-            <View style={styles.reviewStarsRow}>
-              <Star size={16} color={Colors.accent} />
-              <Text style={styles.reviewRating}>{rating.toFixed(1)}</Text>
-            </View>
-          ) : null}
+          <View style={styles.reviewMeta}>
+            {!Number.isNaN(rating) && rating >= 0 ? (
+              <View style={styles.reviewStarsRow}>
+                <Star size={16} color={Colors.accent} />
+                <Text style={styles.reviewRating}>{rating.toFixed(1)}</Text>
+              </View>
+            ) : null}
+            <ChevronRight size={18} color="#B0B4BA" strokeWidth={2.2} />
+          </View>
         </View>
         {content ? (
           <Text style={styles.reviewExcerpt} numberOfLines={3}>
@@ -865,18 +832,17 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
   const openPostDetail = useCallback(
     (post: FeedPost) => {
       if (!user?.id) return;
-      const isLikedTab = mainTab === "liked";
       const headerTitle = user.username?.trim()
         ? `@${user.username.trim()}`
         : displayName;
       rootNavigation.navigate("UserPostsFeed", {
         userId: user.id,
-        source: isLikedTab ? "liked" : "posts",
+        source: "posts",
         initialPostId: post.id,
         title: headerTitle,
-        subtitle: isLikedTab ? "Liked" : "Posts",
-        initialPosts: isLikedTab ? likedPosts : publishedPosts,
-        initialCursor: isLikedTab ? likedCursor : publishedCursor,
+        subtitle: "Posts",
+        initialPosts: publishedPosts,
+        initialCursor: publishedCursor,
       });
     },
     [
@@ -884,19 +850,15 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
       user?.id,
       user?.username,
       displayName,
-      mainTab,
-      likedPosts,
       publishedPosts,
-      likedCursor,
       publishedCursor,
     ],
   );
 
-  const isGridTab = unlocked && (mainTab === "posts" || mainTab === "liked");
+  const isGridTab = canSeePosts && mainTab === "posts";
 
   function keyExtractor(item: ProfileListRow, index: number): string {
-    if (mainTab === "posts" || mainTab === "liked")
-      return (item as FeedPost).id;
+    if (mainTab === "posts") return (item as FeedPost).id;
     if (mainTab === "spots") return (item as StudySpot).id ?? `spot-${index}`;
     const r = item as SpotReview;
     const rid = spotReviewPrimaryId(r) ?? `rev-${index}`;
@@ -904,9 +866,7 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
   }
 
   function renderItem({ item }: { item: FeedPost | StudySpot | SpotReview }) {
-    if (!unlocked) return null;
-
-    if (mainTab === "posts" || mainTab === "liked") {
+    if (mainTab === "posts") {
       return (
         <ProfilePostGridTile
           post={item as FeedPost}
@@ -965,50 +925,32 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
 
         <View style={styles.actionButtonsRow}>
           {!!primaryAction ? (
-            <TouchableOpacity
-              activeOpacity={0.85}
-              disabled={actionLoading}
-              onPress={() => void sendProfileAction(primaryAction.next)}
-              style={[
-                styles.actionBtn,
-                primaryAction.muted
-                  ? styles.actionBtnMuted
-                  : styles.actionBtnPrimary,
-                actionLoading && styles.disabledButton,
-              ]}
-            >
-              <Text
-                style={
-                  primaryAction.muted
-                    ? styles.actionBtnTextMuted
-                    : styles.actionBtnTextPrimary
-                }
-              >
-                {primaryAction.label}
-              </Text>
-            </TouchableOpacity>
+            <View style={styles.actionBtnCell}>
+              <Button
+                fullWidth
+                label={primaryAction.label}
+                variant={primaryAction.muted ? "outline" : "default"}
+                disabled={actionLoading}
+                loading={actionLoading}
+                onPress={() => void sendProfileAction(primaryAction.next)}
+              />
+            </View>
           ) : (
-            <View style={styles.actionBtnSpacer} />
+            <View style={styles.actionBtnCell} />
           )}
           {relationship !== "self" ? (
-            <TouchableOpacity
-              activeOpacity={0.85}
-              disabled={messageLoading}
-              style={[
-                styles.actionBtn,
-                styles.actionBtnMuted,
-                messageLoading && styles.disabledButton,
-              ]}
-              onPress={() => void openDirectChat()}
-            >
-              {messageLoading ? (
-                <ActivityIndicator color={Colors.dark} size="small" />
-              ) : (
-                <Text style={styles.actionBtnTextMuted}>Message</Text>
-              )}
-            </TouchableOpacity>
+            <View style={styles.actionBtnCell}>
+              <Button
+                fullWidth
+                label="Message"
+                variant="outline"
+                disabled={messageLoading}
+                loading={messageLoading}
+                onPress={() => void openDirectChat()}
+              />
+            </View>
           ) : (
-            <View style={[styles.actionBtn, styles.actionBtnSpacer]} />
+            <View style={styles.actionBtnCell} />
           )}
         </View>
 
@@ -1017,15 +959,6 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
           mainTab={mainTab}
           onChangeMain={setMainTab}
         />
-        {!unlocked ? (
-          <View style={styles.lockBanner}>
-            <Lock size={20} color="#666" />
-            <Text style={styles.lockText}>
-              Send a follow request first to see posts, spots, and reviews once
-              you’re friends.
-            </Text>
-          </View>
-        ) : null}
       </>
     );
 
@@ -1050,13 +983,15 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
             </Text>
           )}
           {relationship !== "self" ? (
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => setShowProfileOptions(true)}
-              style={styles.iconButton}
-            >
-              <EllipsisVertical size={22} color={Colors.dark} strokeWidth={2.2} />
-            </TouchableOpacity>
+            <View ref={profileMenuWrapRef} collapsable={false}>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={openProfileMenu}
+                style={styles.iconButton}
+              >
+                <EllipsisVertical size={22} color={Colors.dark} strokeWidth={2.2} />
+              </TouchableOpacity>
+            </View>
           ) : (
             <View style={[styles.iconButton, styles.iconButtonPlaceholder]} />
           )}
@@ -1076,7 +1011,7 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
             style={styles.profileList}
             key={isGridTab ? "pub-grid" : "pub-list"}
             numColumns={isGridTab ? 3 : 1}
-            data={(unlocked ? listData : []) as ProfileListRow[]}
+            data={listData as ProfileListRow[]}
             keyExtractor={(item, index) => keyExtractor(item, index)}
             renderItem={(args) => renderItem(args as never)}
             columnWrapperStyle={isGridTab ? styles.gridColumnWrap : undefined}
@@ -1086,9 +1021,7 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
               </>
             }
             ListFooterComponent={
-              unlocked &&
-              (mainTab === "posts" || mainTab === "liked") &&
-              postsTailLoading ? (
+              mainTab === "posts" && postsTailLoading ? (
                 <ActivityIndicator style={styles.footerSpinner} />
               ) : null
             }
@@ -1110,10 +1043,30 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
               />
             }
             ListEmptyComponent={
-              !unlocked ? null : listLoading ? (
+              listLoading ? (
                 <ActivityIndicator style={styles.emptySpinner} />
               ) : listError ? (
                 <Text style={styles.inlineError}>{listError}</Text>
+              ) : mainTab === "posts" ? (
+                <View style={styles.emptyCenter}>
+                  {canSeePosts ? (
+                    <LayoutGrid
+                      size={44}
+                      color="#C5C9CE"
+                      strokeWidth={1.6}
+                    />
+                  ) : (
+                    <Lock size={44} color="#C5C9CE" strokeWidth={1.6} />
+                  )}
+                  <Text style={styles.emptyCenterTitle}>
+                    {canSeePosts ? "No posts yet" : "Posts are private"}
+                  </Text>
+                  <Text style={styles.emptyCenterBody}>
+                    {canSeePosts
+                      ? "They haven’t shared anything yet."
+                      : "Send a follow request to see their posts once you’re friends."}
+                  </Text>
+                </View>
               ) : (
                 <Text style={styles.listEmptyMuted}>
                   {tabEmptyLabel(mainTab)}
@@ -1145,68 +1098,13 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
         </Modal>
       ) : null}
 
-      {/* Profile options sheet */}
-      <Modal
+      <ActionOptionsSheet
         visible={showProfileOptions}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowProfileOptions(false)}
-      >
-        <Pressable
-          style={styles.profileOptionsBackdrop}
-          onPress={() => setShowProfileOptions(false)}
-        >
-          <Pressable style={styles.profileOptionsCard} onPress={() => {}}>
-            <TouchableOpacity
-              style={styles.profileOptionRow}
-              activeOpacity={0.7}
-              onPress={() => {
-                if (isBlocked) {
-                  void handleUnblock();
-                } else {
-                  setShowProfileOptions(false);
-                  setShowBlockConfirm(true);
-                }
-              }}
-            >
-              {isBlocked ? (
-                <ShieldCheck size={22} color={Colors.dark} strokeWidth={2} />
-              ) : (
-                <ShieldBan size={22} color="#DC3545" strokeWidth={2} />
-              )}
-              <Text
-                style={[
-                  styles.profileOptionLabel,
-                  !isBlocked && styles.profileOptionLabelDestructive,
-                ]}
-              >
-                {isBlocked ? "Unblock" : "Block"}
-              </Text>
-            </TouchableOpacity>
-
-            <View style={styles.profileOptionDivider} />
-
-            <TouchableOpacity
-              style={styles.profileOptionRow}
-              activeOpacity={0.7}
-              onPress={() => {
-                setShowProfileOptions(false);
-                setShowReportModal(true);
-              }}
-            >
-              <Flag size={22} color="#DC3545" strokeWidth={2} />
-              <Text
-                style={[
-                  styles.profileOptionLabel,
-                  styles.profileOptionLabelDestructive,
-                ]}
-              >
-                Report
-              </Text>
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
+        onClose={() => setShowProfileOptions(false)}
+        title="Profile options"
+        anchor={profileMenuAnchor}
+        options={profileMenuOptions}
+      />
 
       {/* Block confirm modal */}
       <Modal
@@ -1385,39 +1283,13 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
-  disabledButton: {
-    opacity: 0.6,
-  },
   actionButtonsRow: {
     flexDirection: "row",
     gap: 10,
     marginTop: 14,
     marginBottom: 4,
   },
-  actionBtn: {
-    flex: 1,
-    paddingVertical: 11,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  actionBtnMuted: {
-    backgroundColor: "#ececec",
-  },
-  actionBtnPrimary: {
-    backgroundColor: Colors.primary,
-  },
-  actionBtnTextMuted: {
-    fontFamily: Fonts.instrument.semiBold,
-    fontSize: 14,
-    color: Colors.dark,
-  },
-  actionBtnTextPrimary: {
-    fontFamily: Fonts.instrument.semiBold,
-    fontSize: 14,
-    color: "#fff",
-  },
-  actionBtnSpacer: {
+  actionBtnCell: {
     flex: 1,
   },
   bio: {
@@ -1428,24 +1300,29 @@ const styles = StyleSheet.create({
     marginTop: 14,
     textAlign: "left",
   },
-  lockBanner: {
-    marginTop: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#eaeaea",
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-  },
-  lockText: {
+  emptyCenter: {
     flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 36,
+    paddingBottom: 72,
+    minHeight: 220,
+  },
+  emptyCenterTitle: {
+    marginTop: 14,
+    color: Colors.dark,
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 18,
+    textAlign: "center",
+  },
+  emptyCenterBody: {
+    marginTop: 6,
+    maxWidth: 220,
+    color: "#8A8F96",
     fontFamily: Fonts.instrument.regular,
     fontSize: 14,
-    color: "#555",
     lineHeight: 20,
+    textAlign: "center",
   },
   stateCard: {
     backgroundColor: "#fff",
@@ -1499,8 +1376,13 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     paddingVertical: 12,
-    paddingRight: 12,
+    paddingRight: 4,
     gap: 4,
+  },
+  spotChevron: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingRight: 10,
   },
   spotTitle: {
     fontFamily: Fonts.gabarito.semiBold,
@@ -1532,6 +1414,12 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.gabarito.semiBold,
     fontSize: 17,
     color: Colors.dark,
+  },
+  reviewMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    flexShrink: 0,
   },
   reviewStarsRow: {
     flexDirection: "row",
@@ -1588,39 +1476,6 @@ const styles = StyleSheet.create({
     width: Dimensions.get("window").width - 48,
     height: Dimensions.get("window").width - 48,
     borderRadius: 16,
-  },
-  profileOptionsBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 32,
-  },
-  profileOptionsCard: {
-    width: "100%",
-    backgroundColor: "#fff",
-    borderRadius: 20,
-    padding: 24,
-    gap: 0,
-  },
-  profileOptionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-    paddingVertical: 16,
-  },
-  profileOptionDivider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: "#eaeaea",
-  },
-  profileOptionLabel: {
-    fontFamily: Fonts.instrument.semiBold,
-    fontSize: 16,
-    color: Colors.dark,
-  },
-  profileOptionLabelDestructive: {
-    color: "#DC3545",
-    fontFamily: Fonts.gabarito.semiBold,
   },
   confirmBackdrop: {
     flex: 1,

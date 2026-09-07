@@ -1,6 +1,6 @@
 {
   "name": "studyspotrmobile",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
@@ -22,6 +22,7 @@
     "expo-apple-authentication": "~8.0.8",
     "expo-auth-session": "~7.0.11",
     "expo-av": "~16.0.8",
+    "expo-blur": "~15.0.8",
     "expo-camera": "~17.0.10",
     "expo-constants": "~18.0.13",
     "expo-contacts": "~15.0.11",

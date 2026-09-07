@@ -2,7 +2,7 @@
   "expo": {
     "name": "studyspotrmobile",
     "slug": "studyspotrmobile",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -16,17 +16,22 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.studyspotr.app",
+      "buildNumber": "4",
       "usesAppleSignIn": true,
       "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
         },
         "NSMicrophoneUsageDescription": "Allow microphone access when recording video for posts.",
-        "UIBackgroundModes": ["remote-notification"]
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
       }
     },
     "android": {
       "package": "com.studyspotr.app",
+      "versionCode": 3,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -85,6 +90,12 @@
           "contactsPermission": "Allow $(PRODUCT_NAME) to see your contacts so we can suggest people you might know. We never store or share your contact list."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "d91ec6ba-abe6-4754-a2e4-dbc422696765"
+      }
+    },
+    "owner": "harjotsk03"
   }
 }
