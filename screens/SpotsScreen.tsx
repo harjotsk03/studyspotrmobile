@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
-import { useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as Location from "expo-location";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -50,10 +50,12 @@ import { getSpotScore } from "../utils/getSpotScore";
 import { getSpotSearchText } from "../utils/getSpotSearchText";
 import { getSpotTitle } from "../utils/getSpotTitle";
 import { toNumber } from "../utils/toNumber";
+import { fetchSavedSpots } from "../utils/spotsApi";
 import type { SpotsStackParamList } from "../types/navigation";
 import Button from "../components/Button";
 import TopNav from "../components/TopNav";
 import {
+  Bookmark,
   Coffee,
   Filter,
   LocateIcon,
@@ -140,7 +142,7 @@ export default function SpotsScreen() {
   const previousSearchValue = useRef("");
   const navigation =
     useNavigation<NativeStackNavigationProp<SpotsStackParamList>>();
-  const { profile } = useAuth();
+  const { token } = useAuth();
 
   const {
     spots,
@@ -165,6 +167,7 @@ export default function SpotsScreen() {
     latitude: number;
     longitude: number;
   } | null>(null);
+  const [savedSpotIds, setSavedSpotIds] = useState<Set<string>>(() => new Set());
   // Tracks whether the visible map region is currently centered on the
   // user. Drives the recenter button's variant — it shifts from
   // `secondary` (subtle, off-white) to `default` (Colors.primary blue)
@@ -179,15 +182,30 @@ export default function SpotsScreen() {
   const tabAnim = useRef(new Animated.Value(0)).current;
   const [tabSwitchInnerWidth, setTabSwitchInnerWidth] = useState(0);
 
+  const refreshSavedSpotIds = useCallback(async () => {
+    if (!token) {
+      setSavedSpotIds(new Set());
+      return;
+    }
+    try {
+      const saved = await fetchSavedSpots(token);
+      setSavedSpotIds(
+        new Set(saved.map((spot) => spot.id).filter(Boolean)),
+      );
+    } catch {
+      // Keep the last known set if the saved-spots request fails.
+    }
+  }, [token]);
+
   const handleManualRefresh = useCallback(async () => {
     if (refreshing) return;
     setRefreshing(true);
     try {
-      await refetchSpots();
+      await Promise.all([refetchSpots(), refreshSavedSpotIds()]);
     } finally {
       setRefreshing(false);
     }
-  }, [refreshing, refetchSpots]);
+  }, [refreshing, refetchSpots, refreshSavedSpotIds]);
 
   // Keep spots fresh in the background without requiring user action.
   // This silently re-fetches every 5s and updates whichever view is open.
@@ -202,6 +220,16 @@ export default function SpotsScreen() {
 
     return () => clearInterval(intervalId);
   }, [refetchSpots, refreshing]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshSavedSpotIds();
+    }, [refreshSavedSpotIds]),
+  );
+
+  useEffect(() => {
+    if (filters.savedOnly) void refreshSavedSpotIds();
+  }, [filters.savedOnly, refreshSavedSpotIds]);
 
   // Animate the toggle pill whenever the effective mode changes.
   // We use effective mode (not raw `viewMode`) so when search forces list
@@ -306,6 +334,10 @@ export default function SpotsScreen() {
       );
     }
 
+    if (filters.savedOnly) {
+      next = next.filter((spot) => savedSpotIds.has(spot.id));
+    }
+
     if (!userLocation) {
       return next;
     }
@@ -321,7 +353,7 @@ export default function SpotsScreen() {
         : Number.POSITIVE_INFINITY;
       return leftDistance - rightDistance;
     });
-  }, [filters, spots, trimmedQuery, userLocation]);
+  }, [filters, savedSpotIds, spots, trimmedQuery, userLocation]);
 
   const mapSpots = useMemo(
     () => filteredSpots.filter((spot) => getSpotCoordinates(spot)),
@@ -575,6 +607,9 @@ export default function SpotsScreen() {
   const clearFilterByKey = useCallback(
     (key: string) => {
       setFilters((current) => {
+        if (key === "savedOnly") {
+          return { ...current, savedOnly: false };
+        }
         if (key === "nearbyOnly") {
           return { ...current, nearbyOnly: false };
         }
@@ -607,6 +642,9 @@ export default function SpotsScreen() {
 
   const activeFilterChips = useMemo<ActiveChip[]>(() => {
     const chips: ActiveChip[] = [];
+    if (filters.savedOnly) {
+      chips.push({ key: "savedOnly", label: "Saved", Icon: Bookmark });
+    }
     if (filters.nearbyOnly) {
       chips.push({ key: "nearbyOnly", label: "Within 10 km", Icon: MapPin });
     }
@@ -735,7 +773,9 @@ export default function SpotsScreen() {
                 <Text style={styles.stateText}>
                   {filteredSpots.length
                     ? "These spots don't have map coordinates yet."
-                    : "No spots match your search right now."}
+                    : filters.savedOnly
+                      ? "No saved spots match these filters."
+                      : "No spots match your search right now."}
                 </Text>
               </View>
             }
@@ -746,6 +786,7 @@ export default function SpotsScreen() {
     [
       activeSpotId,
       filteredSpots.length,
+      filters.savedOnly,
       handleRegionChangeComplete,
       mapCarouselHeight,
       mapSpots,
@@ -782,13 +823,15 @@ export default function SpotsScreen() {
         ListEmptyComponent={
           <View style={styles.emptyListState}>
             <Text style={styles.stateText}>
-              No spots match your search right now.
+              {filters.savedOnly
+                ? "No saved spots match these filters."
+                : "No spots match your search right now."}
             </Text>
           </View>
         }
       />
     ),
-    [filteredSpots, handleManualRefresh, refreshing, renderSpotCard, tabBarHeight],
+    [filteredSpots, filters.savedOnly, handleManualRefresh, refreshing, renderSpotCard, tabBarHeight],
   );
 
   return (
@@ -912,6 +955,7 @@ export default function SpotsScreen() {
         visible={filtersOpen}
         value={filters}
         hasUserLocation={Boolean(userLocation)}
+        isSignedIn={Boolean(token)}
         onChange={setFilters}
         onClose={() => setFiltersOpen(false)}
         onReset={() => setFilters(DEFAULT_SPOT_FILTERS)}

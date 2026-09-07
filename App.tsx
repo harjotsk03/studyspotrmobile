@@ -82,6 +82,7 @@ import SpotWizardScreen from "./screens/SpotWizardScreen";
 import ProfileScreen from "./screens/ProfileScreen";
 import ProfileSettingsScreen from "./screens/ProfileSettingsScreen";
 import BlockedUsersScreen from "./screens/BlockedUsersScreen";
+import ProfileConnectionsScreen from "./screens/ProfileConnectionsScreen";
 import LoginScreen from "./screens/LoginScreen";
 import RegisterScreen from "./screens/RegisterScreen";
 import ForgotPasswordScreen from "./screens/ForgotPasswordScreen";
@@ -451,6 +452,10 @@ function AppContent() {
         <RootStack.Screen
           name="BlockedUsers"
           component={BlockedUsersScreen}
+        />
+        <RootStack.Screen
+          name="ProfileConnections"
+          component={ProfileConnectionsScreen}
         />
       </RootStack.Navigator>
     </View>

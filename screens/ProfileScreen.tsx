@@ -128,12 +128,25 @@ export default function ProfileScreen() {
     [user],
   );
 
+  const openConnections = useCallback(
+    (kind: "friends" | "communities") => {
+      if (!userId) return;
+      rootNavigation.navigate("ProfileConnections", { userId, kind });
+    },
+    [rootNavigation, userId],
+  );
+
   const stats = [
     { label: "Spots", value: String(user?.spots_created_count ?? 0) },
-    { label: "Friends", value: String(user?.friends_count ?? 0) },
+    {
+      label: "Friends",
+      value: String(user?.friends_count ?? 0),
+      onPress: () => openConnections("friends"),
+    },
     {
       label: "Communities",
       value: String(user?.communities_joined_count ?? 0),
+      onPress: () => openConnections("communities"),
     },
   ];
 
@@ -685,7 +698,11 @@ export default function ProfileScreen() {
           <View style={styles.statsRow}>
             {stats.map((stat) => (
               <View key={stat.label} style={styles.statCell}>
-                <ProfileStat label={stat.label} value={stat.value} />
+                <ProfileStat
+                  label={stat.label}
+                  value={stat.value}
+                  onPress={"onPress" in stat ? stat.onPress : undefined}
+                />
               </View>
             ))}
           </View>
