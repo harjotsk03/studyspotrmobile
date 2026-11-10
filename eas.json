@@ -5,6 +5,9 @@
   },
   "build": {
     "production": {
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://studyspotrserver.onrender.com"
+      },
       "ios": {
         "autoIncrement": true
       }
