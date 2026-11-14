@@ -486,6 +486,7 @@ export default function SearchDropdown() {
           ]}
           contentContainerStyle={styles.resultsContent}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
         >
           {loading && activeCount === 0 ? (

@@ -9,6 +9,7 @@ import {
   Alert,
   Animated,
   FlatList,
+  Keyboard,
   Platform,
   Pressable,
   RefreshControl,
@@ -61,6 +62,7 @@ import {
   LocateIcon,
   MapPin,
   Presentation,
+  RotateCcw,
   Star,
   Users,
   Wifi,
@@ -136,6 +138,7 @@ export default function SpotsScreen() {
   // filters change. The ref object itself is stable across renders so it
   // safely lives inside the `listLayer` useMemo below.
   const listRef = useRef<FlatList<StudySpot> | null>(null);
+  const carouselRef = useRef<FlatList<StudySpot> | null>(null);
   // Skip the very first render so the camera-fit / scroll-to-top effect
   // only fires on subsequent filter mutations.
   const didMountRef = useRef(false);
@@ -360,6 +363,30 @@ export default function SpotsScreen() {
     [filteredSpots],
   );
 
+  // Pins can disappear after leaving the tab and coming back: the native map
+  // drops its custom marker views while the screen is detached, and a marker
+  // that stopped tracking view changes never redraws them. So on every focus
+  // we bump an epoch (remounting the markers via their key) and let them
+  // track view changes briefly so the native side re-snapshots the pins.
+  // Tracking is turned off again afterwards to keep the map cheap.
+  const [markerEpoch, setMarkerEpoch] = useState(0);
+  const [trackMarkers, setTrackMarkers] = useState(true);
+  useFocusEffect(
+    useCallback(() => {
+      setMarkerEpoch((n) => n + 1);
+    }, []),
+  );
+  // The map layer is hidden with display:none in list mode; when it comes
+  // back the native marker views are gone, so rebuild them the same way.
+  useEffect(() => {
+    if (effectiveViewMode === "map") setMarkerEpoch((n) => n + 1);
+  }, [effectiveViewMode]);
+  useEffect(() => {
+    setTrackMarkers(true);
+    const t = setTimeout(() => setTrackMarkers(false), 900);
+    return () => clearTimeout(t);
+  }, [markerEpoch, mapSpots, activeSpotId]);
+
   // useCallback so the captured reference is stable across renders.
   // The memoized `mapLayer` below has this in its deps array, so any time
   // `userLocation` actually changes we want a fresh closure — but on a
@@ -468,6 +495,14 @@ export default function SpotsScreen() {
 
     const timeoutId = setTimeout(() => {
       focusSpotOnMap(spot);
+      // Bring that spot's card into view in the bottom carousel too.
+      const index = mapSpots.findIndex((item) => item.id === spot.id);
+      if (index >= 0) {
+        carouselRef.current?.scrollToOffset({
+          offset: index * (cardWidth + CAROUSEL_GAP),
+          animated: true,
+        });
+      }
       setPendingFocusSpotId(null);
     }, 350);
 
@@ -724,6 +759,8 @@ export default function SpotsScreen() {
             showsIndoors={false}
             toolbarEnabled={false}
             onRegionChangeComplete={handleRegionChangeComplete}
+            onPanDrag={Keyboard.dismiss}
+            onPress={Keyboard.dismiss}
           >
             {mapSpots.map((spot) => {
               const coords = getSpotCoordinates(spot);
@@ -733,7 +770,8 @@ export default function SpotsScreen() {
 
               return (
                 <Marker
-                  key={spot.id}
+                  key={`${spot.id}-${markerEpoch}`}
+                  tracksViewChanges={trackMarkers}
                   coordinate={coords}
                   anchor={{ x: 0.5, y: 1 }}
                   title={getSpotTitle(spot)}
@@ -759,6 +797,7 @@ export default function SpotsScreen() {
           onLayout={(e) => setMapCarouselHeight(e.nativeEvent.layout.height)}
         >
           <FlatList
+            ref={carouselRef}
             data={mapSpots}
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -790,6 +829,8 @@ export default function SpotsScreen() {
       handleRegionChangeComplete,
       mapCarouselHeight,
       mapSpots,
+      markerEpoch,
+      trackMarkers,
       navigation,
       renderSpotCard,
       userLocation,
@@ -804,6 +845,8 @@ export default function SpotsScreen() {
     () => (
       <FlatList
         ref={listRef}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         data={filteredSpots}
         keyExtractor={(item) => item.id}
         contentContainerStyle={[
@@ -930,6 +973,15 @@ export default function SpotsScreen() {
       </View>
 
       {activeFilterChips.length > 0 ? (
+        <View style={styles.activeFiltersBar}>
+          <Button
+            label="Reset"
+            variant="outline"
+            size="xs"
+            icon={<RotateCcw size={12} strokeWidth={2.4} />}
+            onPress={() => setFilters(DEFAULT_SPOT_FILTERS)}
+            haptic="light"
+          />
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -949,6 +1001,7 @@ export default function SpotsScreen() {
             </Pressable>
           ))}
         </ScrollView>
+        </View>
       ) : null}
 
       <SpotFiltersModal
@@ -1092,10 +1145,15 @@ const styles = StyleSheet.create({
   // A horizontally-scrollable row that appears just under the toolbar
   // whenever any filter is on. Each chip is an accent-tinted pill with
   // its own X — tapping the chip removes only that filter.
-  activeFiltersWrap: {
-    paddingHorizontal: 16,
+  activeFiltersBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingLeft: 16,
     paddingBottom: 8,
-    flexGrow: 0,
+  },
+  activeFiltersWrap: {
+    flex: 1,
   },
   activeFiltersRow: {
     flexDirection: "row",

@@ -48,6 +48,7 @@ import {
   MessageSquarePlus,
   Plug,
   Presentation,
+  Send,
   Share2,
   Star,
   Trash2,
@@ -724,8 +725,8 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
   const spotOptions: ActionOption[] = [
     {
       key: "share",
-      icon: Share2,
-      label: "Share",
+      icon: Send,
+      label: "Send to friend",
       onPress: () => setShareSheetOpen(true),
     },
     ...(isSpotOwner && user?.id

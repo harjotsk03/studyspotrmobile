@@ -8,6 +8,7 @@ import {
   Text,
   View,
   useWindowDimensions,
+  type GestureResponderEvent,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -116,10 +117,20 @@ export default function FeedPostCard({
     onDeleted?.(post.id);
   }, [post.id, onDeleted]);
 
-  const openPostOptions = useCallback(() => {
-    if (!token) return;
-    setOptionsOpen(true);
-  }, [token]);
+  const [optionsAnchor, setOptionsAnchor] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const openPostOptions = useCallback(
+    (e?: GestureResponderEvent) => {
+      if (!token) return;
+      if (e?.nativeEvent) {
+        setOptionsAnchor({ x: e.nativeEvent.pageX, y: e.nativeEvent.pageY });
+      }
+      setOptionsOpen(true);
+    },
+    [token],
+  );
 
   return (
     <View style={styles.card}>
@@ -203,6 +214,7 @@ export default function FeedPostCard({
       {post.caption ? <Text style={styles.caption}>{post.caption}</Text> : null}
 
       <FeedPostOptionsSheet
+        anchor={optionsAnchor}
         visible={optionsOpen}
         onClose={() => setOptionsOpen(false)}
         isOwner={isOwner}

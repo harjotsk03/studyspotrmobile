@@ -294,6 +294,7 @@ export default function ProfileConnectionsScreen({ navigation, route }: Props) {
             filteredUsers.length === 0 ? styles.emptyList : styles.list
           }
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           ListEmptyComponent={
             <Text style={styles.emptyText}>{emptyLabel}</Text>
           }
@@ -307,6 +308,7 @@ export default function ProfileConnectionsScreen({ navigation, route }: Props) {
             filteredCommunities.length === 0 ? styles.emptyList : styles.list
           }
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           ListEmptyComponent={
             <Text style={styles.emptyText}>{emptyLabel}</Text>
           }

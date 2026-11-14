@@ -406,7 +406,11 @@ function AppContent() {
           component={FeedInteractionsScreen}
         />
         <RootStack.Screen name="Messages" component={MessagesScreen} />
-        <RootStack.Screen name="ChatThread" component={ChatThreadScreen} />
+        <RootStack.Screen
+          name="ChatThread"
+          component={ChatThreadScreen}
+          options={{ gestureEnabled: true, fullScreenGestureEnabled: false }}
+        />
         <RootStack.Screen
           name="UserPostsFeed"
           component={UserPostsFeedScreen}

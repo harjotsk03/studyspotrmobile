@@ -16,7 +16,7 @@ import { Colors } from '../constants/Colors';
 import { Fonts } from '../constants/Fonts';
 
 type Variant = 'default' | 'secondary' | 'outline' | 'ghost' | 'destructive' | 'link' | 'accent' | 'dark';
-type Size = 'sm' | 'default' | 'lg' | 'icon';
+type Size = 'xs' | 'sm' | 'default' | 'lg' | 'icon';
 
 type HapticStrength = 'light' | 'medium' | 'heavy' | 'selection' | false;
 
@@ -136,6 +136,11 @@ const variantStyles: Record<
 };
 
 const sizeStyles: Record<Size, { container: ViewStyle; text: TextStyle; iconSize: number }> = {
+  xs: {
+    container: { paddingVertical: 3, paddingHorizontal: 10, borderRadius: 999 },
+    text: { fontSize: 12 },
+    iconSize: 12,
+  },
   sm: {
     container: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 999 },
     text: { fontSize: 13 },
@@ -195,6 +200,8 @@ export default function Button({
 }: ButtonProps) {
   const v = variantStyles[variant];
   const s = sizeStyles[size];
+  // Compact buttons get a proportionally thinner bottom edge.
+  const thickBorder = size === 'xs' ? 3 : THICK_BORDER;
   const isDisabled = disabled || loading;
   // The visual "dimmed" treatment is only for the explicit `disabled` state
   // — while merely `loading`, the button face stays at full opacity so the
@@ -239,11 +246,11 @@ export default function Button({
 
   const animatedBottomBorder = press.interpolate({
     inputRange: [0, 1],
-    outputRange: [THICK_BORDER, THIN_BORDER],
+    outputRange: [thickBorder, THIN_BORDER],
   });
   const animatedDrop = press.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, THICK_BORDER - THIN_BORDER],
+    outputRange: [0, thickBorder - THIN_BORDER],
   });
 
   const content = children ?? (label ? (

@@ -151,3 +151,41 @@ export function describeBodyForPreview(body: string): string {
   const tag = summaries[0];
   return text ? `${tag} · ${text}` : tag;
 }
+
+/**
+ * Reply quote embedded at the very start of a message body, on its own line:
+ *   `[[reply:<encodedName>:<encodedSnippet>]]\n<message text>`
+ * (values are `encodeURIComponent`-ed so they can't break the token).
+ */
+const REPLY_LINE_RE = /^\[\[reply:([^:\]\n]*):([^\]\n]*)\]\]\n?/;
+/** Also matches a token cut off by the server's preview truncation. */
+const REPLY_PREVIEW_RE = /^\[\[reply:[^\n]*(\n|$)/;
+
+export type ReplyQuote = { name: string; text: string };
+
+export function encodeReplyToken(quote: ReplyQuote): string {
+  const text = quote.text.replace(/\s+/g, " ").trim().slice(0, 80);
+  return `[[reply:${encodeURIComponent(quote.name)}:${encodeURIComponent(text)}]]`;
+}
+
+export function extractReplyFromBody(body: string): {
+  reply: ReplyQuote | null;
+  rest: string;
+} {
+  if (typeof body !== "string") return { reply: null, rest: "" };
+  const m = body.match(REPLY_LINE_RE);
+  if (!m) return { reply: null, rest: body };
+  try {
+    return {
+      reply: { name: decodeURIComponent(m[1]), text: decodeURIComponent(m[2]) },
+      rest: body.slice(m[0].length),
+    };
+  } catch {
+    return { reply: null, rest: body.slice(m[0].length) };
+  }
+}
+
+export function stripReplyForPreview(body: string): string {
+  if (typeof body !== "string") return "";
+  return body.replace(REPLY_PREVIEW_RE, "");
+}

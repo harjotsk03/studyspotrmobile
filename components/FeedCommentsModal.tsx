@@ -28,14 +28,14 @@ import * as Haptics from "expo-haptics";
 import {
   ArrowUp,
   AtSign,
-  Image as ImageIcon,
+  Check,
   ListFilter,
-  Smile,
   X,
 } from "lucide-react-native";
 import CommentHeart from "./CommentHeart";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
+import { API_BASE_URL } from "../constants/Api";
 import type { RootStackParamList } from "../types/navigation";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -44,12 +44,15 @@ import {
   deleteFeedComment,
   feedAuthorDisplayName,
   fetchFeedPostComments,
+  fetchFeedPostLikers,
   likeFeedComment,
   unlikeFeedComment,
+  type FeedAuthor,
   type FeedComment,
 } from "../utils/feedApi";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import ReportConfirmModal from "./ReportConfirmModal";
+import SwipeToReplyRow from "./SwipeToReplyRow";
 
 type Props = {
   visible: boolean;
@@ -67,9 +70,9 @@ type Props = {
 };
 
 const WINDOW_H = Dimensions.get("window").height;
+const WINDOW_W = Dimensions.get("window").width;
 /** TikTok-like: tall sheet, ~top quarter stays as dimmed tap-to-dismiss area */
 const SHEET_HEIGHT = Math.round(WINDOW_H * 0.74);
-const TIKTOK_SEND = "#FE2C55";
 
 /** Drag down by at least this many px to consider a slow dismiss. */
 const DISMISS_DRAG_DISTANCE = 110;
@@ -78,22 +81,6 @@ const DISMISS_FLICK_VELOCITY = 0.7;
 /** Min downward distance for a flick to count (rejects accidental jitters). */
 const DISMISS_FLICK_MIN_DISTANCE = 12;
 
-const QUICK_EMOJIS = [
-  "😂",
-  "😭",
-  "❤️",
-  "🔥",
-  "👏",
-  "😍",
-  "🙏",
-  "💀",
-  "😊",
-  "😘",
-  "💕",
-  "✨",
-  "⭐",
-  "🎉",
-];
 
 function commentAuthorId(c: FeedComment): string | undefined {
   return c.user?.id ?? c.author_id ?? c.user_id;
@@ -119,8 +106,14 @@ type CommentThreadRow = {
   depth: number;
 };
 
-/** Roots newest-first; replies under parent oldest-first (conversation flow). */
-function flattenCommentThreads(comments: FeedComment[]): CommentThreadRow[] {
+type CommentSort = "newest" | "top";
+
+/** Roots ordered by `sort` (newest first, or most liked first with newest as
+ * the tie-break); replies under a parent stay oldest-first (conversation flow). */
+function flattenCommentThreads(
+  comments: FeedComment[],
+  sort: CommentSort = "newest",
+): CommentThreadRow[] {
   const byId = new Map(comments.map((c) => [c.id, c]));
   const children = new Map<string | null, FeedComment[]>();
 
@@ -136,8 +129,13 @@ function flattenCommentThreads(comments: FeedComment[]): CommentThreadRow[] {
   const descCreated = (a: FeedComment, b: FeedComment) =>
     new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
 
+  const topRoots = (a: FeedComment, b: FeedComment) =>
+    (b.like_count ?? 0) - (a.like_count ?? 0) || descCreated(a, b);
+
   for (const [pid, arr] of children) {
-    arr.sort(pid === null ? descCreated : ascCreated);
+    arr.sort(
+      pid === null ? (sort === "top" ? topRoots : descCreated) : ascCreated,
+    );
   }
 
   const rows: CommentThreadRow[] = [];
@@ -201,6 +199,50 @@ export default function FeedCommentsModal({
 
   const backdropOpacity = useRef(new Animated.Value(0)).current;
   const sheetTranslateY = useRef(new Animated.Value(WINDOW_H)).current;
+  /** Horizontal offset, used for the swipe-right-to-dismiss gesture. */
+  const sheetTranslateX = useRef(new Animated.Value(0)).current;
+  /** Which way the current drag is going once it's been decided. */
+  const dragModeRef = useRef<"y" | "x" | null>(null);
+  const dragBaseYRef = useRef(0);
+  const dragBaseXRef = useRef(0);
+  /** True while the touch began inside the composer (emoji strip scrolls
+   * horizontally there, so a sideways swipe must not dismiss the sheet). */
+  const touchInComposerRef = useRef(false);
+  /** True while the touch began on a comment row (leftward swipe there = reply). */
+  const touchOnCommentRef = useRef(false);
+  /** While the keyboard is up, swipes must dismiss the keyboard, not the sheet. */
+  const keyboardOpenRef = useRef(false);
+  const [listScrollEnabled, setListScrollEnabled] = useState(true);
+  /** True while the user is on a profile opened from a comment. The sheet is
+   * hidden but its state (comments, draft, scroll spot) is kept, and it
+   * re-opens when this screen regains focus. */
+  const [suspended, setSuspended] = useState(false);
+  const restoreOffsetRef = useRef(0);
+
+  /** Begin replying to a comment and bring the keyboard up. Focus is retried
+   * once because the first attempt can land before the list re-renders. */
+  const startReplyTo = (c: any) => {
+    setReplyTo(c);
+    setTimeout(() => inputRef.current?.focus(), 40);
+    setTimeout(() => {
+      if (!inputRef.current?.isFocused?.()) inputRef.current?.focus();
+    }, 250);
+  };
+  const inputRef = useRef<any>(null);
+  useEffect(() => {
+    const showEv = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEv = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const a = Keyboard.addListener(showEv, () => {
+      keyboardOpenRef.current = true;
+    });
+    const b = Keyboard.addListener(hideEv, () => {
+      keyboardOpenRef.current = false;
+    });
+    return () => {
+      a.remove();
+      b.remove();
+    };
+  }, []);
   /** Live scroll offset of the comments list; used to gate the drag-to-dismiss
    * gesture so users can still scroll long threads without dismissing. */
   const listScrollYRef = useRef(0);
@@ -225,6 +267,10 @@ export default function FeedCommentsModal({
     setCursor(null);
     setDraft("");
     setReplyTo(null);
+    setSortMenuOpen(false);
+    setSortMode("newest");
+    mentionLoadedForRef.current = null;
+    setMentionPool({ friends: [], likers: [] });
     setLoading(false);
     setLoadingMore(false);
     loadingRef.current = false;
@@ -235,6 +281,8 @@ export default function FeedCommentsModal({
   useEffect(() => {
     if (!visible) {
       setKeyboardInset(0);
+      setSuspended(false);
+      restoreOffsetRef.current = 0;
       return;
     }
 
@@ -313,9 +361,98 @@ export default function FeedCommentsModal({
     }
   }, [token, postId, cursor, loadingMore]);
 
+  // ── @mentions ────────────────────────────────────────────────────────
+  // Typing "@" (or tapping the @ button) opens a list of people to mention:
+  // the viewer's friends first, then other commenters, then other likers.
+  const [mentionPool, setMentionPool] = useState<{
+    friends: FeedAuthor[];
+    likers: FeedAuthor[];
+  }>({ friends: [], likers: [] });
+  const [mentionLoading, setMentionLoading] = useState(false);
+  const mentionLoadedForRef = useRef<string | null>(null);
+
+  const mentionMatch = /(?:^|\s)@([A-Za-z0-9_.]*)$/.exec(draft);
+  const mentionQuery = mentionMatch ? mentionMatch[1] : null;
+
+  const ensureMentionPool = useCallback(async () => {
+    if (!token || !postId || mentionLoadedForRef.current === postId) return;
+    mentionLoadedForRef.current = postId;
+    setMentionLoading(true);
+    try {
+      const [friendsRes, likersRes] = await Promise.allSettled([
+        currentUserId
+          ? fetch(
+              `${API_BASE_URL}/api/v1/users/${encodeURIComponent(currentUserId)}/friends`,
+              { headers: { Authorization: `Bearer ${token}` } },
+            ).then((r) => r.json().catch(() => null))
+          : Promise.resolve(null),
+        fetchFeedPostLikers(token, postId, { limit: 100 }),
+      ]);
+      const friends: FeedAuthor[] =
+        friendsRes.status === "fulfilled" &&
+        Array.isArray(friendsRes.value?.users)
+          ? friendsRes.value.users
+          : [];
+      const likers: FeedAuthor[] =
+        likersRes.status === "fulfilled"
+          ? likersRes.value.likers
+              .map((l) => l.user)
+              .filter((u): u is FeedAuthor => Boolean(u))
+          : [];
+      setMentionPool({ friends, likers });
+    } finally {
+      setMentionLoading(false);
+    }
+  }, [token, postId, currentUserId]);
+
+  // Load the pool the first time a mention is started on this post.
+  useEffect(() => {
+    if (mentionQuery !== null) void ensureMentionPool();
+  }, [mentionQuery, ensureMentionPool]);
+
+  const mentionCandidates = useMemo(() => {
+    if (mentionQuery === null) return [] as FeedAuthor[];
+    const commenters = comments
+      .map((c) => c.user)
+      .filter((u): u is FeedAuthor => Boolean(u));
+    const seen = new Set<string>();
+    const ordered: FeedAuthor[] = [];
+    for (const u of [
+      ...mentionPool.friends,
+      ...commenters,
+      ...mentionPool.likers,
+    ]) {
+      if (!u?.id || !u.username || u.id === currentUserId || seen.has(u.id)) {
+        continue;
+      }
+      seen.add(u.id);
+      ordered.push(u);
+    }
+    const q = mentionQuery.toLowerCase();
+    if (!q) return ordered;
+    return ordered.filter((u) => {
+      const hay = `${feedAuthorDisplayName(u)} ${u.username ?? ""}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [mentionQuery, mentionPool, comments, currentUserId]);
+
+  const pickMention = useCallback((u: FeedAuthor) => {
+    const handle = (u.username ?? "").replace(/^@/, "");
+    if (!handle) return;
+    setDraft((d) => d.replace(/@([A-Za-z0-9_.]*)$/, `@${handle} `));
+    setTimeout(() => inputRef.current?.focus(), 30);
+  }, []);
+
+  const onAtPress = useCallback(() => {
+    setDraft((d) => (d && !/\s$/.test(d) ? `${d} @` : `${d}@`));
+    setTimeout(() => inputRef.current?.focus(), 30);
+  }, []);
+
+  const [sortMode, setSortMode] = useState<CommentSort>("newest");
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const threadRows = useMemo(
-    () => flattenCommentThreads(comments),
-    [comments],
+    () => flattenCommentThreads(comments, sortMode),
+    [comments, sortMode],
   );
 
   /**
@@ -325,9 +462,8 @@ export default function FeedCommentsModal({
    * can immediately spot the row the notification referred to.
    *
    * The pulse value drives a tinted background on the matching row only
-   * (see the renderItem block below). It animates 0 → 1 quickly, then
-   * decays to a softer persistent tint of 0.45 so the highlight remains
-   * visible — but unobtrusive — for the rest of the session.
+   * (see the renderItem block below). It animates 0 → 1 quickly, holds for
+   * 1200ms, then fades back to 0. The scroll position is left where it is.
    */
   useEffect(() => {
     if (!visible || loading) return;
@@ -363,11 +499,12 @@ export default function FeedCommentsModal({
         easing: Easing.out(Easing.cubic),
         useNativeDriver: false,
       }),
+      // Hold the highlight for 1200ms, then fade it away completely.
       Animated.delay(1200),
       Animated.timing(highlightAnim, {
-        toValue: 0.45,
-        duration: 600,
-        easing: Easing.inOut(Easing.cubic),
+        toValue: 0,
+        duration: 700,
+        easing: Easing.inOut(Easing.quad),
         useNativeDriver: false,
       }),
     ]).start();
@@ -544,7 +681,14 @@ export default function FeedCommentsModal({
   );
 
   const onSortPress = useCallback(() => {
-    Alert.alert("Comments", "Showing newest first.");
+    Keyboard.dismiss();
+    setSortMenuOpen((open) => !open);
+  }, []);
+
+  const chooseSort = useCallback((mode: CommentSort) => {
+    setSortMode(mode);
+    setSortMenuOpen(false);
+    listRef.current?.scrollToOffset({ offset: 0, animated: true });
   }, []);
 
   // Tapping the avatar or name pushes PublicProfile. We close the sheet on
@@ -556,11 +700,21 @@ export default function FeedCommentsModal({
     (userId: string | undefined) => {
       const id = userId?.trim();
       if (!id) return;
+      // Don't close: hide the sheet and bring it back (same scroll spot)
+      // when the user returns from the profile.
+      restoreOffsetRef.current = listScrollYRef.current;
+      Keyboard.dismiss();
+      setSuspended(true);
       navigation.navigate("PublicProfile", { userId: id });
-      onClose();
     },
-    [navigation, onClose],
+    [navigation],
   );
+
+  useEffect(() => {
+    if (!suspended) return;
+    const unsub = navigation.addListener("focus", () => setSuspended(false));
+    return unsub;
+  }, [suspended, navigation]);
 
   const mePhoto =
     typeof me?.profile_photo === "string" && me.profile_photo.trim()
@@ -588,10 +742,11 @@ export default function FeedCommentsModal({
   const sheetPadBottom = keyboardInset > 0 ? keyboardInset : sheetBottomPad;
 
   useEffect(() => {
-    if (!(visible && postId)) return;
+    if (!(visible && postId) || suspended) return;
     closingRef.current = false;
     backdropOpacity.setValue(0);
     sheetTranslateY.setValue(slidePx);
+    sheetTranslateX.setValue(0);
 
     const enter = Animated.parallel([
       Animated.timing(backdropOpacity, {
@@ -608,13 +763,13 @@ export default function FeedCommentsModal({
     ]);
     enter.start();
     return () => enter.stop();
-  }, [visible, postId, slidePx, backdropOpacity, sheetTranslateY]);
+  }, [visible, postId, suspended, slidePx, backdropOpacity, sheetTranslateY, sheetTranslateX]);
 
   /** Animate the sheet closed. `flickVelocity` is the user's release velocity
    * (px/ms downward) — when present we shorten the close animation so it
    * feels like a continuation of the user's swipe rather than a fresh ease. */
   const handleDismiss = useCallback(
-    (flickVelocity?: number) => {
+    (flickVelocity?: number, toRight?: boolean) => {
       if (closingRef.current) return;
       closingRef.current = true;
       Keyboard.dismiss();
@@ -629,12 +784,21 @@ export default function FeedCommentsModal({
           duration: fadeDuration,
           useNativeDriver: true,
         }),
-        Animated.timing(sheetTranslateY, {
-          toValue: slidePx,
-          duration: sheetDuration,
-          easing: flicked ? Easing.out(Easing.quad) : Easing.in(Easing.cubic),
-          useNativeDriver: true,
-        }),
+        toRight
+          ? Animated.timing(sheetTranslateX, {
+              toValue: WINDOW_W,
+              duration: 180,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: true,
+            })
+          : Animated.timing(sheetTranslateY, {
+              toValue: slidePx,
+              duration: sheetDuration,
+              easing: flicked
+                ? Easing.out(Easing.quad)
+                : Easing.in(Easing.cubic),
+              useNativeDriver: true,
+            }),
       ]);
 
       exit.start(({ finished }) => {
@@ -642,11 +806,17 @@ export default function FeedCommentsModal({
         if (finished) onClose();
       });
     },
-    [onClose, slidePx, backdropOpacity, sheetTranslateY],
+    [onClose, slidePx, backdropOpacity, sheetTranslateY, sheetTranslateX],
   );
 
   const springBack = useCallback(() => {
     Animated.spring(sheetTranslateY, {
+      toValue: 0,
+      friction: 8,
+      tension: 120,
+      useNativeDriver: true,
+    }).start();
+    Animated.spring(sheetTranslateX, {
       toValue: 0,
       friction: 8,
       tension: 120,
@@ -657,7 +827,7 @@ export default function FeedCommentsModal({
       duration: 160,
       useNativeDriver: true,
     }).start();
-  }, [sheetTranslateY, backdropOpacity]);
+  }, [sheetTranslateY, sheetTranslateX, backdropOpacity]);
 
   const onListScroll = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -666,57 +836,127 @@ export default function FeedCommentsModal({
     [],
   );
 
-  const dragPanResponder = useMemo(
-    () =>
-      PanResponder.create({
-        // Only consider claiming the gesture if the user is at the top of the
-        // comments list AND is dragging clearly downward. This lets the
-        // FlatList handle normal vertical scrolling.
-        onMoveShouldSetPanResponderCapture: (_evt, g) => {
-          if (closingRef.current) return false;
-          const downward = g.dy > 4;
-          const verticalDominant = Math.abs(g.dy) > Math.abs(g.dx) * 1.2;
-          const atTop = listScrollYRef.current <= 0;
-          return downward && verticalDominant && atTop;
-        },
-        onPanResponderGrant: () => {
-          sheetTranslateY.stopAnimation((value) => {
-            dragStartTranslateRef.current = value;
-          });
-          // Fade backdrop slightly as the user drags so the dismiss intent
-          // feels acknowledged immediately.
-        },
-        onPanResponderMove: (_evt, g) => {
-          const next = Math.max(0, dragStartTranslateRef.current + g.dy);
+  const dragPanResponder = useMemo(() => {
+    /** Decide (once) whether this gesture is a pull-down or a swipe-right.
+     * Pull-down only counts when the list is at its top; swipe-right is
+     * ignored when the touch started in the composer. Until it's decided the
+     * list scrolls normally. */
+    const decide = (g: { dx: number; dy: number }) => {
+      if (dragModeRef.current) return dragModeRef.current;
+      if (keyboardOpenRef.current) return null;
+      if (
+        !touchInComposerRef.current &&
+        g.dy > 4 &&
+        Math.abs(g.dy) > Math.abs(g.dx) &&
+        listScrollYRef.current <= 0
+      ) {
+        dragModeRef.current = "y";
+        dragBaseYRef.current = g.dy; // start from 0, no jump
+        setListScrollEnabled(false);
+        return "y";
+      }
+      if (
+        Math.abs(g.dx) > 8 &&
+        Math.abs(g.dx) > Math.abs(g.dy) * 1.3 &&
+        !touchInComposerRef.current &&
+        !(touchOnCommentRef.current && g.dx < 0)
+      ) {
+        dragModeRef.current = "x";
+        dragBaseXRef.current = g.dx;
+        setListScrollEnabled(false);
+        return "x";
+      }
+      return null;
+    };
+
+    return PanResponder.create({
+      // Claim touches that land on empty space too, so the whole sheet drags
+      // (the list is a native scroller and would otherwise swallow them).
+      onStartShouldSetPanResponder: () =>
+        !closingRef.current && !keyboardOpenRef.current,
+      onMoveShouldSetPanResponderCapture: (_evt, g) => {
+        if (closingRef.current) return false;
+        if (dragModeRef.current) return true;
+        if (keyboardOpenRef.current) return false;
+        const downward =
+          !touchInComposerRef.current &&
+          g.dy > 4 &&
+          Math.abs(g.dy) > Math.abs(g.dx) * 1.2 &&
+          listScrollYRef.current <= 0;
+        const rightward =
+          Math.abs(g.dx) > 8 &&
+          Math.abs(g.dx) > Math.abs(g.dy) * 1.3 &&
+          !touchInComposerRef.current &&
+          !(touchOnCommentRef.current && g.dx < 0);
+        return downward || rightward;
+      },
+      onPanResponderGrant: (_evt, g) => {
+        dragModeRef.current = null;
+        sheetTranslateY.stopAnimation((value) => {
+          dragStartTranslateRef.current = value;
+        });
+        decide(g);
+      },
+      onPanResponderMove: (_evt, g) => {
+        const mode = decide(g);
+        if (mode === "y") {
+          const next = Math.max(
+            0,
+            dragStartTranslateRef.current + (g.dy - dragBaseYRef.current),
+          );
           sheetTranslateY.setValue(next);
-          const fade = Math.max(0, 1 - next / slidePx);
-          backdropOpacity.setValue(fade);
-        },
-        onPanResponderRelease: (_evt, g) => {
-          const distance = g.dy;
+          backdropOpacity.setValue(Math.max(0, 1 - next / slidePx));
+        } else if (mode === "x") {
+          // A sideways swipe (either direction) pulls the sheet DOWN.
+          const next = Math.abs(g.dx - dragBaseXRef.current);
+          sheetTranslateY.setValue(next);
+          backdropOpacity.setValue(Math.max(0, 1 - next / slidePx));
+        }
+      },
+      onPanResponderRelease: (_evt, g) => {
+        const mode = dragModeRef.current;
+        dragModeRef.current = null;
+        setListScrollEnabled(true);
+        if (mode === "y") {
+          const distance = g.dy - dragBaseYRef.current;
           const velocity = g.vy;
           const flick =
             velocity > DISMISS_FLICK_VELOCITY &&
             distance > DISMISS_FLICK_MIN_DISTANCE;
-          const slowDismiss = distance > DISMISS_DRAG_DISTANCE;
-          if (flick || slowDismiss) {
+          if (flick || distance > DISMISS_DRAG_DISTANCE) {
             handleDismiss(flick ? velocity : undefined);
           } else {
             springBack();
           }
-        },
-        onPanResponderTerminate: () => {
-          springBack();
-        },
-        onPanResponderTerminationRequest: () => false,
-      }),
-    [sheetTranslateY, backdropOpacity, slidePx, handleDismiss, springBack],
-  );
+        } else if (mode === "x") {
+          const distance = Math.abs(g.dx - dragBaseXRef.current);
+          if (distance > 90 || (Math.abs(g.vx) > 0.6 && distance > 20)) {
+            handleDismiss(Math.abs(g.vx));
+          } else {
+            springBack();
+          }
+        }
+      },
+      onPanResponderTerminate: () => {
+        dragModeRef.current = null;
+        setListScrollEnabled(true);
+        springBack();
+      },
+      onPanResponderTerminationRequest: () => false,
+    });
+  }, [
+    sheetTranslateY,
+    sheetTranslateX,
+    backdropOpacity,
+    slidePx,
+    handleDismiss,
+    springBack,
+  ]);
 
   return (
     <>
     <Modal
-      visible={visible && !!postId}
+      visible={visible && !!postId && !suspended}
       transparent
       animationType="none"
       onRequestClose={() => handleDismiss()}
@@ -736,8 +976,17 @@ export default function FeedCommentsModal({
         <Animated.View
           style={[
             styles.sheetAnimatedWrap,
-            { transform: [{ translateY: sheetTranslateY }] },
+            {
+              transform: [
+                { translateY: sheetTranslateY },
+                { translateX: sheetTranslateX },
+              ],
+            },
           ]}
+          onTouchStartCapture={() => {
+            touchInComposerRef.current = false;
+            touchOnCommentRef.current = false;
+          }}
           {...dragPanResponder.panHandlers}
         >
           <View style={[styles.sheetOuter, { height: slidePx }]}>
@@ -772,9 +1021,53 @@ export default function FeedCommentsModal({
                 </TouchableOpacity>
               </View>
 
+              {sortMenuOpen ? (
+                <>
+                  <Pressable
+                    style={styles.sortMenuScrim}
+                    onPress={() => setSortMenuOpen(false)}
+                    accessibilityLabel="Close sort menu"
+                  />
+                  <View style={styles.sortMenu}>
+                    {(
+                      [
+                        { key: "newest", label: "Newest" },
+                        { key: "top", label: "Most liked" },
+                      ] as { key: CommentSort; label: string }[]
+                    ).map((opt, i) => (
+                      <TouchableOpacity
+                        key={opt.key}
+                        style={[
+                          styles.sortMenuRow,
+                          i === 0 && styles.sortMenuRowFirst,
+                        ]}
+                        activeOpacity={0.6}
+                        onPress={() => chooseSort(opt.key)}
+                      >
+                        <Text
+                          style={[
+                            styles.sortMenuLabel,
+                            sortMode === opt.key && styles.sortMenuLabelOn,
+                          ]}
+                        >
+                          {opt.label}
+                        </Text>
+                        {sortMode === opt.key ? (
+                          <Check
+                            size={18}
+                            color={Colors.primary}
+                            strokeWidth={2.6}
+                          />
+                        ) : null}
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              ) : null}
+
               {loading ? (
                 <View style={styles.loadingBox}>
-                  <ActivityIndicator color={TIKTOK_SEND} />
+                  <ActivityIndicator color={Colors.accent} />
                 </View>
               ) : (
                 <FlatList
@@ -784,7 +1077,24 @@ export default function FeedCommentsModal({
                   style={styles.list}
                   contentContainerStyle={styles.listContent}
                   keyboardShouldPersistTaps="handled"
+                  keyboardDismissMode="on-drag"
+                  // Native spring at the top when you fling up to it. It is
+                  // frozen only while the sheet itself is being dragged.
+                  bounces
+                  scrollEnabled={listScrollEnabled}
                   onScroll={onListScroll}
+                  contentOffset={{ x: 0, y: restoreOffsetRef.current }}
+                  onContentSizeChange={() => {
+                    const y = restoreOffsetRef.current;
+                    if (y > 0) {
+                      listRef.current?.scrollToOffset({
+                        offset: y,
+                        animated: false,
+                      });
+                      listScrollYRef.current = y;
+                      restoreOffsetRef.current = 0;
+                    }
+                  }}
                   scrollEventThrottle={16}
                   // `scrollToIndex` can throw if the target row hasn't been
                   // measured yet (long threads, fast taps). Fall back to a
@@ -838,13 +1148,6 @@ export default function FeedCommentsModal({
                               "rgba(255, 153, 0, 0.18)",
                             ],
                           }),
-                          borderLeftColor: highlightAnim.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [
-                              "rgba(255, 153, 0, 0)",
-                              Colors.accent,
-                            ],
-                          }),
                         }
                       : null;
 
@@ -852,14 +1155,27 @@ export default function FeedCommentsModal({
                       <Animated.View
                         style={[
                           styles.threadRowWrap,
-                          depth > 0 && [
-                            styles.threadReplyBranch,
-                            { marginLeft: Math.min(depth * 12, 60) },
-                          ],
+                          depth > 0 && {
+                            marginLeft: Math.min(depth * 12, 60),
+                          },
                           isHighlighted && styles.highlightedRowBase,
                           highlightStyle,
                         ]}
                       >
+                        <SwipeToReplyRow
+                          onSwipeActiveChange={(active) =>
+                            setListScrollEnabled(!active)
+                          }
+                          onTouchStart={() => {
+                            touchOnCommentRef.current = true;
+                          }}
+                          onReply={() => {
+                            startReplyTo(item);
+                          }}
+                        >
+                        <View
+                          style={depth > 0 ? styles.threadReplyBranch : undefined}
+                        >
                         <Pressable
                           style={styles.commentRow}
                           onPress={() => handleCommentRowPress(item)}
@@ -914,7 +1230,7 @@ export default function FeedCommentsModal({
                               <TouchableOpacity
                                 hitSlop={8}
                                 activeOpacity={0.6}
-                                onPress={() => setReplyTo(item)}
+                                onPress={() => startReplyTo(item)}
                               >
                                 <Text style={styles.cReply}>Reply</Text>
                               </TouchableOpacity>
@@ -945,6 +1261,8 @@ export default function FeedCommentsModal({
                             </TouchableOpacity>
                           </View>
                         </Pressable>
+                        </View>
+                        </SwipeToReplyRow>
                       </Animated.View>
                     );
                   }}
@@ -963,7 +1281,12 @@ export default function FeedCommentsModal({
                 />
               )}
 
-              <View style={styles.composeSection}>
+              <View
+                style={styles.composeSection}
+                onTouchStart={() => {
+                  touchInComposerRef.current = true;
+                }}
+              >
                 {replyTo ? (
                   <View style={styles.replyBanner}>
                     <Text style={styles.replyBannerLabel} numberOfLines={1}>
@@ -982,22 +1305,71 @@ export default function FeedCommentsModal({
                   </View>
                 ) : null}
 
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  keyboardShouldPersistTaps="handled"
-                  contentContainerStyle={styles.emojiStrip}
-                >
-                  {QUICK_EMOJIS.map((e) => (
-                    <TouchableOpacity
-                      key={e}
-                      style={styles.emojiChip}
-                      onPress={() => setDraft((d) => d + e)}
+                {mentionQuery !== null ? (
+                  <View style={styles.mentionList}>
+                    <ScrollView
+                      keyboardShouldPersistTaps="handled"
+                      showsVerticalScrollIndicator={false}
+                      style={styles.mentionScroll}
                     >
-                      <Text style={styles.emojiChipText}>{e}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
+                      {mentionCandidates.length === 0 ? (
+                        <Text style={styles.mentionEmpty}>
+                          {mentionLoading ? "Loading…" : "No matches"}
+                        </Text>
+                      ) : (
+                        mentionCandidates.map((u) => {
+                          const name = feedAuthorDisplayName(u);
+                          const avatarUser = {
+                            id: u.id,
+                            first_name: u.first_name ?? undefined,
+                            last_name: u.last_name ?? undefined,
+                            username: u.username ?? undefined,
+                            name,
+                          };
+                          const photo = u.profile_photo?.trim()
+                            ? encodeURI(u.profile_photo.trim())
+                            : "";
+                          return (
+                            <TouchableOpacity
+                              key={u.id}
+                              style={styles.mentionRow}
+                              activeOpacity={0.6}
+                              onPress={() => pickMention(u)}
+                            >
+                              {photo ? (
+                                <Image
+                                  source={{ uri: photo }}
+                                  style={styles.mentionAvatar}
+                                />
+                              ) : (
+                                <View
+                                  style={[
+                                    styles.mentionAvatar,
+                                    styles.mentionAvatarFb,
+                                    { backgroundColor: getUserAvatarColor(avatarUser) },
+                                  ]}
+                                >
+                                  <Text style={styles.mentionAvatarTx}>
+                                    {getUserInitials(avatarUser)}
+                                  </Text>
+                                </View>
+                              )}
+                              <View style={styles.mentionText}>
+                                <Text style={styles.mentionName} numberOfLines={1}>
+                                  {name}
+                                </Text>
+                                <Text style={styles.mentionHandle} numberOfLines={1}>
+                                  @{(u.username ?? "").replace(/^@/, "")}
+                                </Text>
+                              </View>
+                            </TouchableOpacity>
+                          );
+                        })
+                      )}
+                    </ScrollView>
+                  </View>
+                ) : null}
+
 
                 <View style={styles.composeRow}>
                   {mePhoto ? (
@@ -1012,6 +1384,7 @@ export default function FeedCommentsModal({
 
                   <View style={styles.inputShell}>
                     <TextInput
+                      ref={inputRef}
                       style={styles.input}
                       placeholder={
                         replyTo
@@ -1026,13 +1399,12 @@ export default function FeedCommentsModal({
                       editable={!submitting && !!token}
                     />
                     <View style={styles.inputIcons}>
-                      <TouchableOpacity hitSlop={8} activeOpacity={0.6}>
-                        <ImageIcon size={22} color="#8e8e93" strokeWidth={2} />
-                      </TouchableOpacity>
-                      <TouchableOpacity hitSlop={8} activeOpacity={0.6}>
-                        <Smile size={22} color="#8e8e93" strokeWidth={2} />
-                      </TouchableOpacity>
-                      <TouchableOpacity hitSlop={8} activeOpacity={0.6}>
+                      <TouchableOpacity
+                        hitSlop={8}
+                        activeOpacity={0.6}
+                        onPress={onAtPress}
+                        accessibilityLabel="Mention someone"
+                      >
                         <AtSign size={22} color="#8e8e93" strokeWidth={2} />
                       </TouchableOpacity>
                     </View>
@@ -1114,6 +1486,48 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     justifyContent: "center",
   },
+  sortMenuScrim: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 10,
+  },
+  sortMenu: {
+    position: "absolute",
+    top: 64,
+    alignSelf: "center",
+    zIndex: 11,
+    minWidth: 190,
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#dcdcdc",
+    paddingVertical: 4,
+    shadowColor: "#000",
+    shadowOpacity: 0.14,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
+  },
+  sortMenuRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  sortMenuRowFirst: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#ebebeb",
+  },
+  sortMenuLabel: {
+    fontFamily: Fonts.instrument.medium,
+    fontSize: 15,
+    color: "#333",
+  },
+  sortMenuLabelOn: {
+    fontFamily: Fonts.gabarito.semiBold,
+    color: Colors.primary,
+  },
   headerCenter: {
     flex: 1,
     flexDirection: "row",
@@ -1151,8 +1565,6 @@ const styles = StyleSheet.create({
   // animated background colour + left border colour are applied via the
   // interpolations in renderItem so only the targeted row is animated.
   highlightedRowBase: {
-    borderLeftWidth: 3,
-    paddingLeft: 8,
     borderRadius: 10,
     marginVertical: 2,
   },
@@ -1282,20 +1694,59 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     marginLeft: 10,
   },
-  emojiStrip: {
-    paddingBottom: 10,
-    alignItems: "center",
+  mentionList: {
+    marginBottom: 8,
+    maxHeight: 196,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#dcdcdc",
+    backgroundColor: "#fff",
+    overflow: "hidden",
+  },
+  mentionScroll: {
+    flexGrow: 0,
+  },
+  mentionRow: {
     flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
   },
-  emojiChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginRight: 6,
-    borderRadius: 999,
-    backgroundColor: "#f3f3f5",
+  mentionAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
   },
-  emojiChipText: {
-    fontSize: 22,
+  mentionAvatarFb: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  mentionAvatarTx: {
+    fontFamily: Fonts.gabarito.bold,
+    fontSize: 13,
+    color: "#fff",
+  },
+  mentionText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mentionName: {
+    fontFamily: Fonts.gabarito.semiBold,
+    fontSize: 14,
+    color: "#111",
+  },
+  mentionHandle: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 13,
+    color: "#8a8f96",
+  },
+  mentionEmpty: {
+    paddingVertical: 14,
+    textAlign: "center",
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14,
+    color: "#8a8f96",
   },
   composeRow: {
     flexDirection: "row",
@@ -1353,7 +1804,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: TIKTOK_SEND,
+    backgroundColor: Colors.accent,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 4,

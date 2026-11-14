@@ -115,9 +115,9 @@ export default function TopNav({ onOpenSettings }: TopNavProps) {
             onPress={openSearch}
             style={styles.searchHit}
             accessibilityRole="button"
-            accessibilityLabel="Click to search"
+            accessibilityLabel="Search for anything"
           >
-            <Text style={styles.searchHitLabel}>Click to search</Text>
+            <Text style={styles.searchHitLabel}>Search for anything</Text>
           </Pressable>
         ) : (
           <Animated.View
@@ -137,7 +137,7 @@ export default function TopNav({ onOpenSettings }: TopNavProps) {
               ref={inputRef}
               value={query}
               onChangeText={setQuery}
-              placeholder="Search"
+              placeholder="Search for anything"
               placeholderTextColor="#8C8C8C"
               style={styles.searchInput}
               autoCorrect={false}

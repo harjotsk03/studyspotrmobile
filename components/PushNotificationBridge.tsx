@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useNotifications } from "../context/NotificationsContext";
+import { setPushAuthToken } from "../utils/openNotificationFromPush";
 import {
   flushPendingPushNavigation,
   registerPushNotifications,
@@ -17,6 +18,10 @@ export default function PushNotificationBridge() {
   useEffect(() => {
     return subscribeToPushResponses();
   }, []);
+
+  useEffect(() => {
+    setPushAuthToken(token ?? null);
+  }, [token]);
 
   useEffect(() => {
     if (!token) {

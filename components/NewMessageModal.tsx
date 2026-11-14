@@ -164,6 +164,7 @@ export default function NewMessageModal({
           data={results}
           keyExtractor={(u) => u.id}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           contentContainerStyle={styles.list}
           ListEmptyComponent={
             loading ? (

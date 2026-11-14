@@ -8,6 +8,7 @@ import {
   StyleSheet,
   Text,
   View,
+  type GestureResponderEvent,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -253,10 +254,20 @@ export default function FeedReelItem({
     onDeleted(post.id);
   }, [post.id, onDeleted]);
 
-  const openPostOptions = useCallback(() => {
-    if (!token) return;
-    setOptionsOpen(true);
-  }, [token]);
+  const [optionsAnchor, setOptionsAnchor] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const openPostOptions = useCallback(
+    (e?: GestureResponderEvent) => {
+      if (!token) return;
+      if (e?.nativeEvent) {
+        setOptionsAnchor({ x: e.nativeEvent.pageX, y: e.nativeEvent.pageY });
+      }
+      setOptionsOpen(true);
+    },
+    [token],
+  );
 
   const bottomPad = Math.max(insets.bottom, 12) + 8;
   const chromeOpacity = overlaysSubdued ? 0.38 : 1;
@@ -421,6 +432,7 @@ export default function FeedReelItem({
       </View>
 
       <FeedPostOptionsSheet
+        anchor={optionsAnchor}
         visible={optionsOpen}
         onClose={() => setOptionsOpen(false)}
         isOwner={isOwner}
