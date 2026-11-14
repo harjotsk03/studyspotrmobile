@@ -29,7 +29,7 @@ export type ChatThreadParams = {
 
 export type InboxStackParamList = {
   InboxHome: undefined;
-  FriendRequests: undefined;
+  FriendRequests: { tab?: "received" | "sent" } | undefined;
 };
 
 export type MainTabsParamList = {

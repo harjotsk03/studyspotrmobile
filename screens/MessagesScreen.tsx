@@ -300,7 +300,7 @@ export default function MessagesScreen() {
         <TouchableOpacity
           activeOpacity={0.7}
           onPress={() => setComposeOpen(true)}
-          style={styles.iconButton}
+          style={[styles.iconButton, { backgroundColor: "#fff" }]}
           accessibilityLabel="New message"
         >
           <SquarePen size={22} color={Colors.dark} strokeWidth={2.2} />
@@ -394,6 +394,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   iconButton: {
+    backgroundColor: "transparent",
     alignItems: "center",
     borderRadius: 16,
     height: 38,

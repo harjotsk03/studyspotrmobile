@@ -1142,6 +1142,7 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
               onPress={onMapPress}
               showsUserLocation
               showsMyLocationButton={false}
+              showsPointsOfInterests={false}
               toolbarEnabled={false}
               rotateEnabled={false}
               pitchEnabled={false}
@@ -1449,7 +1450,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: "#fff",
+    backgroundColor: "transparent",
     borderWidth: 1,
     borderColor: "#E8E8E8",
     alignItems: "center",

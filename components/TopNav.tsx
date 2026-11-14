@@ -15,6 +15,7 @@ import { Menu, MessageCircle, Search, X } from "lucide-react-native";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { useAuth } from "../context/AuthContext";
+import { useChatUnread } from "../context/ChatUnreadContext";
 import { useSearchState } from "../context/SearchStateContext";
 import { navigateToInboxMessagesList } from "../utils/navigateToInboxChat";
 import CreateSunMenu from "./CreateSunMenu";
@@ -27,6 +28,7 @@ export default function TopNav({ onOpenSettings }: TopNavProps) {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NavigationProp<ParamListBase>>();
   const { token } = useAuth();
+  const { unreadChats } = useChatUnread();
   const {
     query,
     setQuery,
@@ -167,6 +169,13 @@ export default function TopNav({ onOpenSettings }: TopNavProps) {
               accessibilityLabel="Messages"
             >
               <MessageCircle size={26} color={Colors.dark} strokeWidth={2} />
+              {unreadChats > 0 ? (
+                <View style={styles.msgBadge} pointerEvents="none">
+                  <Text style={styles.msgBadgeText}>
+                    {unreadChats > 99 ? "99+" : unreadChats}
+                  </Text>
+                </View>
+              ) : null}
             </Pressable>
             {onOpenSettings ? (
               <Pressable
@@ -244,6 +253,26 @@ const styles = StyleSheet.create({
     color: Colors.dark,
     paddingVertical: 0,
     fontFamily: Fonts.instrument.regular,
+  },
+  msgBadge: {
+    position: "absolute",
+    top: -4,
+    right: -6,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 5,
+    backgroundColor: Colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: Colors.light,
+  },
+  msgBadgeText: {
+    color: "#fff",
+    fontSize: 10,
+    lineHeight: 12,
+    fontFamily: Fonts.instrument.semiBold,
   },
   iconBtn: {
     width: 32,

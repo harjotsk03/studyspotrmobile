@@ -37,14 +37,14 @@ type PublicProps = {
 
 type Props = OwnProps | PublicProps;
 
-const OWN_ORDER: OwnProfileMainTabKey[] = [
+export const OWN_ORDER: OwnProfileMainTabKey[] = [
   "posts",
   "reviews",
   "liked",
   "spots",
 ];
 
-const PUBLIC_ORDER: PublicProfileMainTabKey[] = ["posts", "reviews", "spots"];
+export const PUBLIC_ORDER: PublicProfileMainTabKey[] = ["posts", "reviews", "spots"];
 
 const TAB_GAP = 4;
 

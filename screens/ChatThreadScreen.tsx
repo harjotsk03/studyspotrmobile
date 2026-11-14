@@ -29,6 +29,7 @@ import EventDetailDrawer, {
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { useAuth } from "../context/AuthContext";
+import { useChatUnread } from "../context/ChatUnreadContext";
 import type { RootStackParamList } from "../types/navigation";
 import {
   chatPeerDisplayName,
@@ -96,6 +97,7 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
 
   const { token, profile } = useAuth();
   const insets = useSafeAreaInsets();
+  const { refreshChatUnread } = useChatUnread();
   const myId = profile?.userProfile?.id ?? "";
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -281,15 +283,19 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
   useFocusEffect(
     useCallback(() => {
       if (!token) return;
-      void markChatConversationRead(token, conversationId).catch(() => {
-        //
-      });
-      return () => {
-        void markChatConversationRead(token, conversationId).catch(() => {
+      void markChatConversationRead(token, conversationId)
+        .then(() => refreshChatUnread())
+        .catch(() => {
           //
         });
+      return () => {
+        void markChatConversationRead(token, conversationId)
+          .then(() => refreshChatUnread())
+          .catch(() => {
+            //
+          });
       };
-    }, [token, conversationId]),
+    }, [token, conversationId, refreshChatUnread]),
   );
 
   useEffect(() => {
@@ -732,7 +738,7 @@ const styles = StyleSheet.create({
   },
   iconButton: {
     alignItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: "transparent",
     borderRadius: 16,
     height: 38,
     justifyContent: "center",

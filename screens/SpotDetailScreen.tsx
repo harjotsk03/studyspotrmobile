@@ -64,6 +64,7 @@ import ActionOptionsSheet, {
 } from "../components/ActionOptionsSheet";
 import ReportConfirmModal from "../components/ReportConfirmModal";
 import ShareToFriendsSheet from "../components/ShareToFriendsSheet";
+import { titleCase } from "../utils/titleCase";
 import SpotReviewComposerModal, {
   type ComposerMode,
 } from "../components/SpotReviewComposerModal";
@@ -126,9 +127,9 @@ function getNoiseLabel(spot: StudySpot) {
 }
 
 function noiseChipLabel(raw: string) {
-  const trimmed = raw.trim();
+  const trimmed = titleCase(raw);
   if (/zone$/i.test(trimmed)) return trimmed;
-  return `${trimmed} zone`;
+  return `${trimmed} Zone`;
 }
 
 function amenityOn(v: unknown): boolean {
@@ -147,27 +148,27 @@ const AMENITIES: {
   read: (s: StudySpot) => unknown;
 }[] = [
   {
-    label: "Food allowed",
+    label: "Food Allowed",
     Icon: Coffee,
     read: (s) => s.food_drink_allowed,
   },
   {
-    label: "Wi-Fi available",
+    label: "Wi-Fi Available",
     Icon: Wifi,
     read: (s) => s.wifi_available,
   },
   {
-    label: "Outlets available",
+    label: "Outlets Available",
     Icon: Plug,
     read: (s) => s.outlets_available,
   },
   {
-    label: "Whiteboards available",
+    label: "Whiteboards Available",
     Icon: Presentation,
     read: (s) => s.whiteboards_available,
   },
   {
-    label: "Group work friendly",
+    label: "Group Work Friendly",
     Icon: UsersRound,
     read: (s) => s.group_work_friendly,
   },
@@ -553,9 +554,11 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
     typeof spot.lighting === "string" ? spot.lighting.trim() : "";
   const tablesLabel = typeof spot.tables === "string" ? spot.tables.trim() : "";
   const vibeCells = [
-    noiseLabel ? { caption: "Noise", value: noiseLabel } : null,
-    lightingLabel ? { caption: "Light", value: lightingLabel } : null,
-    tablesLabel ? { caption: "Seating", value: tablesLabel } : null,
+    noiseLabel ? { caption: "Noise", value: titleCase(noiseLabel) } : null,
+    lightingLabel
+      ? { caption: "Light", value: titleCase(lightingLabel) }
+      : null,
+    tablesLabel ? { caption: "Seating", value: titleCase(tablesLabel) } : null,
   ].filter((cell): cell is { caption: string; value: string } => cell !== null);
 
   const address =

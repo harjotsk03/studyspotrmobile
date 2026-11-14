@@ -684,12 +684,12 @@ export default function SpotsScreen() {
       chips.push({ key: "nearbyOnly", label: "Within 10 km", Icon: MapPin });
     }
     if (filters.mapReadyOnly) {
-      chips.push({ key: "mapReadyOnly", label: "On map", Icon: MapPin });
+      chips.push({ key: "mapReadyOnly", label: "On Map", Icon: MapPin });
     }
     if (filters.minRating > 0) {
       chips.push({
         key: "minRating",
-        label: `${filters.minRating}+ stars`,
+        label: `${filters.minRating}+ Stars`,
         Icon: Star,
       });
     }
@@ -752,7 +752,7 @@ export default function SpotsScreen() {
             }}
             showsUserLocation
             showsMyLocationButton={false}
-            showsPointsOfInterest={false}
+            showsPointsOfInterests={false}
             showsCompass={false}
             showsBuildings={false}
             showsTraffic={false}

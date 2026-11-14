@@ -15,6 +15,7 @@ import {
   ArrowLeft,
   ChevronRight,
   Search,
+  UserPlus,
   Users,
 } from "lucide-react-native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -85,7 +86,7 @@ function toCommunityData(api: ConnectionCommunity): CommunityData {
 
 export default function ProfileConnectionsScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
-  const { token } = useAuth();
+  const { token, profile } = useAuth();
   const { userId, kind } = route.params;
 
   const [query, setQuery] = useState("");
@@ -265,6 +266,35 @@ export default function ProfileConnectionsScreen({ navigation, route }: Props) {
         <View style={styles.iconButton} />
       </View>
 
+      {kind === "friends" && userId === profile?.userProfile?.id ? (
+        <Pressable
+          onPress={() =>
+            (navigation as any).navigate("MainTabs", {
+              screen: "Inbox",
+              params: { screen: "FriendRequests", params: { tab: "sent" } },
+            })
+          }
+          style={({ pressed }) => [
+            styles.row,
+            styles.sentRow,
+            pressed && styles.rowPressed,
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="Sent follow requests"
+        >
+          <View style={[styles.communityAvatar, styles.communityFallback]}>
+            <UserPlus size={18} color={Colors.dark} strokeWidth={2.2} />
+          </View>
+          <View style={styles.rowInfo}>
+            <Text style={styles.rowName}>Sent requests</Text>
+            <Text style={styles.rowMeta}>
+              People you've requested to follow
+            </Text>
+          </View>
+          <ChevronRight size={18} color="#C4C4C4" strokeWidth={2.2} />
+        </Pressable>
+      ) : null}
+
       <View style={styles.searchWrap}>
         <Search size={16} color="#8C8C8C" strokeWidth={2.2} />
         <TextInput
@@ -334,7 +364,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 16,
-    backgroundColor: "#fff",
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -392,6 +422,10 @@ const styles = StyleSheet.create({
     gap: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: "#eaeaea",
+  },
+  sentRow: {
+    marginHorizontal: 20,
+    marginBottom: 4,
   },
   rowPressed: {
     opacity: 0.7,

@@ -6,6 +6,7 @@ import {
   Image,
   Pressable,
   RefreshControl,
+  ScrollView,
   Share,
   StyleSheet,
   Text,
@@ -18,8 +19,10 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import ProfilePostGridTile from "../components/ProfilePostGridTile";
 import ProfileStat from "../components/ProfileStat";
 import ProfileTabsBar, {
+  OWN_ORDER,
   type OwnProfileMainTabKey,
 } from "../components/ProfileTabsBar";
+import SwipeTabPager from "../components/SwipeTabPager";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import type { StudySpot } from "../context/SpotsContext";
@@ -69,6 +72,8 @@ export default function ProfileScreen() {
   const [photoBusy, setPhotoBusy] = useState(false);
 
   const [mainTab, setMainTab] = useState<OwnProfileMainTabKey>("posts");
+  /** True while the tab pager is being dragged sideways (locks vertical scroll). */
+  const [pagerSwiping, setPagerSwiping] = useState(false);
 
   const [publishedPosts, setPublishedPosts] = useState<FeedPost[]>([]);
   const [publishedCursor, setPublishedCursor] = useState<string | null>(null);
@@ -764,28 +769,118 @@ export default function ProfileScreen() {
     return renderReviewRow({ item: item.item as SpotReview });
   }
 
+  const loadingFor = (tab: OwnProfileMainTabKey) =>
+    tab === "posts"
+      ? publishedLoading || publishedRefreshing
+      : tab === "liked"
+        ? likedLoading || likedRefreshing
+        : tab === "reviews"
+          ? reviewsLoading
+          : false;
+  const errorFor = (tab: OwnProfileMainTabKey) =>
+    tab === "posts"
+      ? publishedError
+      : tab === "liked"
+        ? likedError
+        : tab === "reviews"
+          ? reviewsError
+          : null;
+
+  /** One tab's content. All tabs are mounted side by side in the pager. */
+  const renderPane = (tab: OwnProfileMainTabKey, isActive: boolean) => {
+    const posts =
+      tab === "posts" ? publishedPosts : tab === "liked" ? likedPosts : null;
+    const items: unknown[] =
+      posts ?? (tab === "spots" ? userSpots : reviewsList);
+
+    if (items.length === 0) {
+      // A neighbouring tab that hasn't loaded yet shouldn't flash its empty
+      // state while it's being peeked at.
+      if (!isActive || loadingFor(tab)) {
+        return <ActivityIndicator style={styles.emptySpinner} />;
+      }
+      const err = errorFor(tab);
+      return err ? (
+        <Text style={styles.inlineError}>{err}</Text>
+      ) : (
+        <ProfileTabEmpty
+          tab={tab}
+          onAddSpot={() => rootNavigation.navigate("CreateSpot")}
+        />
+      );
+    }
+
+    if (posts) {
+      const rows: FeedPost[][] = [];
+      for (let i = 0; i < posts.length; i += 3) rows.push(posts.slice(i, i + 3));
+      return (
+        <View>
+          {rows.map((row, ri) => (
+            <View key={`${tab}-${ri}`} style={styles.gridRow}>
+              {row.map((post) => (
+                <ProfilePostGridTile
+                  key={post.id}
+                  post={post}
+                  onPress={() => openPostDetail(post)}
+                />
+              ))}
+              {row.length < 3
+                ? Array.from({ length: 3 - row.length }, (_, k) => (
+                    <View key={`pad-${ri}-${k}`} style={styles.gridPad} />
+                  ))
+                : null}
+            </View>
+          ))}
+          {isActive && postsTailLoading ? (
+            <ActivityIndicator style={styles.listFooterSpinner} />
+          ) : null}
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.listPane}>
+        {tab === "spots"
+          ? (items as StudySpot[]).map((item, index) => (
+              <View
+                key={item.id ?? `spot-${index}`}
+                style={index > 0 ? styles.sep : undefined}
+              >
+                {renderSpotRow({ item })}
+              </View>
+            ))
+          : (items as SpotReview[]).map((item, index) => (
+              <View
+                key={`${spotReviewPrimaryId(item) ?? "rev"}-${index}`}
+                style={index > 0 ? styles.sep : undefined}
+              >
+                {renderReviewRow({ item })}
+              </View>
+            ))}
+      </View>
+    );
+  };
+
   return (
     <View style={styles.safeArea}>
       <TopNav onOpenSettings={() => navigation.navigate("Settings")} />
       <View style={styles.container}>
-        <FlatList<OwnListRow>
+        <ScrollView
           style={styles.profileList}
-          data={listRows}
-          keyExtractor={(item) => item.id}
-          ListHeaderComponent={listHeaderEl}
-          stickyHeaderIndices={[]}
-          renderItem={renderItem}
-          ListFooterComponent={
-            (mainTab === "posts" || mainTab === "liked") && postsTailLoading ? (
-              <ActivityIndicator style={styles.listFooterSpinner} />
-            ) : null
-          }
-          onEndReachedThreshold={0.35}
-          onEndReached={() => void loadMorePosts()}
           contentContainerStyle={styles.flatScroll}
-          ItemSeparatorComponent={
-            isGridTab ? undefined : () => <View style={styles.sep} />
-          }
+          alwaysBounceVertical
+          scrollEnabled={!pagerSwiping}
+          scrollEventThrottle={64}
+          onScroll={(e) => {
+            const { contentOffset, contentSize, layoutMeasurement } =
+              e.nativeEvent;
+            if (
+              contentOffset.y + layoutMeasurement.height >=
+              contentSize.height - 400
+            ) {
+              void loadMorePosts();
+            }
+          }}
           refreshControl={
             <RefreshControl
               refreshing={refreshing || publishedRefreshing || likedRefreshing}
@@ -794,19 +889,16 @@ export default function ProfileScreen() {
               colors={[Colors.primary]}
             />
           }
-          ListEmptyComponent={
-            listLoading ? (
-              <ActivityIndicator style={styles.emptySpinner} />
-            ) : listError ? (
-              <Text style={styles.inlineError}>{listError}</Text>
-            ) : (
-              <ProfileTabEmpty
-                tab={mainTab}
-                onAddSpot={() => rootNavigation.navigate("CreateSpot")}
-              />
-            )
-          }
-        />
+        >
+          {listHeaderEl}
+          <SwipeTabPager<OwnProfileMainTabKey>
+            order={OWN_ORDER}
+            active={mainTab}
+            onChange={setMainTab}
+            renderPane={renderPane}
+            onSwipeActiveChange={setPagerSwiping}
+          />
+        </ScrollView>
       </View>
     </View>
   );
@@ -874,7 +966,13 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 44,
     flexGrow: 1,
-    gap: 12,
+  },
+  // The 12px list gap would leave a strip between the tabs and the grid.
+  flatScrollGrid: {
+    gap: 0,
+  },
+  listPane: {
+    paddingTop: 12,
   },
   gridRow: {
     flexDirection: "row",
@@ -998,7 +1096,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   sep: {
-    height: 4,
+    marginTop: 4,
   },
   spotCard: {
     flexDirection: "row",

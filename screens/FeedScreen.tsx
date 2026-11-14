@@ -25,6 +25,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FeedCommentsModal from "../components/FeedCommentsModal";
 import TopNav from "../components/TopNav";
 import FeedEndOfFeedCreate from "../components/FeedEndOfFeedCreate";
+import { FeedPostSkeleton } from "../components/Skeleton";
 import FeedInstaCard, { type MediaRect } from "../components/FeedInstaCard";
 import FullScreenReelViewer from "../components/FullScreenReelViewer";
 import ShareToFriendsSheet from "../components/ShareToFriendsSheet";
@@ -547,18 +548,13 @@ export default function FeedScreen() {
               )
             }
             refreshControl={
-              // We render our own custom orange spinning-arrow overlay
-              // (`TopArrowLoaderOverlay` below), so make the native pull
-              // indicator invisible. The pull gesture still triggers
-              // `onRefresh`; only its built-in spinner is hidden.
-              // iOS uses `tintColor`; Android uses `colors` /
-              // `progressBackgroundColor`.
+              // Standard pull-to-refresh spinner, shown in the gap that opens
+              // as the list is pulled down (and while a refresh is running).
               <RefreshControl
                 refreshing={refreshing}
                 onRefresh={() => void onRefresh()}
-                tintColor="transparent"
-                colors={["transparent"]}
-                progressBackgroundColor="transparent"
+                tintColor="#8E8E93"
+                colors={[Colors.accent]}
               />
             }
             onEndReached={() => void loadMore()}
@@ -584,8 +580,9 @@ export default function FeedScreen() {
           />
 
           {loading && posts.length === 0 ? (
-            <View style={styles.loadingOverlay}>
-              <SpinningArrowLoader size={36} />
+            <View style={styles.loadingOverlay} pointerEvents="none">
+              <FeedPostSkeleton />
+              <FeedPostSkeleton />
             </View>
           ) : null}
 
@@ -694,9 +691,8 @@ const styles = StyleSheet.create({
   },
   loadingOverlay: {
     ...StyleSheet.absoluteFill,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.6)",
+    overflow: "hidden",
+    backgroundColor: Colors.light,
     zIndex: 15,
   },
   centerMessage: {

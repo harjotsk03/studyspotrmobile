@@ -37,6 +37,7 @@ import {
   NotificationsProvider,
   useNotifications,
 } from "./context/NotificationsContext";
+import { ChatUnreadProvider } from "./context/ChatUnreadContext";
 import { FeedInteractionsProvider } from "./context/FeedInteractionsContext";
 import { SearchStateProvider } from "./context/SearchStateContext";
 import { SpotsProvider } from "./context/SpotsContext";
@@ -199,6 +200,9 @@ function InboxStackScreen() {
       <InboxStack.Screen
         name="FriendRequests"
         component={FriendRequestsScreen}
+        // Full-screen back swipe would steal the Sent <- Received page swipe;
+        // the left-edge back gesture still works.
+        options={{ fullScreenGestureEnabled: false }}
       />
     </InboxStack.Navigator>
   );
@@ -484,6 +488,7 @@ export default function App() {
     <View style={styles.appRoot}>
       <AuthProvider>
         <NotificationsProvider>
+          <ChatUnreadProvider>
           <FeedInteractionsProvider>
             <SearchStateProvider>
               <SpotsProvider>
@@ -506,6 +511,7 @@ export default function App() {
               </SpotsProvider>
             </SearchStateProvider>
           </FeedInteractionsProvider>
+          </ChatUnreadProvider>
         </NotificationsProvider>
       </AuthProvider>
     </View>
