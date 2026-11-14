@@ -1,6 +1,15 @@
-import { CommonActions } from "@react-navigation/native";
+import { CommonActions, StackActions } from "@react-navigation/native";
 import { Colors } from "../constants/Colors";
 import { navigationRef } from "../navigation/rootNavigation";
+import { fetchFeedPostById } from "./feedApi";
+import { fetchChatConversations } from "./chatApi";
+
+/** Set by `PushNotificationBridge` so a tapped push can fetch the post it
+ * refers to (the payload only carries ids). */
+let authToken: string | null = null;
+export function setPushAuthToken(token: string | null) {
+  authToken = token;
+}
 
 export type PushPayload = {
   kind?: string;
@@ -10,6 +19,8 @@ export type PushPayload = {
   communityId?: string;
   communityName?: string;
   eventId?: string;
+  postId?: string;
+  commentId?: string;
   conversationId?: string;
 };
 
@@ -31,6 +42,8 @@ export function parsePushPayload(data: unknown): PushPayload | null {
     communityId: asString(raw.communityId),
     communityName: asString(raw.communityName),
     eventId: asString(raw.eventId),
+    postId: asString(raw.postId),
+    commentId: asString(raw.commentId),
     conversationId: asString(raw.conversationId),
   };
 
@@ -86,9 +99,29 @@ export function openNotificationFromPush(payload: PushPayload) {
   }
 
   if (payload.kind === "chat" && payload.conversationId) {
-    navigationRef.navigate("ChatThread", {
-      conversationId: payload.conversationId,
-    });
+    const conversationId = payload.conversationId;
+    const openThread = (peer?: unknown) => {
+      if (!navigationRef.isReady()) return;
+      // push (not navigate) so it also works when another thread is open.
+      navigationRef.dispatch(
+        StackActions.push("ChatThread", {
+          conversationId,
+          ...(peer ? { peer } : {}),
+        }),
+      );
+    };
+    if (authToken) {
+      // Look up the other person so the thread header isn't blank.
+      void fetchChatConversations(authToken)
+        .then((list) =>
+          openThread(
+            list.find((c) => c.id === conversationId)?.other_user ?? undefined,
+          ),
+        )
+        .catch(() => openThread());
+    } else {
+      openThread();
+    }
     return;
   }
 
@@ -139,6 +172,27 @@ export function openNotificationFromPush(payload: PushPayload) {
     payload.type === "commented_on_your_post" ||
     payload.type === "replied_to_your_comment"
   ) {
+    const postId = payload.postId;
+    if (postId && authToken) {
+      const opensComments =
+        payload.type !== "liked_your_post";
+      void fetchFeedPostById(authToken, postId)
+        .then((post) => {
+          if (!post) {
+            navigateInbox("InboxHome");
+            return;
+          }
+          navigationRef.navigate("FeedPostDetail", {
+            post,
+            openComments: opensComments,
+            highlightCommentId: opensComments
+              ? payload.commentId || null
+              : null,
+          });
+        })
+        .catch(() => navigateInbox("InboxHome"));
+      return;
+    }
     navigateInbox("InboxHome");
     return;
   }

@@ -169,44 +169,92 @@ export default function FeedLikersModal({
     [],
   );
 
+  // Drag state: which way the gesture is going (decided once), and the
+  // finger offset at the moment it was decided so the sheet never jumps.
+  const dragModeRef = useRef<"y" | "x" | null>(null);
+  const dragBaseRef = useRef(0);
+
   const dragPanResponder = useRef(
-    PanResponder.create({
-      onMoveShouldSetPanResponderCapture: (_evt, g) => {
-        if (closingRef.current) return false;
-        const downward = g.dy > 4;
-        const verticalDominant = Math.abs(g.dy) > Math.abs(g.dx) * 1.2;
-        const atTop = listScrollYRef.current <= 0;
-        return downward && verticalDominant && atTop;
-      },
-      onPanResponderGrant: () => {
-        sheetTranslateY.stopAnimation((value) => {
-          dragStartTranslateRef.current = value;
-        });
-      },
-      onPanResponderMove: (_evt, g) => {
-        const next = Math.max(0, dragStartTranslateRef.current + g.dy);
-        sheetTranslateY.setValue(next);
-        const fade = Math.max(0, 1 - next / slidePx);
-        backdropOpacity.setValue(fade);
-      },
-      onPanResponderRelease: (_evt, g) => {
-        const distance = g.dy;
-        const velocity = g.vy;
-        const flick =
-          velocity > DISMISS_FLICK_VELOCITY &&
-          distance > DISMISS_FLICK_MIN_DISTANCE;
-        const slowDismiss = distance > DISMISS_DRAG_DISTANCE;
-        if (flick || slowDismiss) {
-          handleDismiss(flick ? velocity : undefined);
-        } else {
-          springBack();
+    (() => {
+      /** Pull-down counts only when the list is at the top; a sideways swipe
+       * (either direction) also counts. Both pull the sheet DOWN. Until it's
+       * decided, the list scrolls normally. */
+      const decide = (g: { dx: number; dy: number }) => {
+        if (dragModeRef.current) return dragModeRef.current;
+        if (
+          g.dy > 4 &&
+          Math.abs(g.dy) > Math.abs(g.dx) &&
+          listScrollYRef.current <= 0
+        ) {
+          dragModeRef.current = "y";
+          dragBaseRef.current = g.dy;
+          return "y";
         }
-      },
-      onPanResponderTerminate: () => {
-        springBack();
-      },
-      onPanResponderTerminationRequest: () => false,
-    }),
+        if (Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 1.3) {
+          dragModeRef.current = "x";
+          dragBaseRef.current = g.dx;
+          return "x";
+        }
+        return null;
+      };
+      const pulled = (g: { dx: number; dy: number }, mode: "y" | "x") =>
+        mode === "y"
+          ? Math.max(0, g.dy - dragBaseRef.current)
+          : Math.abs(g.dx - dragBaseRef.current);
+
+      return PanResponder.create({
+        // Claim touches on empty space too so the whole sheet drags (the list
+        // is a native scroller and would otherwise swallow them).
+        onStartShouldSetPanResponder: () => !closingRef.current,
+        onMoveShouldSetPanResponderCapture: (_evt, g) => {
+          if (closingRef.current) return false;
+          if (dragModeRef.current) return true;
+          return (
+            (g.dy > 4 &&
+              Math.abs(g.dy) > Math.abs(g.dx) * 1.2 &&
+              listScrollYRef.current <= 0) ||
+            (Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 1.3)
+          );
+        },
+        onPanResponderGrant: (_evt, g) => {
+          dragModeRef.current = null;
+          sheetTranslateY.stopAnimation((value) => {
+            dragStartTranslateRef.current = value;
+          });
+          decide(g);
+        },
+        onPanResponderMove: (_evt, g) => {
+          const mode = decide(g);
+          if (!mode) return;
+          const next = Math.max(
+            0,
+            dragStartTranslateRef.current + pulled(g, mode),
+          );
+          sheetTranslateY.setValue(next);
+          backdropOpacity.setValue(Math.max(0, 1 - next / slidePx));
+        },
+        onPanResponderRelease: (_evt, g) => {
+          const mode = dragModeRef.current;
+          dragModeRef.current = null;
+          if (!mode) return;
+          const distance = pulled(g, mode);
+          const velocity = mode === "y" ? g.vy : Math.abs(g.vx);
+          const flick =
+            velocity > DISMISS_FLICK_VELOCITY &&
+            distance > DISMISS_FLICK_MIN_DISTANCE;
+          if (flick || distance > DISMISS_DRAG_DISTANCE) {
+            handleDismiss(flick ? velocity : undefined);
+          } else {
+            springBack();
+          }
+        },
+        onPanResponderTerminate: () => {
+          dragModeRef.current = null;
+          springBack();
+        },
+        onPanResponderTerminationRequest: () => false,
+      });
+    })(),
   ).current;
 
   const openProfile = useCallback(
@@ -358,6 +406,7 @@ export default function FeedLikersModal({
                   style={styles.list}
                   contentContainerStyle={styles.listContent}
                   keyboardShouldPersistTaps="handled"
+                  bounces={false}
                   onScroll={onListScroll}
                   scrollEventThrottle={16}
                   showsVerticalScrollIndicator={false}

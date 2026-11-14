@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } f
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   FlatList,
   Image,
   Keyboard,
@@ -20,6 +21,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ArrowLeft, Send, X } from "lucide-react-native";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
+import SwipeableMessageRow from "../components/SwipeableMessageRow";
 import SharedAttachmentPreview from "../components/SharedAttachmentPreview";
 import EventDetailDrawer, {
   type CommunityEvent,
@@ -39,6 +41,8 @@ import {
 } from "../utils/chatApi";
 import {
   encodeShareToken,
+  encodeReplyToken,
+  extractReplyFromBody,
   extractShareFromBody,
   type SharedAttachmentRef,
 } from "../utils/messageShare";
@@ -103,6 +107,14 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [sendBusy, setSendBusy] = useState(false);
   const [draft, setDraft] = useState("");
+  /** Message being replied to (set by swiping a message to the right). */
+  const [replyTo, setReplyTo] = useState<{ name: string; text: string } | null>(
+    null,
+  );
+  const inputRef = useRef<any>(null);
+  /** Shared left-swipe offset so every message reveals its time together. */
+  const [listScrollEnabled, setListScrollEnabled] = useState(true);
+  const timeX = useRef(new Animated.Value(0)).current;
   /** When a draft message arrives via route params with a share token (post
    * or spot), we split it: the human-readable caption goes into `draft`
    * (editable) and the parsed ref lives here so we can render a pinned
@@ -380,11 +392,15 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
         ? `${text}\n${encodeShareToken(attachedShare)}`
         : encodeShareToken(attachedShare)
       : text;
+    const finalBody = replyTo
+      ? `${encodeReplyToken(replyTo)}\n${body}`
+      : body;
 
     setSendBusy(true);
     try {
-      const msg = await sendChatMessage(token, conversationId, body);
+      const msg = await sendChatMessage(token, conversationId, finalBody);
       setDraft("");
+      setReplyTo(null);
       setAttachedShare(null);
       setMessages((prev) => mergeMessagesDedupeNewestFirst(prev, [msg]));
     } catch (e) {
@@ -395,11 +411,12 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
     } finally {
       setSendBusy(false);
     }
-  }, [token, conversationId, draft, sendBusy, attachedShare]);
+  }, [token, conversationId, draft, sendBusy, attachedShare, replyTo]);
 
   const renderMessage = ({ item }: { item: ChatMessage }) => {
     const mine = Boolean(myId && item.sender_id === myId);
-    const { ref, text } = extractShareFromBody(item.body);
+    const { reply, rest } = extractReplyFromBody(item.body);
+    const { ref, text } = extractShareFromBody(rest);
     const trimmedText = text.trim();
     const hasText = trimmedText.length > 0;
     const timeLabel = formatMessageTime(item.created_at);
@@ -410,7 +427,23 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
     //     time below the card, hugging the same edge as the bubble.
     //   - Share only: just the preview card with a small time line beneath.
 
+    const startReply = () => {
+      const snippet = hasText ? trimmedText : ref ? `Shared ${ref.kind}` : rest;
+      setReplyTo({
+        name: mine ? "yourself" : chatPeerDisplayName(peer) || "them",
+        text: snippet,
+      });
+      inputRef.current?.focus();
+    };
+
     return (
+      <SwipeableMessageRow
+        timeLabel={timeLabel}
+        mine={mine}
+        timeX={timeX}
+        onReply={startReply}
+        onSwipeActiveChange={(active) => setListScrollEnabled(!active)}
+      >
       <View
         style={[styles.msgRow, mine ? styles.msgRowMine : styles.msgRowTheirs]}
       >
@@ -420,6 +453,22 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
             mine ? styles.msgStackMine : styles.msgStackTheirs,
           ]}
         >
+          {reply ? (
+            <View
+              style={[
+                styles.quote,
+                mine ? styles.quoteMine : styles.quoteTheirs,
+              ]}
+            >
+              <Text style={styles.quoteName} numberOfLines={1}>
+                {reply.name === "yourself" ? "You" : reply.name}
+              </Text>
+              <Text style={styles.quoteText} numberOfLines={2}>
+                {reply.text}
+              </Text>
+            </View>
+          ) : null}
+
           {hasText || !ref ? (
             <View
               style={[
@@ -435,16 +484,6 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
               >
                 {hasText ? trimmedText : item.body}
               </Text>
-              {!ref ? (
-                <Text
-                  style={[
-                    styles.msgTime,
-                    mine ? styles.msgTimeMine : styles.msgTimeTheirs,
-                  ]}
-                >
-                  {timeLabel}
-                </Text>
-              ) : null}
             </View>
           ) : null}
 
@@ -457,18 +496,9 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
             />
           ) : null}
 
-          {ref ? (
-            <Text
-              style={[
-                styles.msgTimeBelow,
-                mine ? styles.msgTimeBelowMine : styles.msgTimeBelowTheirs,
-              ]}
-            >
-              {timeLabel}
-            </Text>
-          ) : null}
         </View>
       </View>
+      </SwipeableMessageRow>
     );
   };
 
@@ -535,9 +565,13 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
           ref={listRef}
           data={messages}
           inverted
+          scrollEnabled={listScrollEnabled}
           keyExtractor={(item) => item.id}
           renderItem={renderMessage}
           contentContainerStyle={styles.listContent}
+          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+          keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={Keyboard.dismiss}
           onEndReached={() => void loadOlder()}
           onEndReachedThreshold={0.25}
           ListFooterComponent={
@@ -587,6 +621,26 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
           </View>
         ) : null}
 
+        {replyTo ? (
+          <View style={styles.replyBar}>
+            <View style={styles.replyBarText}>
+              <Text style={styles.replyBarName} numberOfLines={1}>
+                Replying to {replyTo.name === "yourself" ? "yourself" : replyTo.name}
+              </Text>
+              <Text style={styles.replyBarSnippet} numberOfLines={1}>
+                {replyTo.text}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setReplyTo(null)}
+              hitSlop={10}
+              accessibilityLabel="Cancel reply"
+            >
+              <X size={18} color={Colors.dark} strokeWidth={2.2} />
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
         <View
           style={[
             styles.composerRow,
@@ -595,6 +649,7 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
         >
           <View style={styles.inputPill}>
             <TextInput
+              ref={inputRef}
               style={styles.input}
               placeholder={attachedShare ? "Add a message…" : "Message"}
               placeholderTextColor="#999"
@@ -774,6 +829,51 @@ const styles = StyleSheet.create({
   msgTimeTheirs: { color: "#888" },
   /** Smaller, lower-contrast timestamp displayed below an attachment card
    * (since the card itself doesn't have room for it). */
+  quote: {
+    maxWidth: "100%",
+    borderLeftWidth: 3,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 3,
+    backgroundColor: "rgba(0,0,0,0.05)",
+  },
+  quoteMine: { borderLeftColor: Colors.primary },
+  quoteTheirs: { borderLeftColor: "#bbb" },
+  quoteName: {
+    fontFamily: Fonts.instrument.medium,
+    fontSize: 12,
+    color: Colors.dark,
+  },
+  quoteText: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 13,
+    color: "#666",
+  },
+  replyBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginHorizontal: 14,
+    marginBottom: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 14,
+    backgroundColor: "#fff",
+    borderLeftWidth: 3,
+    borderLeftColor: Colors.primary,
+  },
+  replyBarText: { flex: 1 },
+  replyBarName: {
+    fontFamily: Fonts.instrument.medium,
+    fontSize: 12,
+    color: Colors.dark,
+  },
+  replyBarSnippet: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 13,
+    color: "#777",
+  },
   msgTimeBelow: {
     fontFamily: Fonts.instrument.medium,
     fontSize: 11,

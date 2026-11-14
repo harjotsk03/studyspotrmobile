@@ -26,7 +26,7 @@ import {
   isConversationUnread,
   type ChatConversation,
 } from "../utils/chatApi";
-import { describeBodyForPreview } from "../utils/messageShare";
+import { describeBodyForPreview, stripReplyForPreview } from "../utils/messageShare";
 import NewMessageModal from "../components/NewMessageModal";
 import SwipeToDeleteRow from "../components/SwipeToDeleteRow";
 
@@ -221,7 +221,7 @@ export default function MessagesScreen() {
       typeof item.last_message_preview === "string"
         ? item.last_message_preview
         : "";
-    const previewText = describeBodyForPreview(rawPreview).trim();
+    const previewText = describeBodyForPreview(stripReplyForPreview(rawPreview)).trim();
     const preview = previewText ? previewText : "Tap to open conversation";
     const when = formatListTime(item.last_message_at);
 

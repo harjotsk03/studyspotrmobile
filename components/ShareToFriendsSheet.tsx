@@ -557,6 +557,7 @@ export default function ShareToFriendsSheet({
               }}
               scrollEventThrottle={16}
               keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
               showsVerticalScrollIndicator={false}
               contentContainerStyle={styles.gridContent}
               ListEmptyComponent={

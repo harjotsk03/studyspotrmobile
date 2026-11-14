@@ -256,6 +256,7 @@ export default function UsersSearch() {
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContent}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
         renderItem={({ item }) => {
           const displayName = getDisplayName(item);

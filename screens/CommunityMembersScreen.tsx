@@ -1069,6 +1069,7 @@ export default function CommunityMembersScreen({ route }: Props) {
           )}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
