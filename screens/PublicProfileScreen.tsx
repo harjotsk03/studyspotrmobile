@@ -35,8 +35,10 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import ProfilePostGridTile from "../components/ProfilePostGridTile";
 import ProfileStat from "../components/ProfileStat";
 import ProfileTabsBar, {
+  PUBLIC_ORDER,
   type PublicProfileMainTabKey,
 } from "../components/ProfileTabsBar";
+import SwipeTabPager from "../components/SwipeTabPager";
 import { SkeletonBox } from "../components/Skeleton";
 import { API_BASE_URL } from "../constants/Api";
 import { Colors } from "../constants/Colors";
@@ -246,6 +248,8 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
   const [showReportModal, setShowReportModal] = useState(false);
 
   const [mainTab, setMainTab] = useState<PublicProfileMainTabKey>("posts");
+  /** True while the tab pager is dragged sideways (locks vertical scroll). */
+  const [pagerSwiping, setPagerSwiping] = useState(false);
 
   const [publishedPosts, setPublishedPosts] = useState<FeedPost[]>([]);
   const [publishedCursor, setPublishedCursor] = useState<string | null>(null);
@@ -895,9 +899,112 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
     return renderReviewRow({ item: item as SpotReview });
   }
 
+  const paneLoading = (tab: PublicProfileMainTabKey) =>
+    tab === "posts"
+      ? canSeePosts && publishedLoading
+      : tab === "reviews"
+        ? reviewsLoading
+        : false;
+  const paneError = (tab: PublicProfileMainTabKey) =>
+    tab === "posts" ? publishedError : tab === "reviews" ? reviewsError : null;
+
+  /** One tab's content; every tab is mounted side by side in the pager. */
+  const renderPane = (tab: PublicProfileMainTabKey, isActive: boolean) => {
+    const items: unknown[] =
+      tab === "posts"
+        ? canSeePosts
+          ? publishedPosts
+          : []
+        : tab === "spots"
+          ? userSpots
+          : reviewsList;
+
+    if (items.length === 0) {
+      if (!isActive || paneLoading(tab)) {
+        return <ActivityIndicator style={styles.emptySpinner} />;
+      }
+      const err = paneError(tab);
+      if (err) return <Text style={styles.inlineError}>{err}</Text>;
+      if (tab === "posts") {
+        return (
+          <View style={styles.emptyCenter}>
+            {canSeePosts ? (
+              <LayoutGrid size={44} color="#C5C9CE" strokeWidth={1.6} />
+            ) : (
+              <Lock size={44} color="#C5C9CE" strokeWidth={1.6} />
+            )}
+            <Text style={styles.emptyCenterTitle}>
+              {canSeePosts ? "No posts yet" : "Posts are private"}
+            </Text>
+            <Text style={styles.emptyCenterBody}>
+              {canSeePosts
+                ? "They haven’t shared anything yet."
+                : "Send a follow request to see their posts once you’re friends."}
+            </Text>
+          </View>
+        );
+      }
+      return <Text style={styles.listEmptyMuted}>{tabEmptyLabel(tab)}</Text>;
+    }
+
+    if (tab === "posts") {
+      const posts = items as FeedPost[];
+      const rows: FeedPost[][] = [];
+      for (let i = 0; i < posts.length; i += 3) rows.push(posts.slice(i, i + 3));
+      return (
+        <View>
+          {rows.map((row, ri) => (
+            <View key={`posts-${ri}`} style={styles.gridRowPub}>
+              {row.map((post) => (
+                <ProfilePostGridTile
+                  key={post.id}
+                  post={post}
+                  onPress={() => openPostDetail(post)}
+                />
+              ))}
+              {row.length < 3
+                ? Array.from({ length: 3 - row.length }, (_, k) => (
+                    <View key={`pad-${ri}-${k}`} style={styles.gridPadPub} />
+                  ))
+                : null}
+            </View>
+          ))}
+          {isActive && postsTailLoading ? (
+            <ActivityIndicator style={styles.footerSpinner} />
+          ) : null}
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.listPanePub}>
+        {tab === "spots"
+          ? (items as StudySpot[]).map((item, index) => (
+              <View
+                key={item.id ?? `spot-${index}`}
+                style={index > 0 ? styles.sep : undefined}
+              >
+                {renderSpotRow({ item })}
+              </View>
+            ))
+          : (items as SpotReview[]).map((item, index) => (
+              <View
+                key={`${spotReviewPrimaryId(item) ?? "rev"}-${index}`}
+                style={index > 0 ? styles.sep : undefined}
+              >
+                {renderReviewRow({ item })}
+              </View>
+            ))}
+      </View>
+    );
+  };
+
   const listHeaderEl =
     loading || !user ? null : (
       <>
+        {/* Everything above the tabs keeps side padding; the tabs and the
+            post grid below run edge to edge. */}
+        <View style={styles.headerPad}>
         <View style={styles.heroRow}>
           {avatarUri && !avatarLoadFailed ? (
             <Pressable onPress={() => setAvatarLightbox(true)}>
@@ -971,11 +1078,15 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
           ) : null}
         </View>
 
-        <ProfileTabsBar
-          variant="public"
-          mainTab={mainTab}
-          onChangeMain={setMainTab}
-        />
+        </View>
+
+        <View>
+          <ProfileTabsBar
+            variant="public"
+            mainTab={mainTab}
+            onChangeMain={setMainTab}
+          />
+        </View>
       </>
     );
 
@@ -1004,7 +1115,7 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
               <TouchableOpacity
                 activeOpacity={0.7}
                 onPress={openProfileMenu}
-                style={styles.iconButton}
+                style={[styles.iconButton, { backgroundColor: "#fff" }]}
               >
                 <EllipsisVertical size={22} color={Colors.dark} strokeWidth={2.2} />
               </TouchableOpacity>
@@ -1024,31 +1135,23 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
         )}
 
         {!loading && !error && user && (
-          <FlatList<ProfileListRow>
+          <ScrollView
             style={styles.profileList}
-            key={isGridTab ? "pub-grid" : "pub-list"}
-            numColumns={isGridTab ? 3 : 1}
-            data={listData as ProfileListRow[]}
-            keyExtractor={(item, index) => keyExtractor(item, index)}
-            renderItem={(args) => renderItem(args as never)}
-            columnWrapperStyle={isGridTab ? styles.gridColumnWrap : undefined}
-            ListHeaderComponent={
-              <>
-                <View style={styles.headerBottomPad}>{listHeaderEl}</View>
-              </>
-            }
-            ListFooterComponent={
-              mainTab === "posts" && postsTailLoading ? (
-                <ActivityIndicator style={styles.footerSpinner} />
-              ) : null
-            }
-            ItemSeparatorComponent={
-              isGridTab ? undefined : () => <View style={styles.sep} />
-            }
-            onEndReachedThreshold={0.35}
-            onEndReached={() => void loadMorePosts()}
             contentContainerStyle={styles.flatContent}
+            alwaysBounceVertical
+            scrollEnabled={!pagerSwiping}
+            scrollEventThrottle={64}
             showsVerticalScrollIndicator={false}
+            onScroll={(e) => {
+              const { contentOffset, contentSize, layoutMeasurement } =
+                e.nativeEvent;
+              if (
+                contentOffset.y + layoutMeasurement.height >=
+                contentSize.height - 400
+              ) {
+                void loadMorePosts();
+              }
+            }}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
@@ -1059,38 +1162,16 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
                 tintColor={Colors.primary}
               />
             }
-            ListEmptyComponent={
-              listLoading ? (
-                <ActivityIndicator style={styles.emptySpinner} />
-              ) : listError ? (
-                <Text style={styles.inlineError}>{listError}</Text>
-              ) : mainTab === "posts" ? (
-                <View style={styles.emptyCenter}>
-                  {canSeePosts ? (
-                    <LayoutGrid
-                      size={44}
-                      color="#C5C9CE"
-                      strokeWidth={1.6}
-                    />
-                  ) : (
-                    <Lock size={44} color="#C5C9CE" strokeWidth={1.6} />
-                  )}
-                  <Text style={styles.emptyCenterTitle}>
-                    {canSeePosts ? "No posts yet" : "Posts are private"}
-                  </Text>
-                  <Text style={styles.emptyCenterBody}>
-                    {canSeePosts
-                      ? "They haven’t shared anything yet."
-                      : "Send a follow request to see their posts once you’re friends."}
-                  </Text>
-                </View>
-              ) : (
-                <Text style={styles.listEmptyMuted}>
-                  {tabEmptyLabel(mainTab)}
-                </Text>
-              )
-            }
-          />
+          >
+            <View style={styles.headerBottomPad}>{listHeaderEl}</View>
+            <SwipeTabPager<PublicProfileMainTabKey>
+              order={PUBLIC_ORDER}
+              active={mainTab}
+              onChange={setMainTab}
+              onSwipeActiveChange={setPagerSwiping}
+              renderPane={renderPane}
+            />
+          </ScrollView>
         )}
       </View>
 
@@ -1215,14 +1296,13 @@ const styles = StyleSheet.create({
   },
   iconButton: {
     alignItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: "transparent",
     borderRadius: 16,
     height: 38,
     justifyContent: "center",
     width: 38,
   },
   headerBottomPad: {
-    paddingBottom: 12,
     paddingTop: 4,
   },
   skeletonScroll: {
@@ -1360,17 +1440,45 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
+  headerPad: {
+    paddingHorizontal: 16,
+  },
+  // Spots / reviews keep their 16px list padding, so the tab bar bleeds back
+  // out to the screen edges.
+  tabsBleed: {
+    marginHorizontal: -16,
+  },
   flatContent: {
     flexGrow: 1,
-    paddingHorizontal: 16,
     paddingBottom: 44,
-    gap: 10,
+  },
+  flatContentGrid: {
+    gap: 0,
+  },
+  flatContentList: {
+    paddingHorizontal: 16,
+  },
+  listPanePub: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+  },
+  gridRowPub: {
+    flexDirection: "row",
+    gap: 1,
+    marginBottom: 1,
+  },
+  gridPadPub: {
+    flex: 1,
+    maxWidth: "33.333%",
+  },
+  headerBottomPadGrid: {
+    paddingBottom: 0,
   },
   gridColumnWrap: {
     gap: 1,
     marginBottom: 1,
   },
-  sep: { height: 4 },
+  sep: { marginTop: 4 },
   spotCard: {
     flexDirection: "row",
     backgroundColor: "#fff",

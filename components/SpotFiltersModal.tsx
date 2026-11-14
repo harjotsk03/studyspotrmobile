@@ -377,7 +377,7 @@ export default function SpotFiltersModal({
             <Section title="Saved">
               <View style={styles.chipsRow}>
                 <FilterChip
-                  label="Saved only"
+                  label="Saved Only"
                   Icon={Bookmark}
                   active={value.savedOnly}
                   disabled={!isSignedIn}
@@ -412,7 +412,7 @@ export default function SpotFiltersModal({
               ) : null}
             </Section>
 
-            <Section title="Minimum rating">
+            <Section title="Minimum Rating">
               <View style={styles.chipsRow}>
                 {RATING_OPTIONS.map((option) => (
                   <FilterChip
@@ -451,7 +451,7 @@ export default function SpotFiltersModal({
               haptic="light"
             />
             <Button
-              label={"Show results"}
+              label={"Show Results"}
               variant="accent"
               size="default"
               onPress={() => dismiss()}

@@ -359,7 +359,7 @@ const styles = StyleSheet.create({
     height: 38,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#fff",
+    backgroundColor: "transparent",
     borderRadius: 16,
   },
   iconHidden: {

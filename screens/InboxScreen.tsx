@@ -8,9 +8,10 @@ import {
   Text,
   View,
 } from "react-native";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { ChevronRight, UserPlus } from "lucide-react-native";
 import TopNav from "../components/TopNav";
 import Button from "../components/Button";
 import SwipeableNotificationCard from "../components/SwipeableNotificationCard";
@@ -30,6 +31,7 @@ import type {
 import { useAuth } from "../context/AuthContext";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import { fetchFeedPostById } from "../utils/feedApi";
+import { createDirectConversation } from "../utils/chatApi";
 
 function formatActorName(actor?: NotificationActor | null) {
   if (!actor) return "";
@@ -157,6 +159,110 @@ function formatNotificationTypeLabel(type?: string | null) {
   return "";
 }
 
+/** The actor's handle if known (compact, Instagram-style), else full name. */
+function formatActorHandle(actor?: NotificationActor | null) {
+  const username = actor?.username?.trim();
+  return username || formatActorName(actor);
+}
+
+/** Splits a notification into a bold lead (who) and the rest of the
+ * sentence, so rows read like "name liked your post. 4h". */
+function describeNotification(notification: NotificationItem): {
+  name: string;
+  text: string;
+} {
+  const name = formatActorHandle(notification.actor);
+  const community = notification.community?.name?.trim();
+
+  switch (notification.type) {
+    case "friend_request":
+      return { name: name || "Someone", text: "requested to follow you." };
+    case "friend_request_accepted":
+      return { name: name || "Someone", text: "accepted your follow request." };
+    case "community_join_request":
+      return {
+        name: name || "Someone",
+        text: community
+          ? `requested to join ${community}.`
+          : "requested to join your community.",
+      };
+    case "accepted_to_community":
+      return {
+        name: "",
+        text: community
+          ? `You're now a member of ${community}.`
+          : "You've been accepted into a community.",
+      };
+    case "event_invite":
+      return {
+        name: name || "Someone",
+        text: community
+          ? `invited you to an event in ${community}.`
+          : "invited you to an event.",
+      };
+    case "liked_your_post":
+      return { name: name || "Someone", text: "liked your post." };
+    case "liked_your_comment":
+      return { name: name || "Someone", text: "liked your comment." };
+    case "commented_on_your_post":
+      return { name: name || "Someone", text: "commented on your post." };
+    case "replied_to_your_comment":
+      return { name: name || "Someone", text: "replied to your comment." };
+    default:
+      return { name: "", text: formatNotificationTitle(notification) };
+  }
+}
+
+/** Short Instagram-style age: 5m, 3h, 4d, 2w, then "Nov 6". */
+function formatNotificationAge(iso?: string | null) {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "";
+  const mins = Math.max(0, Math.floor((Date.now() - then) / 60000));
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  if (days < 35) return `${Math.floor(days / 7)}w`;
+  return new Date(iso).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function notificationSection(iso?: string | null) {
+  const then = iso ? new Date(iso).getTime() : NaN;
+  if (!Number.isFinite(then)) return "Earlier";
+  const days = (Date.now() - then) / 86400000;
+  if (days < 1) return "Today";
+  if (days < 7) return "Last 7 days";
+  if (days < 30) return "Last 30 days";
+  return "Earlier";
+}
+
+type ListEntry =
+  | { kind: "header"; key: string; label: string }
+  | { kind: "item"; key: string; item: NotificationItem };
+
+/** Only comment-like notifications carry a quotable text snippet. */
+function notificationSnippet(notification: NotificationItem) {
+  if (
+    notification.type !== "commented_on_your_post" &&
+    notification.type !== "replied_to_your_comment" &&
+    notification.type !== "liked_your_comment"
+  ) {
+    return "";
+  }
+  return (
+    notification.message?.trim() ||
+    notification.body?.trim() ||
+    notification.content?.trim() ||
+    ""
+  );
+}
+
 function formatFollowRequestSummary(requests: NotificationItem[]) {
   if (requests.length === 0) return "No pending requests";
 
@@ -193,6 +299,7 @@ export default function InboxScreen() {
     markAllNotificationsRead,
     deleteNotification,
     restoreNotification,
+    respondToFriendRequest,
   } = useNotifications();
 
   /**
@@ -202,6 +309,46 @@ export default function InboxScreen() {
    * deletion becomes permanent — matching Gmail / Mail's behavior.
    */
   const [pendingUndo, setPendingUndo] = useState<NotificationItem | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const respondInline = async (
+    notification: NotificationItem,
+    decision: "accept" | "reject",
+  ) => {
+    const friendId = notification.actor?.id ?? notification.actor_user_id;
+    if (!friendId) return;
+    setBusyId(notification.id);
+    try {
+      await respondToFriendRequest(friendId, decision);
+    } catch (err) {
+      Alert.alert(
+        "Error",
+        err instanceof Error ? err.message : "Could not respond to request.",
+      );
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const messageActor = async (notification: NotificationItem) => {
+    const userId = notification.actor?.id ?? notification.actor_user_id;
+    if (!userId || !token) return;
+    setBusyId(notification.id);
+    try {
+      const r = await createDirectConversation(token, userId);
+      rootNavigation.navigate("ChatThread", {
+        conversationId: r.conversation.id,
+        peer: r.other_user ?? undefined,
+      });
+    } catch (err) {
+      Alert.alert(
+        "Error",
+        err instanceof Error ? err.message : "Could not open chat.",
+      );
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   const handleDeleteNotification = (notification: NotificationItem) => {
     void deleteNotification(notification.id).catch((err) => {
@@ -374,6 +521,26 @@ export default function InboxScreen() {
   const visibleNotifications = notifications.filter(
     (notification) => notification.type !== "friend_request",
   );
+  const listEntries = useMemo<ListEntry[]>(() => {
+    const sorted = [...notifications].sort(
+      (a, b) =>
+        new Date(b.created_at ?? 0).getTime() -
+        new Date(a.created_at ?? 0).getTime(),
+    );
+    const out: ListEntry[] = [];
+    let last = "";
+    for (const item of sorted) {
+      const label = notificationSection(item.created_at);
+      if (label !== last) {
+        out.push({ kind: "header", key: `h-${label}`, label });
+        last = label;
+      }
+      out.push({ kind: "item", key: item.id, item });
+    }
+    return out;
+  }, [notifications]);
+  const unreadFollowRequests = friendRequests.some((n) => !n.read_at);
+  const firstRequester = friendRequests[0]?.actor ?? null;
   const unreadVisibleNotificationIds = visibleNotifications
     .filter((notification) => !notification.read_at)
     .map((notification) => notification.id)
@@ -426,20 +593,64 @@ export default function InboxScreen() {
       </View>
 
       <View style={styles.notificationsPane}>
-        <View style={styles.ctaRow}>
-          <View style={styles.ctaCopy}>
-            <Text style={styles.ctaTitle}>Follow requests</Text>
-            <Text style={styles.ctaSubtitle}>
-              {formatFollowRequestSummary(friendRequests)}
-            </Text>
-          </View>
-          <Button
-            label="Review"
-            variant="accent"
-            size="sm"
-            onPress={() => navigation.navigate("FriendRequests")}
-          />
-        </View>
+        {true ? (
+          <Pressable
+            style={styles.ctaRow}
+            onPress={() =>
+              navigation.navigate(
+                "FriendRequests",
+                friendRequests.length === 0 ? { tab: "sent" } : undefined,
+              )
+            }
+            accessibilityRole="button"
+            accessibilityLabel="Follow requests"
+          >
+            {firstRequester ? (
+              <View
+                style={[
+                  styles.ctaAvatar,
+                  {
+                    backgroundColor: getUserAvatarColor({
+                      id: firstRequester.id,
+                      username: firstRequester.username ?? undefined,
+                    }),
+                  },
+                ]}
+              >
+                {typeof firstRequester.profile_photo === "string" &&
+                firstRequester.profile_photo.trim() ? (
+                  <Image
+                    source={{ uri: encodeURI(firstRequester.profile_photo.trim()) }}
+                    style={styles.ctaAvatarImg}
+                  />
+                ) : (
+                  <Text style={styles.avatarText}>
+                    {getUserInitials({
+                      id: firstRequester.id,
+                      first_name: firstRequester.first_name ?? undefined,
+                      last_name: firstRequester.last_name ?? undefined,
+                      username: firstRequester.username ?? undefined,
+                    })}
+                  </Text>
+                )}
+              </View>
+            ) : (
+              <View style={[styles.ctaAvatar, styles.ctaAvatarEmpty]}>
+                <UserPlus size={22} color={Colors.dark} strokeWidth={2} />
+              </View>
+            )}
+            <View style={styles.ctaCopy}>
+              <Text style={styles.ctaTitle}>Follow requests</Text>
+              <Text style={styles.ctaSubtitle} numberOfLines={1}>
+                {friendRequests.length > 0
+                  ? formatFollowRequestSummary(friendRequests)
+                  : "Sent requests and pending follows"}
+              </Text>
+            </View>
+            {unreadFollowRequests ? <View style={styles.unreadDot} /> : null}
+            <ChevronRight size={20} color="#9AA0A6" strokeWidth={2.2} />
+          </Pressable>
+        ) : null}
 
         <View style={styles.notificationsSection}>
           {loading && (
@@ -460,8 +671,8 @@ export default function InboxScreen() {
           {!loading && !error && (
             <FlatList
               style={styles.notificationsList}
-              data={visibleNotifications}
-              keyExtractor={(item) => item.id}
+              data={listEntries}
+              keyExtractor={(entry) => entry.key}
               contentContainerStyle={styles.listContent}
               refreshControl={
                 <RefreshControl
@@ -478,10 +689,21 @@ export default function InboxScreen() {
                   </Text>
                 </View>
               }
-              renderItem={({ item }) => {
+              renderItem={({ item: entry }) => {
+                if (entry.kind === "header") {
+                  return (
+                    <Text style={styles.sectionHeader}>{entry.label}</Text>
+                  );
+                }
+                const item = entry.item;
                 const unread = !item.read_at;
                 const actorName = formatActorName(item.actor);
-                const typeLabel = formatNotificationTypeLabel(item.type);
+                const { name, text } = describeNotification(item);
+                const age = formatNotificationAge(item.created_at);
+                const snippet = notificationSnippet(item);
+                const isRequest = item.type === "friend_request";
+                const canMessage = item.type === "friend_request_accepted";
+                const busy = busyId === item.id;
                 const actorAvatarUri =
                   typeof item.actor?.profile_photo === "string" &&
                   item.actor.profile_photo.trim().length > 0
@@ -500,21 +722,16 @@ export default function InboxScreen() {
                     onDelete={() => handleDeleteNotification(item)}
                   >
                     <Pressable
-                      style={[
-                        styles.notificationCard,
-                        unread && styles.unreadNotificationCard,
-                      ]}
-                      onPress={() => handleNotificationPress(item)}
+                      style={styles.notificationRow}
+                      onPress={() =>
+                        isRequest
+                          ? openActorProfile(item)
+                          : handleNotificationPress(item)
+                      }
                     >
                       <Pressable
                         disabled={!item.actor?.id}
-                        onPress={() =>
-                          item.actor?.id
-                            ? rootNavigation.navigate("PublicProfile", {
-                                userId: item.actor.id,
-                              })
-                            : undefined
-                        }
+                        onPress={() => openActorProfile(item)}
                         style={[
                           styles.avatar,
                           { backgroundColor: getUserAvatarColor(avatarUser) },
@@ -532,25 +749,48 @@ export default function InboxScreen() {
                         )}
                       </Pressable>
                       <View style={styles.notificationBody}>
-                        {!!typeLabel && (
-                          <Text style={styles.typeLabel}>{typeLabel}</Text>
-                        )}
-                        <View style={styles.notificationHeader}>
-                          <Text
-                            style={styles.notificationTitle}
-                            numberOfLines={1}
-                          >
-                            {formatNotificationTitle(item)}
-                          </Text>
-                          {unread && <View style={styles.unreadDot} />}
-                        </View>
-                        <Text
-                          style={styles.notificationMessage}
-                          numberOfLines={2}
-                        >
-                          {formatNotificationBody(item)}
+                        <Text style={styles.notificationLine} numberOfLines={4}>
+                          {name ? (
+                            <Text style={styles.notificationName}>{name} </Text>
+                          ) : null}
+                          {text}
+                          {age ? (
+                            <Text style={styles.notificationAge}>  {age}</Text>
+                          ) : null}
                         </Text>
+                        {snippet ? (
+                          <Text style={styles.notificationSnippet} numberOfLines={2}>
+                            {snippet}
+                          </Text>
+                        ) : null}
                       </View>
+                      {isRequest ? (
+                        <View style={styles.rowActions}>
+                          <Button
+                            label="Confirm"
+                            size="sm"
+                            loading={busy}
+                            onPress={() => void respondInline(item, "accept")}
+                          />
+                          <Button
+                            label="Delete"
+                            size="sm"
+                            variant="secondary"
+                            disabled={busy}
+                            onPress={() => void respondInline(item, "reject")}
+                          />
+                        </View>
+                      ) : canMessage ? (
+                        <Button
+                          label="Message"
+                          size="sm"
+                          variant="secondary"
+                          loading={busy}
+                          onPress={() => void messageActor(item)}
+                        />
+                      ) : unread ? (
+                        <View style={styles.unreadDot} />
+                      ) : null}
                     </Pressable>
                   </SwipeableNotificationCard>
                 );
@@ -613,27 +853,48 @@ const styles = StyleSheet.create({
   ctaRow: {
     marginTop: 4,
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: "#ffffff",
+    paddingVertical: 12,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     gap: 12,
+  },
+  ctaAvatar: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  ctaAvatarEmpty: {
+    backgroundColor: "#E9EAEC",
+  },
+  ctaAvatarImg: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
   },
   ctaCopy: {
     flex: 1,
   },
   ctaTitle: {
-    fontSize: 18,
-    fontFamily: Fonts.gabarito.medium,
+    fontSize: 16,
+    fontFamily: Fonts.gabarito.semiBold,
     color: Colors.dark,
-    marginBottom: 2,
   },
   ctaSubtitle: {
-    fontSize: 12,
+    fontSize: 14,
     fontFamily: Fonts.instrument.regular,
+    color: "#777",
+    marginTop: 1,
+  },
+  sectionHeader: {
+    fontFamily: Fonts.gabarito.bold,
+    fontSize: 17,
     color: Colors.dark,
-    lineHeight: 16,
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 6,
   },
   notificationsList: {
     flex: 1,
@@ -643,7 +904,6 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingBottom: 28,
-    gap: 6,
   },
   stateCard: {
     backgroundColor: "#fff",
@@ -663,74 +923,63 @@ const styles = StyleSheet.create({
     color: "#666",
     lineHeight: 20,
   },
-  notificationCard: {
-    backgroundColor: "#fff",
+  notificationRow: {
+    backgroundColor: Colors.light,
     paddingHorizontal: 16,
     paddingVertical: 10,
     flexDirection: "row",
+    alignItems: "center",
     gap: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(0, 0, 0, 0.05)",
-  },
-  unreadNotificationCard: {
-    backgroundColor: "#F8FBFF",
-    borderColor: "rgba(26, 97, 168, 0.18)",
   },
   avatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
   },
   avatarImage: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
   },
   avatarText: {
     fontFamily: Fonts.gabarito.bold,
-    fontSize: 17,
+    fontSize: 18,
     color: "#fff",
   },
   notificationBody: {
     flex: 1,
-    gap: 4,
+    gap: 3,
   },
-  notificationHeader: {
+  notificationLine: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 15,
+    lineHeight: 20,
+    color: Colors.dark,
+  },
+  notificationName: {
+    fontFamily: Fonts.instrument.semiBold,
+  },
+  notificationAge: {
+    color: "#8A8F95",
+  },
+  notificationSnippet: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14,
+    color: "#777",
+    lineHeight: 19,
+  },
+  rowActions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-  },
-  typeLabel: {
-    alignSelf: "flex-start",
-    backgroundColor: "rgba(255, 153, 0, 0.14)",
-    borderRadius: 999,
-    color: Colors.accent,
-    fontFamily: Fonts.instrument.semiBold,
-    fontSize: 11,
-    overflow: "hidden",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  notificationTitle: {
-    flex: 1,
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 16,
-    color: Colors.dark,
+    gap: 6,
   },
   unreadDot: {
     width: 9,
     height: 9,
     borderRadius: 5,
-    backgroundColor: Colors.accent,
-  },
-  notificationMessage: {
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 14,
-    color: "#555",
-    lineHeight: 19,
+    backgroundColor: Colors.primary,
   },
 });

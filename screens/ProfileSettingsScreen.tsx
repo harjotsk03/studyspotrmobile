@@ -176,7 +176,7 @@ const styles = StyleSheet.create({
   },
   iconButton: {
     alignItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: "transparent",
     borderRadius: 16,
     height: 38,
     justifyContent: "center",
