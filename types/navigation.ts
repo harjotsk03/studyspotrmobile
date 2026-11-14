@@ -54,6 +54,10 @@ export type RootStackParamList = {
   Messages: undefined;
   ChatThread: ChatThreadParams;
   BlockedUsers: undefined;
+  ProfileConnections: {
+    userId: string;
+    kind: "friends" | "communities";
+  };
   SpotViewer: { spot: StudySpot };
   CreateSpot: undefined;
   UserPostsFeed: UserPostsFeedParams;

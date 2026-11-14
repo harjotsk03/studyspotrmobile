@@ -16,7 +16,7 @@ import {
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system";
-import { Video, ResizeMode } from "expo-av";
+import FeedVideo from "./FeedVideo";
 import { X } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors } from "../constants/Colors";
@@ -273,11 +273,11 @@ export default function FeedComposerModal({
                 </TouchableOpacity>
                 <View style={styles.previewInner}>
                   {mediaType === "video" ? (
-                    <Video
+                    <FeedVideo
+                      uri={asset.uri}
                       style={styles.previewMedia}
-                      source={{ uri: asset.uri }}
-                      resizeMode={ResizeMode.CONTAIN}
-                      useNativeControls
+                      contentFit="contain"
+                      nativeControls
                       isLooping={false}
                     />
                   ) : (

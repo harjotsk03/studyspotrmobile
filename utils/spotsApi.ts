@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "../constants/Api";
+import { filePart } from "./formDataFile";
 import type { StudySpot } from "../context/SpotsContext";
 
 export const SPOTS_API_BASE = `${API_BASE_URL}/api/v1/spots`;
@@ -242,11 +243,7 @@ export async function createSpotMultipart(
 
     form.append(
       "images",
-      {
-        uri: asset.uri,
-        type,
-        name,
-      } as unknown as Blob,
+      filePart({ uri: asset.uri, type, name }),
     );
   }
 
@@ -311,11 +308,7 @@ export async function updateSpotMultipart(
 
     form.append(
       "images",
-      {
-        uri: asset.uri,
-        type,
-        name,
-      } as unknown as Blob,
+      filePart({ uri: asset.uri, type, name }),
     );
   }
 
@@ -360,11 +353,7 @@ export async function createReviewMultipart(
     const name = rawName.includes(".") ? rawName : `${rawName}.jpg`;
     form.append(
       "images",
-      {
-        uri: asset.uri,
-        type,
-        name,
-      } as unknown as Blob,
+      filePart({ uri: asset.uri, type, name }),
     );
   }
 
@@ -405,11 +394,7 @@ export async function updateReviewMultipart(
     const name = rawName.includes(".") ? rawName : `${rawName}.jpg`;
     form.append(
       "images",
-      {
-        uri: asset.uri,
-        type,
-        name,
-      } as unknown as Blob,
+      filePart({ uri: asset.uri, type, name }),
     );
   }
 
@@ -452,6 +437,62 @@ export async function deleteReviewJson(payload: {
   if (!res.ok) {
     throw new Error(apiError(json, `Could not delete review (${res.status})`));
   }
+}
+
+function authHeaders(token: string): HeadersInit {
+  return {
+    Accept: "application/json",
+    Authorization: `Bearer ${token}`,
+  };
+}
+
+export async function fetchSpotSaved(
+  token: string,
+  spotId: string,
+): Promise<boolean> {
+  const res = await fetch(
+    `${SPOTS_API_BASE}/${encodeURIComponent(spotId)}/saved`,
+    { headers: authHeaders(token) },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(apiError(json, `Failed to load saved status (${res.status})`));
+  }
+  if (!json || typeof json !== "object") return false;
+  return (json as Record<string, unknown>).saved === true;
+}
+
+export async function saveSpot(token: string, spotId: string): Promise<void> {
+  const res = await fetch(
+    `${SPOTS_API_BASE}/${encodeURIComponent(spotId)}/save`,
+    { method: "POST", headers: authHeaders(token) },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(apiError(json, `Could not save spot (${res.status})`));
+  }
+}
+
+export async function unsaveSpot(token: string, spotId: string): Promise<void> {
+  const res = await fetch(
+    `${SPOTS_API_BASE}/${encodeURIComponent(spotId)}/save`,
+    { method: "DELETE", headers: authHeaders(token) },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(apiError(json, `Could not unsave spot (${res.status})`));
+  }
+}
+
+export async function fetchSavedSpots(token: string): Promise<StudySpot[]> {
+  const res = await fetch(`${SPOTS_API_BASE}/saved`, {
+    headers: authHeaders(token),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(apiError(json, `Failed to load saved spots (${res.status})`));
+  }
+  return unwrapSpotsPayload(json);
 }
 
 export async function deleteSpotJson(payload: {

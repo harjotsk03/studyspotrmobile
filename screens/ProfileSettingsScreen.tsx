@@ -1,8 +1,10 @@
-import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { useState } from "react";
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ArrowLeft } from "lucide-react-native";
+import { ConfirmActionModal } from "../components/ActionOptionsSheet";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { useAuth } from "../context/AuthContext";
@@ -54,12 +56,18 @@ export default function ProfileSettingsScreen() {
     useNavigation<NativeStackNavigationProp<ProfileStackParamList>>();
   const rootNavigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const [logoutLoading, setLogoutLoading] = useState(false);
 
-  const handleLogout = () => {
-    Alert.alert("Log out", "Are you sure you want to log out?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Log Out", style: "destructive", onPress: logout },
-    ]);
+  const handleLogout = async () => {
+    if (logoutLoading) return;
+    setLogoutLoading(true);
+    try {
+      await logout();
+    } finally {
+      setLogoutLoading(false);
+      setConfirmLogout(false);
+    }
   };
 
   const goSection = (section: ProfileSectionKey) => {
@@ -103,7 +111,7 @@ export default function ProfileSettingsScreen() {
       title: "Log out",
       subtitle: "Sign out of this device",
       destructive: true,
-      onPress: handleLogout,
+      onPress: () => setConfirmLogout(true),
     },
   ];
 
@@ -138,6 +146,18 @@ export default function ProfileSettingsScreen() {
           />
         ))}
       </ScrollView>
+
+      <ConfirmActionModal
+        visible={confirmLogout}
+        title="Log out?"
+        body="You’ll need to sign in again to use StudySpotr on this device."
+        confirmLabel="Log out"
+        loading={logoutLoading}
+        onCancel={() => {
+          if (!logoutLoading) setConfirmLogout(false);
+        }}
+        onConfirm={() => void handleLogout()}
+      />
     </View>
   );
 }

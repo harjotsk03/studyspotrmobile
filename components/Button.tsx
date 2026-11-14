@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, type ReactNode } from 'react';
 import {
-  ActivityIndicator,
   Animated,
+  Easing,
+  ActivityIndicator,
   Pressable,
   StyleSheet,
   Text,
@@ -56,7 +57,10 @@ function triggerHaptic(strength: HapticStrength) {
 }
 
 /** How far the face travels down on press — matches the shadow plate offset. */
-const PRESS_DEPTH = 4;
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+const THIN_BORDER = 1.5;
+const THICK_BORDER = 5;
 
 const variantStyles: Record<
   Variant,
@@ -200,48 +204,47 @@ export default function Button({
   // Keep the 3D shell even while loading/disabled so we don't swap component
   // trees mid-press (which drops onPressOut and leaves pressAnim stuck).
   const hasDepth = Boolean(v.depth && v.shadowColor);
-  const borderRadius =
-    typeof s.container.borderRadius === 'number' ? s.container.borderRadius : 8;
-
-  // Animated translateY for the face. We spring between 0 (rest) and
-  // PRESS_DEPTH (pressed) for a tactile, Duolingo-like feel instead of
-  // snapping with a static `pressed` style.
-  const pressAnim = useRef(new Animated.Value(0)).current;
-
-  const resetPressAnim = useCallback(() => {
-    pressAnim.stopAnimation();
-    pressAnim.setValue(0);
-  }, [pressAnim]);
+  // 0 = rest (thick bottom edge), 1 = pressed (flat). Border widths can't use
+  // the native driver, so this runs on the JS driver (cheap for one button).
+  const press = useRef(new Animated.Value(0)).current;
 
   // Safety net: if the button becomes disabled/loading while a finger is
-  // still down (e.g. async validation on Register step 1→2), the face must
-  // snap back to rest even if onPressOut never fires on the depth pressable.
+  // still down, snap back to rest even if onPressOut never fires.
   useEffect(() => {
-    if (isDisabled) resetPressAnim();
-  }, [isDisabled, resetPressAnim]);
+    if (isDisabled) {
+      press.stopAnimation();
+      press.setValue(0);
+    }
+  }, [isDisabled, press]);
 
   const handlePressIn = useCallback(() => {
     if (isDisabled) return;
     triggerHaptic(haptic);
-    Animated.spring(pressAnim, {
-      toValue: PRESS_DEPTH,
-      // Stiff + low-mass spring lands the press feel snappy on the way
-      // down (no overshoot needed since the face is meeting the shadow).
-      speed: 20,
-      bounciness: 0,
-      useNativeDriver: true,
+    Animated.timing(press, {
+      toValue: 1,
+      duration: 110,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
     }).start();
-  }, [pressAnim, haptic, isDisabled]);
+  }, [press, haptic, isDisabled]);
 
   const handlePressOut = useCallback(() => {
-    Animated.spring(pressAnim, {
+    Animated.timing(press, {
       toValue: 0,
-      // Slightly springier release for the satisfying "pop back" cue.
-      speed: 22,
-      bounciness: 6,
-      useNativeDriver: true,
+      duration: 160,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
     }).start();
-  }, [pressAnim]);
+  }, [press]);
+
+  const animatedBottomBorder = press.interpolate({
+    inputRange: [0, 1],
+    outputRange: [THICK_BORDER, THIN_BORDER],
+  });
+  const animatedDrop = press.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, THICK_BORDER - THIN_BORDER],
+  });
 
   const content = children ?? (label ? (
     <Text style={[styles.text, s.text, v.text, showDisabledFade && styles.disabledText, textStyle]}>
@@ -294,32 +297,18 @@ export default function Button({
     );
   }
 
-  // Outer wrapper owns layout-level styles (margin, positioning, width) so
-  // the absolutely-positioned shadow plate fills only the face area, not
-  // any margin space the parent screen attaches via `style`. Visual props
-  // (background, border) intentionally stay on the face via the variant /
-  // size styles below.
+  // One pill with a thin border on all sides and a thick bottom edge.
+  // Pressed: bottom edge shrinks to the thin width and the face drops by the
+  // difference, so overall layout height never changes.
   return (
     <View
       style={[
         styles.depthShell,
         fullWidth && styles.fullWidthShell,
-        { marginBottom: PRESS_DEPTH },
+        { marginBottom: 0 },
         style,
       ]}
     >
-      <View
-        pointerEvents="none"
-        style={[
-          styles.shadowPlate,
-          {
-            backgroundColor: v.shadowColor,
-            borderRadius,
-            transform: [{ translateY: PRESS_DEPTH }],
-          },
-        ]}
-      />
-
       <AnimatedPressable
         onPress={onPress}
         onPressIn={handlePressIn}
@@ -327,12 +316,16 @@ export default function Button({
         disabled={isDisabled}
         style={[
           styles.base,
-          styles.face,
           s.container,
           v.container,
+          {
+            borderWidth: THIN_BORDER,
+            borderColor: v.shadowColor,
+            borderBottomWidth: animatedBottomBorder,
+            marginTop: animatedDrop,
+          },
           fullWidth && styles.fullWidth,
           showDisabledFade && styles.disabled,
-          { transform: [{ translateY: pressAnim }] },
         ]}
       >
         {inner}
@@ -341,27 +334,13 @@ export default function Button({
   );
 }
 
-/** Wrap Pressable in Animated so we can spring its transform natively. */
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
-
 const styles = StyleSheet.create({
   depthShell: {
-    position: 'relative',
-    // Keep default RN alignSelf behavior ("auto") so the button still
-    // stretches in parents that use the default alignItems: "stretch"
-    // (e.g. login form column). Using flex-start here caused width
-    // regressions after introducing the depth wrapper.
-    alignSelf: 'auto',
+    alignSelf: 'auto', // inherits stretch from parent flex column
   },
   fullWidthShell: {
     alignSelf: 'stretch',
     width: '100%',
-  },
-  shadowPlate: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  face: {
-    zIndex: 1,
   },
   base: {
     flexDirection: 'row',
@@ -380,7 +359,7 @@ const styles = StyleSheet.create({
     opacity: 0,
   },
   spinnerOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
   },

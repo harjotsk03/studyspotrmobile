@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { Video, ResizeMode } from "expo-av";
+import FeedVideo from "./FeedVideo";
 import {
   Heart,
   MessageCircle,
@@ -110,7 +110,6 @@ export default function FeedInstaCard({
   const heartRailScale = useRef(new Animated.Value(1)).current;
   const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mediaContainerRef = useRef<View | null>(null);
-  const videoRef = useRef<Video | null>(null);
   const prevPostIdRef = useRef(post.id);
   const prevViewerLikedRef = useRef(post.viewer_has_liked);
   const [optionsOpen, setOptionsOpen] = useState(false);
@@ -138,12 +137,6 @@ export default function FeedInstaCard({
   const isOwner = Boolean(currentUserId && post.author_id === currentUserId);
   const isVideo = media?.type === "video";
   const shouldAutoplay = isVideo && screenFocused && isActive;
-
-  useEffect(() => {
-    if (!shouldAutoplay) {
-      void videoRef.current?.pauseAsync?.();
-    }
-  }, [shouldAutoplay]);
 
   useEffect(() => {
     if (post.id !== prevPostIdRef.current) {
@@ -355,18 +348,15 @@ export default function FeedInstaCard({
         <Pressable style={styles.mediaTap} onPress={onMediaPress}>
           {media ? (
             isVideo ? (
-              <Video
-                ref={videoRef}
+              <FeedVideo
+                uri={media.url}
                 style={[
                   styles.mediaFill,
                   { width: mediaWidth, height: mediaHeight },
                 ]}
-                source={{ uri: media.url }}
-                resizeMode={ResizeMode.COVER}
-                isLooping
                 shouldPlay={shouldAutoplay}
                 isMuted={globalMuted}
-                useNativeControls={false}
+                isLooping
               />
             ) : (
               <Image
@@ -591,7 +581,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   mediaTap: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   mediaFill: {
     backgroundColor: "#111",

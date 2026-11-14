@@ -1,9 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  PanResponder,
+  Animated,
+  Easing,
   FlatList,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
+  LayoutAnimation,
   Modal,
   Platform,
   Pressable,
@@ -11,37 +16,35 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native";
 import type { NavigationProp, ParamListBase } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ChevronLeft, MessageCircle, Search } from "lucide-react-native";
+import { Check, MessageCircle, Search } from "lucide-react-native";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
+import { useToast } from "../context/ToastContext";
 import {
   chatPeerDisplayName,
   fetchChatConversations,
+  sendChatMessage,
   type ChatConversation,
   type ChatOtherUser,
 } from "../utils/chatApi";
-import { communityShareDraftForMessage } from "../utils/communityShareDraft";
-import { eventShareDraftForMessage } from "../utils/eventShareDraft";
-import { feedPostShareDraftForMessage } from "../utils/feedPostShareDraft";
-import { spotShareDraftForMessage } from "../utils/spotShareDraft";
+import { encodeShareToken } from "../utils/messageShare";
 import { primeSharedAttachmentEventCache } from "./SharedAttachmentPreview";
+import Button from "./Button";
 import type { FeedPost } from "../utils/feedApi";
 import type { StudySpot } from "../context/SpotsContext";
 import type { CommunityData } from "../screens/CommunityDetailScreen";
 import type { CommunityEvent } from "../screens/EventDetailDrawer";
-import {
-  navigateToInboxChatThread,
-  navigateToInboxMessagesList,
-} from "../utils/navigateToInboxChat";
+import { navigateToInboxMessagesList } from "../utils/navigateToInboxChat";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 
 /** Discriminated union describing what's being shared. Keep this typed at
- * the call site so we can build the correct draft body (and headline copy)
- * without having to inspect a generic blob. */
+ * the call site so we can build the correct share token without having to
+ * inspect a generic blob. */
 export type ShareTarget =
   | { kind: "post"; post: FeedPost }
   | { kind: "spot"; spot: StudySpot }
@@ -50,26 +53,26 @@ export type ShareTarget =
 
 type Props = {
   visible: boolean;
-  /** What the user is sending. Pass `null` to render a no-op (keeps the
-   * Modal mounted but inert, matching the pattern used by parent screens
-   * for delayed unmount during the slide-out animation). */
+  /** What the user is sending. Pass `null` to render a no-op. */
   attachment: ShareTarget | null;
   token: string | null;
   navigation: NavigationProp<ParamListBase>;
   onClose: () => void;
   /**
-   * Fired when the user actually commits to sharing — i.e. picks a friend
-   * (or hits "see all conversations"), and we're about to navigate away to
-   * a chat thread. Distinct from `onClose`, which fires for *every* dismiss
-   * (including the user just backing out of the sheet). Use this to also
-   * close any parent drawer/modal the share sheet was opened from, so the
-   * user isn't left with the parent hanging around behind the chat screen.
+   * Fired once the share has actually been sent (not on a plain dismiss).
+   * Use it to also close any parent drawer/modal the sheet was opened from.
    */
   onShared?: () => void;
 };
 
-/** Recent chats on the horizontal “quick send” rail. */
-const QUICK_SEND_LIMIT = 10;
+// Dark sheet palette (matches the share-sheet design reference).
+const SHEET_BG = "#FFFFFF";
+const SEARCH_BG = "#F1F2F4";
+const MUTED = "#6B6F76";
+const TEXT = Colors.dark;
+const INPUT_BG = "#F1F2F4";
+const COLUMNS = 3;
+const AVATAR_SIZE = 88;
 
 function sortConversations(list: ChatConversation[]): ChatConversation[] {
   return [...list].sort((a, b) => {
@@ -85,8 +88,7 @@ function peerSearchHaystack(peer: ChatOtherUser): string {
   return `${name} ${u}`;
 }
 
-function AvatarCircle(props: { peer: ChatOtherUser; size: number }) {
-  const { peer, size } = props;
+function AvatarCircle({ peer, size }: { peer: ChatOtherUser; size: number }) {
   const label = chatPeerDisplayName(peer);
   const initialsUser = {
     id: peer.id,
@@ -99,25 +101,23 @@ function AvatarCircle(props: { peer: ChatOtherUser; size: number }) {
     typeof peer.profile_photo === "string" && peer.profile_photo.trim()
       ? peer.profile_photo.trim()
       : "";
-  const color = getUserAvatarColor(initialsUser);
-  const r = size / 2;
 
   return (
     <View
       style={[
         styles.avatarRound,
-        { width: size, height: size, borderRadius: r, backgroundColor: color },
+        {
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: getUserAvatarColor(initialsUser),
+        },
       ]}
     >
       {photo ? (
         <Image source={{ uri: encodeURI(photo) }} style={styles.avatarImg} />
       ) : (
-        <Text
-          style={[
-            styles.avatarLetterSmall,
-            { fontSize: Math.round(15 * (size / 58)) },
-          ]}
-        >
+        <Text style={[styles.avatarLetter, { fontSize: Math.round(size * 0.36) }]}>
           {getUserInitials(initialsUser)}
         </Text>
       )}
@@ -125,38 +125,29 @@ function AvatarCircle(props: { peer: ChatOtherUser; size: number }) {
   );
 }
 
-function quickChipDisplayName(peer: ChatOtherUser): string {
-  const raw = `${peer.first_name ?? ""} ${peer.last_name ?? ""}`.trim();
-  const firstRaw = raw.split(/\s+/)[0]?.trim();
-  if (firstRaw) return firstRaw.slice(0, 11).trimEnd();
-  const u = (peer.username ?? "").replace(/^@/, "").trim();
-  if (u) return u.length > 10 ? `@${u.slice(0, 9)}…` : `@${u}`;
-  const full = chatPeerDisplayName(peer);
-  const short = full.slice(0, 11).trimEnd();
-  return short || "?";
-}
-
-/** Build the prefilled chat composer text for whichever resource the user
- * tapped "share" on. Always appends a `[[share:<kind>:<id>]]` token that the
- * receiver's ChatThreadScreen resolves into a rich preview card. */
-function draftForAttachment(attachment: ShareTarget): string {
+/** The `[[share:…]]` token that the chat thread turns into a preview card.
+ * No default sentence is added — the sender's own note (if any) is the only
+ * text that travels with it. */
+function shareTokenFor(attachment: ShareTarget): string {
   switch (attachment.kind) {
     case "post":
-      return feedPostShareDraftForMessage(attachment.post);
+      return encodeShareToken({ kind: "post", id: attachment.post.id });
     case "spot":
-      return spotShareDraftForMessage(attachment.spot);
+      return encodeShareToken({ kind: "spot", id: attachment.spot.id });
     case "community":
-      return communityShareDraftForMessage(attachment.community);
+      return encodeShareToken({
+        kind: "community",
+        id: attachment.community.id,
+      });
     case "event":
-      return eventShareDraftForMessage(
-        attachment.event,
-        attachment.communityId,
-      );
+      return encodeShareToken({
+        kind: "event",
+        id: attachment.event.id,
+        communityId: attachment.communityId,
+      });
   }
 }
 
-/** Human-readable noun used in onboarding copy ("share <subject>s in one
- * tap"). Falls back to "post" for backward-compatible phrasing. */
 function attachmentSubject(attachment: ShareTarget): string {
   switch (attachment.kind) {
     case "post":
@@ -172,18 +163,155 @@ function attachmentSubject(attachment: ShareTarget): string {
 
 export default function ShareToFriendsSheet({
   visible,
-  attachment,
+  attachment: attachmentProp,
   token,
   navigation,
   onClose,
   onShared,
 }: Props) {
+  // Callers null the attachment the instant they close; keep the last one
+  // so the sheet can finish its slide-down instead of vanishing.
+  const lastAttachment = useRef<ShareTarget | null>(null);
+  if (attachmentProp) lastAttachment.current = attachmentProp;
+  const attachment = attachmentProp ?? lastAttachment.current;
   const insets = useSafeAreaInsets();
-  const [mode, setMode] = useState<"quick" | "full">("quick");
+  const { height: windowHeight } = useWindowDimensions();
+  const { showToast } = useToast();
+
   const [searchQuery, setSearchQuery] = useState("");
+  const [message, setMessage] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
+
+  // Slide-up / slide-down + backdrop fade, kept mounted until the exit
+  // animation finishes.
+  const baseSheetHeight = Math.round(windowHeight * 0.72);
+  const [kbHeight, setKbHeight] = useState(0);
+  const [messageFocused, setMessageFocused] = useState(false);
+  useEffect(() => {
+    const showEv = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEv = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const a = Keyboard.addListener(showEv, (e) =>
+      setKbHeight(e.endCoordinates.height),
+    );
+    const b = Keyboard.addListener(hideEv, () => setKbHeight(0));
+    return () => {
+      a.remove();
+      b.remove();
+    };
+  }, []);
+  // Searching: keyboard just overlays the sheet (no resize, no jump).
+  // Typing a message: sheet rides above the keyboard but is capped so it
+  // never stretches to full screen.
+  const liftForKeyboard = messageFocused && kbHeight > 0;
+  const sheetHeight = liftForKeyboard
+    ? Math.min(baseSheetHeight, windowHeight - kbHeight - insets.top - 16)
+    : baseSheetHeight;
+  const appear = useRef(new Animated.Value(0)).current;
+  const [mounted, setMounted] = useState(false);
+
+  // Swipe-down-to-close. The sheet follows the finger; releasing past a
+  // threshold (or with a flick) dismisses it. When the grid is scrolled we
+  // leave the gesture to the list so scrolling still works.
+  const drag = useRef(new Animated.Value(0)).current;
+  const gridScrollY = useRef(0);
+  const dragBase = useRef(0);
+  // When everything fits, the list must not be a native scroller at all -
+  // otherwise it swallows the touch and the sheet only drags from avatars.
+  const [gridContentH, setGridContentH] = useState(0);
+  const [gridLayoutH, setGridLayoutH] = useState(0);
+  const gridScrollable = gridContentH > gridLayoutH + 1;
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const sheetHeightRef = useRef(sheetHeight);
+  sheetHeightRef.current = sheetHeight;
+
+  const panResponder = useRef(
+    PanResponder.create({
+      // Takes over as soon as the list is at its top and the finger moves
+      // down - including mid-gesture after scrolling back up to the top.
+      // Claim touches that land on empty space (children like avatars,
+      // inputs and buttons still win theirs), so any part of the sheet drags.
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponderCapture: (_, g) =>
+        g.dy > 3 && g.dy > Math.abs(g.dx) && gridScrollY.current <= 0,
+      onPanResponderGrant: (_, g) => {
+        dragBase.current = g.dy; // ignore distance covered while scrolling
+        Keyboard.dismiss();
+      },
+      onPanResponderMove: (_, g) => {
+        // While the list is scrolled, let it scroll; the sheet only follows
+        // the finger once the list is back at the top.
+        if (gridScrollY.current > 0) {
+          dragBase.current = g.dy;
+          return;
+        }
+        drag.setValue(Math.max(0, g.dy - dragBase.current));
+      },
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderRelease: (_, g) => {
+        const pulled = g.dy - dragBase.current;
+        if (pulled > 60 || (g.vy > 0.4 && pulled > 8)) {
+          Animated.timing(drag, {
+            toValue: sheetHeightRef.current,
+            duration: 150,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }).start(() => onCloseRef.current());
+        } else {
+          Animated.spring(drag, {
+            toValue: 0,
+            useNativeDriver: true,
+            bounciness: 0,
+          }).start();
+        }
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(drag, { toValue: 0, useNativeDriver: true }).start();
+      },
+    }),
+  ).current;
+
+  // Mount first (sheet parked off-screen), then start the slide-up on the
+  // next frame so the animation isn't eaten by the Modal mounting.
+  useEffect(() => {
+    if (visible) {
+      drag.setValue(0);
+      setMounted(true);
+    }
+  }, [visible, drag]);
+
+  useEffect(() => {
+    if (!mounted || !visible) return;
+    appear.setValue(0);
+    const raf = requestAnimationFrame(() => {
+      Animated.timing(appear, {
+        toValue: 1,
+        duration: 300,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [mounted, visible, appear]);
+
+  // Dismiss (backdrop tap, send, back button) uses the same quick ease-out
+  // as the swipe-to-close.
+  useEffect(() => {
+    if (visible) return;
+    Animated.timing(appear, {
+      toValue: 0,
+      duration: 160,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setMounted(false);
+    });
+  }, [visible, appear]);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -204,459 +332,342 @@ export default function ShareToFriendsSheet({
   }, [token]);
 
   useEffect(() => {
-    if (visible && token) {
-      void load();
-    }
+    if (visible && token) void load();
   }, [visible, token, load]);
 
   useEffect(() => {
     if (!visible) {
-      setMode("quick");
       setSearchQuery("");
+      setMessage("");
+      setSelectedIds([]);
+      setSendError(null);
+      setSending(false);
     }
   }, [visible]);
 
-  const draft = useMemo(
-    () => (attachment ? draftForAttachment(attachment) : ""),
-    [attachment],
-  );
-  const subject = attachment ? attachmentSubject(attachment) : "post";
-  const introCopy =
-    subject === "post"
-      ? "Tap a friend to open the chat — your share is drafted. Use"
-      : `Tap a friend to open the chat — your ${subject} share is drafted. Use`;
-
-  // Pre-fill the receiver-style preview cache with whatever the sender
-  // already has on hand. Right now we only do this for events because the
-  // backend's standalone `/api/v1/events/:id` GET may not exist on every
-  // deploy yet, and without this prime the sender would see a broken
-  // "Event unavailable" card in their own composer / sent bubble. Cheap to
-  // run; subsequent shares of the same event just overwrite with fresher
-  // data.
-  const primeCacheForAttachment = useCallback((target: ShareTarget) => {
-    if (target.kind === "event") {
-      primeSharedAttachmentEventCache(target.event, target.communityId);
-    }
-  }, []);
-
-  const handlePick = useCallback(
-    (c: ChatConversation) => {
-      if (!attachment) return;
-      primeCacheForAttachment(attachment);
-      onClose();
-      onShared?.();
-      requestAnimationFrame(() => {
-        navigateToInboxChatThread(navigation, {
-          conversationId: c.id,
-          peer: c.other_user ?? undefined,
-          draftMessage: draft,
-        });
-      });
-    },
-    [attachment, navigation, draft, onClose, onShared, primeCacheForAttachment],
-  );
-
-  const goMessages = useCallback(() => {
-    if (attachment) primeCacheForAttachment(attachment);
-    onClose();
-    onShared?.();
-    requestAnimationFrame(() => navigateToInboxMessagesList(navigation));
-  }, [attachment, navigation, onClose, onShared, primeCacheForAttachment]);
-
-  const quickFriends = useMemo(
-    () => conversations.slice(0, QUICK_SEND_LIMIT),
-    [conversations],
-  );
-
-  const filteredForSearch = useMemo(() => {
+  const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return conversations;
     return conversations.filter((c) => {
       const peer = c.other_user;
-      if (!peer?.id) return false;
-      return peerSearchHaystack(peer).includes(q);
+      return peer?.id ? peerSearchHaystack(peer).includes(q) : false;
     });
   }, [conversations, searchQuery]);
 
-  const openFull = useCallback(() => {
-    setMode("full");
-    setSearchQuery("");
+  const toggle = useCallback((id: string) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setSelectedIds((cur) =>
+      cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id],
+    );
+    setSendError(null);
   }, []);
 
-  const backToQuick = useCallback(() => {
-    setMode("quick");
-    setSearchQuery("");
-  }, []);
+  const handleSend = useCallback(async () => {
+    if (!attachment || !token || sending || selectedIds.length === 0) return;
 
-  const renderQuickItem = useCallback(
+    if (attachment.kind === "event") {
+      // The sender's own preview card needs the event on hand.
+      primeSharedAttachmentEventCache(attachment.event, attachment.communityId);
+    }
+
+    const note = message.trim();
+    const shareToken = shareTokenFor(attachment);
+    const body = note ? `${note}\n${shareToken}` : shareToken;
+
+    setSending(true);
+    setSendError(null);
+    Keyboard.dismiss();
+
+    const results = await Promise.allSettled(
+      selectedIds.map((id) => sendChatMessage(token, id, body)),
+    );
+
+    const failedIds = selectedIds.filter(
+      (_, i) => results[i].status === "rejected",
+    );
+    setSending(false);
+
+    if (failedIds.length === 0) {
+      showToast(
+        selectedIds.length === 1
+          ? "Sent"
+          : `Sent to ${selectedIds.length} people`,
+      );
+      onClose();
+      onShared?.();
+      return;
+    }
+
+    // Keep only the people it failed for so "Send" retries just those.
+    setSelectedIds(failedIds);
+    setSendError(
+      failedIds.length === selectedIds.length
+        ? "Couldn't send. Please try again."
+        : "Some messages didn't send. Tap Send to retry.",
+    );
+  }, [attachment, token, sending, selectedIds, message, showToast, onClose, onShared]);
+
+  const goMessages = useCallback(() => {
+    onClose();
+    requestAnimationFrame(() => navigateToInboxMessagesList(navigation));
+  }, [navigation, onClose]);
+
+  const renderItem = useCallback(
     ({ item }: { item: ChatConversation }) => {
       const peer = item.other_user;
       if (!peer?.id) return null;
-      const label = quickChipDisplayName(peer);
+      const selected = selectedIds.includes(item.id);
+      const label = chatPeerDisplayName(peer);
       return (
         <Pressable
-          style={styles.quickChip}
-          accessibilityRole="button"
-          accessibilityLabel={`Send to ${chatPeerDisplayName(peer)}`}
-          onPress={() => handlePick(item)}
+          style={styles.cell}
+          onPress={() => toggle(item.id)}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: selected }}
+          accessibilityLabel={label}
         >
-          <AvatarCircle peer={peer} size={58} />
-          <Text style={styles.quickChipLabel} numberOfLines={1}>
+          <View style={styles.avatarWrap}>
+            <AvatarCircle peer={peer} size={AVATAR_SIZE} />
+            {selected ? (
+              <View style={styles.checkBadge}>
+                <Check size={14} color="#fff" strokeWidth={3.2} />
+              </View>
+            ) : null}
+          </View>
+          <Text style={styles.cellLabel} numberOfLines={2}>
             {label}
           </Text>
         </Pressable>
       );
     },
-    [handlePick],
+    [selectedIds, toggle],
   );
 
-  const renderRow = useCallback(
-    ({ item }: { item: ChatConversation }) => {
-      const peer = item.other_user;
-      if (!peer?.id) return null;
-      const label = chatPeerDisplayName(peer);
-      const initialsUser = {
-        id: peer.id,
-        first_name: peer.first_name ?? undefined,
-        last_name: peer.last_name ?? undefined,
-        username: peer.username ?? undefined,
-        name: label,
-      };
-      const photo =
-        typeof peer.profile_photo === "string" && peer.profile_photo.trim()
-          ? peer.profile_photo.trim()
-          : "";
-      const color = getUserAvatarColor(initialsUser);
+  if (!mounted || !attachment) return null;
 
-      return (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Send to ${label}`}
-          style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-          onPress={() => handlePick(item)}
-        >
-          <View style={[styles.avatar, { backgroundColor: color }]}>
-            {photo ? (
-              <Image
-                source={{ uri: encodeURI(photo) }}
-                style={styles.avatarImg}
-              />
-            ) : (
-              <Text style={styles.avatarLetter}>
-                {getUserInitials(initialsUser)}
-              </Text>
-            )}
-          </View>
-          <View style={styles.rowBody}>
-            <Text style={styles.rowTitle} numberOfLines={1}>
-              {label}
-            </Text>
-            {typeof item.last_message_preview === "string" &&
-            item.last_message_preview.trim() ? (
-              <Text style={styles.rowPreview} numberOfLines={1}>
-                {item.last_message_preview.trim()}
-              </Text>
-            ) : null}
-          </View>
-        </Pressable>
-      );
-    },
-    [handlePick],
-  );
+  const subject = attachmentSubject(attachment);
+  const hasSelection = selectedIds.length > 0;
 
-  if (!visible || !attachment) return null;
-
-  const showSeeMoreLinks = conversations.length > 0;
+  const translateY = appear.interpolate({
+    inputRange: [0, 1],
+    outputRange: [sheetHeight, 0],
+  });
 
   return (
     <Modal
-      visible={visible}
-      animationType="slide"
-      presentationStyle="pageSheet"
+      visible
+      transparent
+      animationType="none"
+      statusBarTranslucent
       onRequestClose={onClose}
     >
-      <KeyboardAvoidingView
-        style={[styles.sheet, { paddingTop: insets.top + 8 }]}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      <Animated.View
+        style={[
+          styles.backdrop,
+          {
+            opacity: Animated.multiply(
+              appear,
+              drag.interpolate({
+                inputRange: [0, sheetHeight],
+                outputRange: [1, 0],
+                extrapolate: "clamp",
+              }),
+            ),
+          },
+        ]}
       >
-        <View style={styles.sheetHeader}>
-          {mode === "full" ? (
-            <TouchableOpacity
-              onPress={backToQuick}
-              hitSlop={12}
-              accessibilityRole="button"
-              accessibilityLabel="Back to quick send"
-              style={styles.headerIconBtn}
-            >
-              <ChevronLeft size={24} color={Colors.dark} strokeWidth={2.2} />
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              onPress={onClose}
-              hitSlop={12}
-              accessibilityRole="button"
-              accessibilityLabel="Close"
-            >
-              <Text style={styles.sheetCancel}>Cancel</Text>
-            </TouchableOpacity>
-          )}
-          <Text style={styles.sheetTitle}>
-            {mode === "full" ? "All chats" : "Quick send"}
-          </Text>
-          <View style={styles.sheetHeaderTrailing} accessibilityElementsHidden />
-        </View>
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={onClose}
+          accessibilityLabel="Close"
+        />
+      </Animated.View>
 
-        {mode === "quick" ? (
-          <View style={styles.quickBody}>
-            <Text style={styles.intro}>
-              {introCopy} <Text style={styles.introEm}>See more</Text> to search
-              everyone you message.
-            </Text>
-
-            {loading ? (
-              <ActivityIndicator
-                style={styles.centerSpinner}
-                color={Colors.accent}
-              />
-            ) : error ? (
-              <View style={styles.emptyWrap}>
-                <Text style={styles.emptyTitle}>Could not load chats</Text>
-                <Text style={styles.emptySub}>{error}</Text>
-                <TouchableOpacity
-                  style={styles.retryBtn}
-                  onPress={() => void load()}
-                >
-                  <Text style={styles.retryLabel}>Retry</Text>
-                </TouchableOpacity>
-              </View>
-            ) : conversations.length === 0 ? (
-              <View style={styles.emptyWrap}>
-                <MessageCircle size={44} color="#ccc" strokeWidth={2} />
-                <Text style={styles.emptyTitle}>No conversations yet</Text>
-                <Text style={styles.emptySub}>
-                  Message someone first, then you can share {subject}s in one
-                  tap.
-                </Text>
-                <TouchableOpacity style={styles.ctaBtn} onPress={goMessages}>
-                  <Text style={styles.ctaLabel}>Open messages</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <>
-                <Text style={styles.sectionEyebrow}>Suggested</Text>
-                <FlatList
-                  horizontal
-                  data={quickFriends}
-                  keyExtractor={(item) => item.id}
-                  renderItem={renderQuickItem}
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.quickRail}
-                  keyboardShouldPersistTaps="handled"
-                />
-                {showSeeMoreLinks ? (
-                  <Pressable
-                    onPress={openFull}
-                    style={({ pressed }) => [
-                      styles.seeMoreRow,
-                      pressed && styles.seeMorePressed,
-                    ]}
-                  >
-                    <Text style={styles.seeMoreText}>
-                      See more
-                      {conversations.length > QUICK_SEND_LIMIT
-                        ? ` · ${conversations.length} chats`
-                        : ""}
-                    </Text>
-                  </Pressable>
-                ) : null}
-              </>
-            )}
+      <KeyboardAvoidingView
+        style={styles.kav}
+        behavior={liftForKeyboard && Platform.OS === "ios" ? "padding" : undefined}
+        pointerEvents="box-none"
+      >
+        <Animated.View
+          {...panResponder.panHandlers}
+          style={[
+            styles.sheet,
+            {
+              height: sheetHeight,
+              transform: [{ translateY: Animated.add(translateY, drag) }],
+            },
+          ]}
+        >
+          <View style={styles.handleZone}>
+            <View style={styles.handle} />
           </View>
-        ) : (
-          <FlatList
-            data={filteredForSearch}
-            keyExtractor={(item) => item.id}
-            renderItem={renderRow}
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={[
-              styles.listContent,
-              { paddingBottom: insets.bottom + 24 },
-            ]}
-            ListHeaderComponent={
-              <View style={styles.searchWrap}>
-                <Search size={18} color="#888" strokeWidth={2} />
-                <TextInput
-                  style={styles.searchInput}
-                  placeholder="Search chats"
-                  placeholderTextColor="#999"
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  clearButtonMode="while-editing"
-                />
-              </View>
-            }
-            ListEmptyComponent={
-              <Text style={styles.searchEmpty}>No chats match.</Text>
-            }
-          />
-        )}
+
+          <View style={styles.searchWrap}>
+            <Search size={18} color={MUTED} strokeWidth={2.2} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search"
+              placeholderTextColor={MUTED}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              autoCapitalize="none"
+              autoCorrect={false}
+              clearButtonMode="while-editing"
+              keyboardAppearance="light"
+            />
+          </View>
+
+          {loading ? (
+            <ActivityIndicator style={styles.centerSpinner} color={Colors.primary} />
+          ) : error ? (
+            <View style={styles.emptyWrap}>
+              <Text style={styles.emptyTitle}>Could not load chats</Text>
+              <Text style={styles.emptySub}>{error}</Text>
+              <TouchableOpacity style={styles.retryBtn} onPress={() => void load()}>
+                <Text style={styles.retryLabel}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : conversations.length === 0 ? (
+            <View style={styles.emptyWrap}>
+              <MessageCircle size={44} color="#B5B9C0" strokeWidth={2} />
+              <Text style={styles.emptyTitle}>No conversations yet</Text>
+              <Text style={styles.emptySub}>
+                Message someone first, then you can share a {subject} in one
+                tap.
+              </Text>
+              <TouchableOpacity style={styles.ctaBtn} onPress={goMessages}>
+                <Text style={styles.ctaLabel}>Open messages</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <FlatList
+              style={styles.grid}
+              data={filtered}
+              keyExtractor={(item) => item.id}
+              renderItem={renderItem}
+              numColumns={COLUMNS}
+              extraData={selectedIds}
+              scrollEnabled={gridScrollable}
+              onContentSizeChange={(_, h) => setGridContentH(h)}
+              onLayout={(e) => setGridLayoutH(e.nativeEvent.layout.height)}
+              bounces={false}
+              overScrollMode="never"
+              onScroll={(e) => {
+                gridScrollY.current = e.nativeEvent.contentOffset.y;
+              }}
+              scrollEventThrottle={16}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.gridContent}
+              ListEmptyComponent={
+                <Text style={styles.searchEmpty}>No chats match.</Text>
+              }
+            />
+          )}
+
+          {hasSelection ? (
+            <View
+              style={[
+                styles.footer,
+                { paddingBottom: Math.max(insets.bottom, 12) },
+              ]}
+            >
+              {sendError ? (
+                <Text style={styles.sendError}>{sendError}</Text>
+              ) : null}
+              <TextInput
+                style={styles.messageInput}
+                placeholder="Write a message..."
+                placeholderTextColor={MUTED}
+                value={message}
+                onChangeText={setMessage}
+                onFocus={() => setMessageFocused(true)}
+                onBlur={() => setMessageFocused(false)}
+                keyboardAppearance="light"
+                multiline
+                maxLength={1000}
+              />
+              <Button
+                label="Send"
+                size="lg"
+                fullWidth
+                loading={sending}
+                onPress={() => void handleSend()}
+              />
+            </View>
+          ) : (
+            <View style={{ height: Math.max(insets.bottom, 12) }} />
+          )}
+        </Animated.View>
       </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  backdrop: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: "rgba(0,0,0,0.4)",
+  },
+  kav: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
   sheet: {
-    flex: 1,
-    backgroundColor: Colors.light,
-  },
-  sheetHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingBottom: 14,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#e8e8e8",
-  },
-  headerIconBtn: {
-    width: 72,
-    justifyContent: "center",
-    paddingVertical: 2,
-  },
-  sheetCancel: {
-    fontFamily: Fonts.instrument.medium,
-    fontSize: 16,
-    color: Colors.dark,
-    width: 72,
-  },
-  sheetTitle: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 17,
-    color: Colors.dark,
-    flex: 1,
-    textAlign: "center",
-  },
-  sheetHeaderTrailing: {
-    width: 72,
-  },
-  quickBody: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 14,
-    paddingBottom: 24,
-  },
-  intro: {
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 15,
-    color: "#666",
-    lineHeight: 22,
-    marginBottom: 18,
-  },
-  introEm: {
-    fontFamily: Fonts.instrument.semiBold,
-    color: Colors.dark,
-  },
-  sectionEyebrow: {
-    fontFamily: Fonts.gabarito.medium,
-    fontSize: 13,
-    color: "#777",
-    marginBottom: 12,
-    textTransform: "uppercase",
-    letterSpacing: 0.55,
-  },
-  quickRail: {
-    paddingRight: 12,
-    paddingVertical: 4,
-    paddingBottom: 8,
-    minHeight: 96,
-  },
-  quickChip: {
-    alignItems: "center",
-    width: 80,
-    marginRight: 4,
-    paddingVertical: 4,
-  },
-  quickChipLabel: {
-    marginTop: 8,
-    fontFamily: Fonts.instrument.medium,
-    fontSize: 13,
-    color: Colors.dark,
-    textAlign: "center",
-    width: "100%",
-  },
-  avatarRound: {
+    backgroundColor: SHEET_BG,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     overflow: "hidden",
+  },
+  handle: {
+    alignSelf: "center",
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#D0D3D8",
+  },
+  handleZone: {
+    alignSelf: "stretch",
     alignItems: "center",
-    justifyContent: "center",
-  },
-  seeMoreRow: {
-    marginTop: 16,
-    paddingVertical: 14,
-    alignItems: "center",
-    borderRadius: 12,
-    backgroundColor: "#f2f2f2",
-    borderWidth: 1,
-    borderColor: "#e6e6e6",
-  },
-  seeMorePressed: {
-    opacity: 0.85,
-    backgroundColor: "#eaeaea",
-  },
-  seeMoreText: {
-    fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 16,
-    color: Colors.dark,
-  },
-  listContent: {
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    flexGrow: 1,
+    paddingTop: 10,
+    paddingBottom: 14,
   },
   searchWrap: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+    marginHorizontal: 16,
     paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: "#f4f4f4",
-    borderWidth: 1,
-    borderColor: "#e5e5e5",
-    marginBottom: 8,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: SEARCH_BG,
   },
   searchInput: {
     flex: 1,
     fontFamily: Fonts.instrument.regular,
-    fontSize: 16,
-    color: Colors.dark,
-    paddingVertical: Platform.OS === "ios" ? 4 : 2,
-    minHeight: Platform.OS === "ios" ? 28 : undefined,
+    fontSize: 17,
+    color: TEXT,
+    paddingVertical: 0,
   },
-  searchEmpty: {
-    paddingTop: 28,
-    textAlign: "center",
-    fontFamily: Fonts.instrument.regular,
-    fontSize: 15,
-    color: "#888",
+  grid: {
+    flex: 1,
+    marginTop: 12,
   },
-  row: {
-    flexDirection: "row",
+  gridContent: {
+    paddingHorizontal: 8,
+    paddingBottom: 12,
+  },
+  cell: {
+    width: `${100 / COLUMNS}%`,
     alignItems: "center",
-    gap: 14,
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#ececec",
+    paddingVertical: 10,
+    paddingHorizontal: 6,
   },
-  rowPressed: {
-    backgroundColor: "#f5f5f5",
+  avatarWrap: {
+    width: AVATAR_SIZE,
+    height: AVATAR_SIZE,
   },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+  avatarRound: {
     overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
@@ -667,54 +678,88 @@ const styles = StyleSheet.create({
   },
   avatarLetter: {
     fontFamily: Fonts.gabarito.semiBold,
-    fontSize: 17,
     color: "#fff",
   },
-  avatarLetterSmall: {
-    fontFamily: Fonts.gabarito.semiBold,
-    color: "#fff",
+  checkBadge: {
+    position: "absolute",
+    right: -2,
+    bottom: -2,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: Colors.primary,
+    borderWidth: 2.5,
+    borderColor: SHEET_BG,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  rowBody: {
-    flex: 1,
-    minWidth: 0,
-  },
-  rowTitle: {
-    fontFamily: Fonts.instrument.semiBold,
-    fontSize: 16,
-    color: Colors.dark,
-  },
-  rowPreview: {
-    marginTop: 3,
-    fontFamily: Fonts.instrument.regular,
+  cellLabel: {
+    marginTop: 8,
+    fontFamily: Fonts.instrument.medium,
     fontSize: 14,
-    color: "#888",
+    lineHeight: 18,
+    color: TEXT,
+    textAlign: "center",
+  },
+  footer: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    gap: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#E5E7EB",
+    backgroundColor: SHEET_BG,
+  },
+  messageInput: {
+    maxHeight: 96,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    paddingTop: Platform.OS === "ios" ? 12 : 8,
+    paddingBottom: Platform.OS === "ios" ? 12 : 8,
+    borderRadius: 16,
+    backgroundColor: INPUT_BG,
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 16,
+    color: TEXT,
+  },
+  sendError: {
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 13,
+    color: "#D93025",
+  },
+  searchEmpty: {
+    paddingTop: 28,
+    textAlign: "center",
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 15,
+    color: MUTED,
   },
   centerSpinner: {
     marginTop: 48,
   },
   emptyWrap: {
+    flex: 1,
     alignItems: "center",
     paddingTop: 40,
-    paddingHorizontal: 12,
+    paddingHorizontal: 24,
   },
   emptyTitle: {
     marginTop: 16,
     fontFamily: Fonts.gabarito.semiBold,
     fontSize: 18,
-    color: Colors.dark,
+    color: TEXT,
     textAlign: "center",
   },
   emptySub: {
     marginTop: 8,
     fontFamily: Fonts.instrument.regular,
     fontSize: 15,
-    color: "#666",
+    color: MUTED,
     lineHeight: 22,
     textAlign: "center",
   },
   ctaBtn: {
     marginTop: 20,
-    backgroundColor: Colors.dark,
+    backgroundColor: Colors.primary,
     paddingVertical: 14,
     paddingHorizontal: 28,
     borderRadius: 14,

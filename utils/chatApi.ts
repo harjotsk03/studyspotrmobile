@@ -297,6 +297,21 @@ export async function markChatConversationRead(
   }
 }
 
+/** Hides the conversation (and its history so far) for the current user only. */
+export async function deleteChatConversation(
+  token: string,
+  conversationId: string,
+): Promise<void> {
+  const res = await fetch(
+    `${CHAT_API_BASE}/conversations/${encodeURIComponent(conversationId)}`,
+    { method: "DELETE", headers: authHeaders(token) },
+  );
+  const json: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(apiError(json, `Could not delete conversation (${res.status})`));
+  }
+}
+
 export function isConversationUnread(c: ChatConversation): boolean {
   const lastAt = c.last_message_at;
   if (!lastAt || !lastAt.trim()) return false;

@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { Video, ResizeMode } from "expo-av";
+import FeedVideo from "./FeedVideo";
 import { EllipsisVertical, Users } from "lucide-react-native";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
@@ -181,11 +181,11 @@ export default function FeedPostCard({
               ]}
             >
               {m.type === "video" ? (
-                <Video
+                <FeedVideo
+                  uri={m.url}
                   style={styles.mediaVideo}
-                  source={{ uri: m.url }}
-                  resizeMode={ResizeMode.COVER}
-                  useNativeControls
+                  contentFit="cover"
+                  nativeControls
                   isLooping={false}
                 />
               ) : (

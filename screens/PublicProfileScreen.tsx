@@ -278,12 +278,29 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
     [displayName, user],
   );
 
+  const canViewConnections =
+    relationship === "friends" || relationship === "self";
+
+  const openConnections = (kind: "friends" | "communities") => {
+    if (!canViewConnections) return;
+    navigation.navigate("ProfileConnections", { userId, kind });
+  };
+
   const stats = [
     { label: "Spots", value: String(user?.spots_created_count ?? 0) },
-    { label: "Friends", value: String(user?.friends_count ?? 0) },
+    {
+      label: "Friends",
+      value: String(user?.friends_count ?? 0),
+      onPress: canViewConnections
+        ? () => openConnections("friends")
+        : undefined,
+    },
     {
       label: "Communities",
       value: String(user?.communities_joined_count ?? 0),
+      onPress: canViewConnections
+        ? () => openConnections("communities")
+        : undefined,
     },
   ];
 
@@ -914,7 +931,11 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
             <View style={styles.statsRow}>
               {stats.map((stat) => (
                 <View key={stat.label} style={styles.statCell}>
-                  <ProfileStat label={stat.label} value={stat.value} />
+                  <ProfileStat
+                  label={stat.label}
+                  value={stat.value}
+                  onPress={"onPress" in stat ? stat.onPress : undefined}
+                />
                 </View>
               ))}
             </View>
@@ -935,10 +956,8 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
                 onPress={() => void sendProfileAction(primaryAction.next)}
               />
             </View>
-          ) : (
-            <View style={styles.actionBtnCell} />
-          )}
-          {relationship !== "self" ? (
+          ) : null}
+          {relationship === "friends" ? (
             <View style={styles.actionBtnCell}>
               <Button
                 fullWidth
@@ -949,9 +968,7 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
                 onPress={() => void openDirectChat()}
               />
             </View>
-          ) : (
-            <View style={styles.actionBtnCell} />
-          )}
+          ) : null}
         </View>
 
         <ProfileTabsBar

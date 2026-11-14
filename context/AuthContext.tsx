@@ -78,6 +78,21 @@ export const REMEMBER_ME_STORAGE_KEY = STORAGE_KEYS.rememberMe;
 /** Refresh a couple of minutes before the access token actually expires. */
 const ACCESS_TOKEN_REFRESH_MARGIN_MS = 2 * 60 * 1000;
 const REFRESH_RETRY_MS = 30 * 1000;
+const AUTH_FETCH_TIMEOUT_MS = 8000;
+
+async function fetchWithTimeout(
+  input: string,
+  init: RequestInit = {},
+  timeoutMs = AUTH_FETCH_TIMEOUT_MS,
+) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 const UNKNOWN_EXPIRY_REFRESH_MS = 15 * 60 * 1000;
 
 type RefreshOutcome =
@@ -248,11 +263,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const job = (async (): Promise<RefreshOutcome> => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/v1/auth/refresh-token`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ refresh_token: currentRefreshToken }),
-        });
+        const res = await fetchWithTimeout(
+          `${API_BASE_URL}/api/v1/auth/refresh-token`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ refresh_token: currentRefreshToken }),
+          },
+        );
 
         const data = await res.json().catch(() => null);
 

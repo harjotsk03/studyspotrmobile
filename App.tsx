@@ -76,12 +76,14 @@ import FriendRequestsScreen from "./screens/FriendRequestsScreen";
 import MessagesScreen from "./screens/MessagesScreen";
 import ChatThreadScreen from "./screens/ChatThreadScreen";
 import PublicProfileScreen from "./screens/PublicProfileScreen";
+import SearchDropdown from "./components/SearchDropdown";
 import SpotsScreen from "./screens/SpotsScreen";
 import SpotDetailScreen from "./screens/SpotDetailScreen";
 import SpotWizardScreen from "./screens/SpotWizardScreen";
 import ProfileScreen from "./screens/ProfileScreen";
 import ProfileSettingsScreen from "./screens/ProfileSettingsScreen";
 import BlockedUsersScreen from "./screens/BlockedUsersScreen";
+import ProfileConnectionsScreen from "./screens/ProfileConnectionsScreen";
 import LoginScreen from "./screens/LoginScreen";
 import RegisterScreen from "./screens/RegisterScreen";
 import ForgotPasswordScreen from "./screens/ForgotPasswordScreen";
@@ -97,8 +99,8 @@ import type {
   SpotsStackParamList,
 } from "./types/navigation";
 import PushNotificationBridge from "./components/PushNotificationBridge";
-import BootSplash from "./components/BootSplash";
 import { navigationRef } from "./navigation/rootNavigation";
+import "./utils/pushNotifications";
 
 const Tab = createBottomTabNavigator<MainTabsParamList>();
 const RootStack = createNativeStackNavigator<RootStackParamList>();
@@ -225,29 +227,11 @@ const tabAvatarStyles = StyleSheet.create({
   },
 });
 
-function AuthReadyReporter({
-  onLoadingChange,
-}: {
-  onLoadingChange: (loading: boolean) => void;
-}) {
-  const { isLoading } = useAuth();
-
-  useEffect(() => {
-    onLoadingChange(isLoading);
-  }, [isLoading, onLoadingChange]);
-
-  return null;
-}
-
 function AppContent() {
-  const { profile, isLoading, needsOnboarding } = useAuth();
+  const { profile, needsOnboarding } = useAuth();
   const { unreadCount } = useNotifications();
   const { feedLoading } = useFeedActivity();
   const { isOverlayOpen } = useFullScreenOverlay();
-
-  if (isLoading) {
-    return <View style={{ flex: 1, backgroundColor: Colors.light }} />;
-  }
 
   if (!profile) {
     return (
@@ -257,6 +241,7 @@ function AppContent() {
           headerShown: false,
           animation: "slide_from_right",
           gestureEnabled: true,
+          contentStyle: { flex: 1, backgroundColor: "#1a2a1c" },
         }}
       >
         <AuthStack.Screen name="WelcomeScreen" component={WelcomeScreen} />
@@ -452,6 +437,10 @@ function AppContent() {
           name="BlockedUsers"
           component={BlockedUsersScreen}
         />
+        <RootStack.Screen
+          name="ProfileConnections"
+          component={ProfileConnectionsScreen}
+        />
       </RootStack.Navigator>
     </View>
   );
@@ -474,52 +463,47 @@ export default function App() {
     InstrumentSans_700Bold,
     InstrumentSans_700Bold_Italic,
   });
-  const [authLoading, setAuthLoading] = useState(true);
-  const [splashVisible, setSplashVisible] = useState(true);
+  const [fontWaitExpired, setFontWaitExpired] = useState(false);
 
-  const handleAuthLoadingChange = useCallback((loading: boolean) => {
-    setAuthLoading(loading);
+  useEffect(() => {
+    const timeoutId = setTimeout(() => setFontWaitExpired(true), 1500);
+    return () => clearTimeout(timeoutId);
   }, []);
 
-  const splashReady = fontsLoaded && !authLoading;
+  const appReady = fontsLoaded || fontWaitExpired;
+
+  if (!appReady) {
+    return <View style={styles.appRoot} />;
+  }
 
   return (
     <View style={styles.appRoot}>
-      {fontsLoaded ? (
-        <AuthProvider>
-          <AuthReadyReporter onLoadingChange={handleAuthLoadingChange} />
-          <NotificationsProvider>
-            <FeedInteractionsProvider>
-              <SearchStateProvider>
-                <SpotsProvider>
-                  <CommunityCacheProvider>
-                    <FeedActivityProvider>
-                      <FullScreenOverlayProvider>
-                        <SafeAreaProvider>
-                          <NavigationContainer ref={navigationRef}>
-                            <StatusBar style="dark" />
-                            <ToastProvider>
-                              <AppContent />
-                            </ToastProvider>
-                            <PushNotificationBridge />
-                          </NavigationContainer>
-                        </SafeAreaProvider>
-                      </FullScreenOverlayProvider>
-                    </FeedActivityProvider>
-                  </CommunityCacheProvider>
-                </SpotsProvider>
-              </SearchStateProvider>
-            </FeedInteractionsProvider>
-          </NotificationsProvider>
-        </AuthProvider>
-      ) : null}
-
-      {splashVisible ? (
-        <BootSplash
-          ready={splashReady}
-          onFinished={() => setSplashVisible(false)}
-        />
-      ) : null}
+      <AuthProvider>
+        <NotificationsProvider>
+          <FeedInteractionsProvider>
+            <SearchStateProvider>
+              <SpotsProvider>
+                <CommunityCacheProvider>
+                  <FeedActivityProvider>
+                    <FullScreenOverlayProvider>
+                      <SafeAreaProvider>
+                        <NavigationContainer ref={navigationRef}>
+                          <StatusBar style="dark" />
+                          <ToastProvider>
+                            <AppContent />
+                          </ToastProvider>
+                          <PushNotificationBridge />
+                          <SearchDropdown />
+                        </NavigationContainer>
+                      </SafeAreaProvider>
+                    </FullScreenOverlayProvider>
+                  </FeedActivityProvider>
+                </CommunityCacheProvider>
+              </SpotsProvider>
+            </SearchStateProvider>
+          </FeedInteractionsProvider>
+        </NotificationsProvider>
+      </AuthProvider>
     </View>
   );
 }

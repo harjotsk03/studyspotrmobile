@@ -724,7 +724,7 @@ export default function FeedCommentsModal({
       <View style={styles.overlayRoot}>
         <Animated.View
           pointerEvents="box-none"
-          style={[StyleSheet.absoluteFillObject, { opacity: backdropOpacity }]}
+          style={[StyleSheet.absoluteFill, { opacity: backdropOpacity }]}
         >
           <Pressable
             style={styles.backdrop}

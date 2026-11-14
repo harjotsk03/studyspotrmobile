@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "../constants/Api";
+import { filePart } from "./formDataFile";
 
 /**
  * studyspotrserver: `POST /api/v1/auth/update-profile-photo`
@@ -31,11 +32,7 @@ export async function postProfilePhotoMultipart(options: {
   const formData = new FormData();
   formData.append(
     "image",
-    {
-      uri: localUri,
-      type: contentType,
-      name: filename,
-    } as unknown as Blob,
+    filePart({ uri: localUri, type: contentType, name: filename }),
   );
 
   const res = await fetch(UPDATE_PROFILE_PHOTO_URL, {

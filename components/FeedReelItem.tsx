@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { Video, ResizeMode } from "expo-av";
+import FeedVideo from "./FeedVideo";
 import {
   Heart,
   MessageCircle,
@@ -86,8 +86,6 @@ export default function FeedReelItem({
   const [optionsOpen, setOptionsOpen] = useState(false);
   const prevPostIdRef = useRef(post.id);
   const prevViewerLikedRef = useRef(post.viewer_has_liked);
-  const videoRef = useRef<Video | null>(null);
-
   const media = post.media[0];
   const author = post.author;
   const displayName = feedAuthorDisplayName(author);
@@ -110,12 +108,6 @@ export default function FeedReelItem({
   const isOwner = Boolean(currentUserId && post.author_id === currentUserId);
 
   const playbackAllowed = screenFocused && isActive && playing;
-
-  useEffect(() => {
-    if (!playbackAllowed && media?.type === "video") {
-      void videoRef.current?.pauseAsync?.();
-    }
-  }, [playbackAllowed, media?.type]);
 
   useEffect(() => {
     if (!isActive) {
@@ -276,18 +268,15 @@ export default function FeedReelItem({
       <Pressable style={styles.mediaTap} onPress={onMediaPress}>
         {media ? (
           media.type === "video" ? (
-            <Video
-              ref={videoRef}
+            <FeedVideo
+              uri={media.url}
               style={[
                 styles.mediaFill,
                 { width: viewportWidth, height: viewportHeight },
               ]}
-              source={{ uri: media.url }}
-              resizeMode={ResizeMode.COVER}
-              isLooping
               shouldPlay={playbackAllowed}
               isMuted={muted}
-              useNativeControls={false}
+              isLooping
             />
           ) : (
             <Image
@@ -462,7 +451,7 @@ const styles = StyleSheet.create({
     position: "relative",
   },
   mediaTap: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   mediaFill: {
     backgroundColor: "#111",
@@ -483,7 +472,7 @@ const styles = StyleSheet.create({
     top: "38%",
   },
   chromeLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 10,
     pointerEvents: "box-none",
   },

@@ -3,6 +3,8 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -17,6 +19,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ArrowLeft, Send, X } from "lucide-react-native";
+import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import SharedAttachmentPreview from "../components/SharedAttachmentPreview";
 import EventDetailDrawer, {
   type CommunityEvent,
@@ -142,7 +145,41 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
   }, [messages.length]);
   const cacheKey = myId ? threadCacheKey(myId, conversationId) : null;
 
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  useEffect(() => {
+    const show = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
+      () => setKeyboardOpen(true),
+    );
+    const hide = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
+      () => setKeyboardOpen(false),
+    );
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
   const title = chatPeerDisplayName(peer);
+  const peerUsername =
+    typeof peer?.username === "string" && peer.username.trim()
+      ? `@${peer.username.trim().replace(/^@/, "")}`
+      : "";
+  const peerPhoto =
+    typeof peer?.profile_photo === "string" && peer.profile_photo.trim()
+      ? encodeURI(peer.profile_photo.trim())
+      : "";
+  const peerAvatarUser = {
+    id: peer?.id,
+    first_name: peer?.first_name ?? undefined,
+    last_name: peer?.last_name ?? undefined,
+    username: peer?.username ?? undefined,
+    name: title,
+  };
+  const openPeerProfile = () => {
+    if (peer?.id) navigation.navigate("PublicProfile", { userId: peer.id });
+  };
 
   /** Hydrate from disk on mount / when the conversation changes. We do this
    * in an effect (not on first render) so the disk read is non-blocking. */
@@ -443,7 +480,7 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
     <KeyboardAvoidingView
       style={styles.flex}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
+      keyboardVerticalOffset={0}
     >
       <View style={styles.flex}>
         <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
@@ -454,17 +491,44 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
           >
             <ArrowLeft size={22} color={Colors.dark} strokeWidth={2.2} />
           </TouchableOpacity>
-          <View style={styles.headerCopy}>
-            <Text style={styles.title} numberOfLines={1}>
-              {title}
-            </Text>
-            {socketJoinError ? (
-              <Text style={styles.socketWarn} numberOfLines={1}>
-                Live updates unavailable
+          <TouchableOpacity
+            style={styles.headerPeer}
+            activeOpacity={0.7}
+            onPress={openPeerProfile}
+            disabled={!peer?.id}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${title}'s profile`}
+          >
+            <View
+              style={[
+                styles.headerAvatar,
+                { backgroundColor: getUserAvatarColor(peerAvatarUser) },
+              ]}
+            >
+              {peerPhoto ? (
+                <Image source={{ uri: peerPhoto }} style={styles.headerAvatarImg} />
+              ) : (
+                <Text style={styles.headerAvatarLetter}>
+                  {getUserInitials(peerAvatarUser)}
+                </Text>
+              )}
+            </View>
+            <View style={styles.headerCopy}>
+              <Text style={styles.title} numberOfLines={1}>
+                {title}
               </Text>
-            ) : null}
-          </View>
-          <View style={[styles.iconButton, styles.hiddenIcon]} />
+              {peerUsername ? (
+                <Text style={styles.username} numberOfLines={1}>
+                  {peerUsername}
+                </Text>
+              ) : null}
+              {socketJoinError ? (
+                <Text style={styles.socketWarn} numberOfLines={1}>
+                  Live updates unavailable
+                </Text>
+              ) : null}
+            </View>
+          </TouchableOpacity>
         </View>
 
         <FlatList
@@ -526,31 +590,36 @@ export default function ChatThreadScreen({ navigation, route }: Props) {
         <View
           style={[
             styles.composerRow,
-            { paddingBottom: Math.max(insets.bottom, 10) },
+            { paddingBottom: keyboardOpen ? 8 : Math.max(insets.bottom, 10) },
           ]}
         >
-          <TextInput
-            style={styles.input}
-            placeholder={attachedShare ? "Add a message…" : "Message"}
-            placeholderTextColor="#999"
-            value={draft}
-            onChangeText={setDraft}
-            multiline
-            maxLength={8000}
-            editable={!!token && !sendBusy}
-          />
-          <TouchableOpacity
-            activeOpacity={0.85}
-            disabled={!canSend}
-            onPress={() => void onSend()}
-            style={[styles.sendBtn, !canSend && styles.sendBtnDisabled]}
-          >
-            {sendBusy ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <Send size={20} color="#fff" strokeWidth={2.2} />
-            )}
-          </TouchableOpacity>
+          <View style={styles.inputPill}>
+            <TextInput
+              style={styles.input}
+              placeholder={attachedShare ? "Add a message…" : "Message"}
+              placeholderTextColor="#999"
+              value={draft}
+              onChangeText={setDraft}
+              multiline
+              maxLength={8000}
+              editable={!!token && !sendBusy}
+            />
+            {canSend || sendBusy ? (
+              <TouchableOpacity
+                activeOpacity={0.85}
+                disabled={!canSend}
+                onPress={() => void onSend()}
+                style={styles.sendBtn}
+                accessibilityLabel="Send"
+              >
+                {sendBusy ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Send size={18} color="#fff" strokeWidth={2.2} />
+                )}
+              </TouchableOpacity>
+            ) : null}
+          </View>
         </View>
       </View>
     </KeyboardAvoidingView>
@@ -599,7 +668,7 @@ const styles = StyleSheet.create({
   header: {
     alignItems: "center",
     flexDirection: "row",
-    justifyContent: "space-between",
+    gap: 6,
     paddingBottom: 12,
     paddingHorizontal: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -614,20 +683,43 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     width: 38,
   },
-  hiddenIcon: { opacity: 0 },
-  headerCopy: { flex: 1, paddingHorizontal: 12 },
+  headerPeer: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  headerAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerAvatarImg: { width: 40, height: 40 },
+  headerAvatarLetter: {
+    fontFamily: Fonts.gabarito.bold,
+    fontSize: 15,
+    color: "#fff",
+  },
+  headerCopy: { flex: 1, minWidth: 0 },
+  username: {
+    color: "#8A8F96",
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 13,
+    marginTop: 1,
+  },
   title: {
     color: Colors.dark,
     fontFamily: Fonts.gabarito.bold,
-    fontSize: 19,
-    textAlign: "center",
+    fontSize: 17,
   },
   socketWarn: {
     color: "#c45c00",
     fontFamily: Fonts.instrument.medium,
     fontSize: 11,
     marginTop: 2,
-    textAlign: "center",
   },
   listContent: {
     paddingHorizontal: 14,
@@ -716,9 +808,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingTop: 10,
     paddingBottom: 0,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#e8e8e8",
+    backgroundColor: "transparent",
+  },
+  inputPill: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "flex-end",
     backgroundColor: "#fff",
+    borderRadius: 24,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#dcdcdc",
+    paddingLeft: 6,
+    paddingRight: 5,
+    paddingVertical: 5,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
   },
   /** "Pinned" share attachment sitting directly above the input row. The
    * remove button overlaps the top-right corner of the preview so the
@@ -727,9 +834,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingTop: 10,
     paddingBottom: 4,
-    backgroundColor: "#fff",
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#e8e8e8",
+    backgroundColor: "transparent",
   },
   attachedCardWrap: {
     position: "relative",
@@ -757,20 +862,19 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    minHeight: 44,
+    minHeight: 34,
     maxHeight: 120,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    backgroundColor: Colors.light,
+    paddingHorizontal: 12,
+    paddingTop: Platform.OS === "ios" ? 8 : 6,
+    paddingBottom: Platform.OS === "ios" ? 8 : 6,
     fontFamily: Fonts.instrument.regular,
     fontSize: 15,
     color: Colors.dark,
   },
   sendBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: Colors.primary,
     alignItems: "center",
     justifyContent: "center",

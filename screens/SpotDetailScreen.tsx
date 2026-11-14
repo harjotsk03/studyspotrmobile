@@ -75,6 +75,9 @@ import { useSpots } from "../context/SpotsContext";
 import {
   fetchSpotById,
   fetchReviewsBySpot,
+  fetchSpotSaved,
+  saveSpot,
+  unsaveSpot,
   deleteReviewJson,
   deleteSpotJson,
   spotReviewPhotoUrls,
@@ -390,7 +393,7 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const spotMenuWrapRef = useRef<View>(null);
   const reviewMenuWraps = useRef(new Map<string, View | null>());
-  // TODO: wire to saved-spots API
+  const saveInFlight = useRef(false);
   const [saved, setSaved] = useState(false);
   const [userLocation, setUserLocation] = useState<{
     latitude: number;
@@ -499,21 +502,29 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
     };
   }, []);
 
+  useEffect(() => {
+    setSaved(false);
+  }, [spotId]);
+
   const loadData = useCallback(async () => {
     setReviewsLoading(true);
     try {
-      const [fresh, list] = await Promise.all([
+      const [fresh, list, savedStatus] = await Promise.all([
         fetchSpotById(spotId),
         fetchReviewsBySpot(spotId),
+        token
+          ? fetchSpotSaved(token, spotId).catch(() => false)
+          : Promise.resolve(false),
       ]);
       if (fresh) setSpot(fresh);
       setReviews(list);
+      if (!saveInFlight.current) setSaved(savedStatus);
     } catch (e) {
       console.warn(e);
     } finally {
       setReviewsLoading(false);
     }
-  }, [spotId]);
+  }, [spotId, token]);
 
   useFocusEffect(
     useCallback(() => {
@@ -572,9 +583,27 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
     user?.id && spot.created_by_id && user.id === spot.created_by_id,
   );
 
-  const toggleSave = () => {
-    // TODO: wire to saved-spots API
-    setSaved((prev) => !prev);
+  const toggleSave = async () => {
+    if (!token) {
+      Alert.alert("Sign in", "Sign in to bookmark spots.");
+      return;
+    }
+    if (saveInFlight.current) return;
+    saveInFlight.current = true;
+    const next = !saved;
+    setSaved(next);
+    try {
+      if (next) await saveSpot(token, spotId);
+      else await unsaveSpot(token, spotId);
+    } catch (e) {
+      setSaved(!next);
+      Alert.alert(
+        "Couldn’t update bookmark",
+        e instanceof Error ? e.message : "Try again.",
+      );
+    } finally {
+      saveInFlight.current = false;
+    }
   };
 
   const openDirections = () => {

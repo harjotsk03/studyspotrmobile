@@ -22,6 +22,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Coffee,
+  Bookmark,
   MapPin,
   Presentation,
   RotateCcw,
@@ -36,6 +37,7 @@ import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 
 export type SpotFiltersValue = {
+  savedOnly: boolean;
   nearbyOnly: boolean;
   mapReadyOnly: boolean;
   minRating: number;
@@ -49,6 +51,7 @@ export type SpotFiltersValue = {
 };
 
 export const DEFAULT_SPOT_FILTERS: SpotFiltersValue = {
+  savedOnly: false,
   nearbyOnly: false,
   mapReadyOnly: false,
   minRating: 0,
@@ -63,6 +66,7 @@ export const DEFAULT_SPOT_FILTERS: SpotFiltersValue = {
 
 export function countActiveFilters(filters: SpotFiltersValue) {
   let count = 0;
+  if (filters.savedOnly) count += 1;
   if (filters.nearbyOnly) count += 1;
   if (filters.mapReadyOnly) count += 1;
   if (filters.minRating > 0) count += 1;
@@ -110,6 +114,7 @@ type Props = {
   visible: boolean;
   value: SpotFiltersValue;
   hasUserLocation: boolean;
+  isSignedIn: boolean;
   onChange: (next: SpotFiltersValue) => void;
   onClose: () => void;
   onReset: () => void;
@@ -119,6 +124,7 @@ export default function SpotFiltersModal({
   visible,
   value,
   hasUserLocation,
+  isSignedIn,
   onChange,
   onClose,
   onReset,
@@ -368,6 +374,25 @@ export default function SpotFiltersModal({
             // when the user touches an empty area between chip groups.
             collapsable={false}
           >
+            <Section title="Saved">
+              <View style={styles.chipsRow}>
+                <FilterChip
+                  label="Saved only"
+                  Icon={Bookmark}
+                  active={value.savedOnly}
+                  disabled={!isSignedIn}
+                  onPress={() =>
+                    onChange({ ...value, savedOnly: !value.savedOnly })
+                  }
+                />
+              </View>
+              {!isSignedIn ? (
+                <Text style={styles.helper}>
+                  Sign in to filter by bookmarked spots.
+                </Text>
+              ) : null}
+            </Section>
+
             <Section title="Distance">
               <View style={styles.chipsRow}>
                 <FilterChip
@@ -497,7 +522,7 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "rgba(0,0,0,0.45)",
   },
   sheet: {

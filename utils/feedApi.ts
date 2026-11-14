@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "../constants/Api";
+import { filePart } from "./formDataFile";
 
 export const FEED_API_BASE = `${API_BASE_URL}/api/v1/feed`;
 
@@ -339,11 +340,11 @@ export async function createFeedPostMultipart(
 
     form.append(
       "media",
-      {
+      filePart({
         uri: f.uri,
         type,
         name: rawName.includes(".") ? rawName : `${rawName}.jpg`,
-      } as unknown as Blob,
+      }),
     );
   }
 
