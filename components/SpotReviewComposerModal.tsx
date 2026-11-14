@@ -593,7 +593,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#eee",
   },
   thumbSkeleton: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 1,
   },
   thumbImg: { width: "100%", height: "100%" },

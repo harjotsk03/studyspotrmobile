@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "../constants/Api";
+import { filePart } from "./formDataFile";
 import type { StudySpot } from "../context/SpotsContext";
 
 export const SPOTS_API_BASE = `${API_BASE_URL}/api/v1/spots`;
@@ -242,11 +243,7 @@ export async function createSpotMultipart(
 
     form.append(
       "images",
-      {
-        uri: asset.uri,
-        type,
-        name,
-      } as unknown as Blob,
+      filePart({ uri: asset.uri, type, name }),
     );
   }
 
@@ -311,11 +308,7 @@ export async function updateSpotMultipart(
 
     form.append(
       "images",
-      {
-        uri: asset.uri,
-        type,
-        name,
-      } as unknown as Blob,
+      filePart({ uri: asset.uri, type, name }),
     );
   }
 
@@ -360,11 +353,7 @@ export async function createReviewMultipart(
     const name = rawName.includes(".") ? rawName : `${rawName}.jpg`;
     form.append(
       "images",
-      {
-        uri: asset.uri,
-        type,
-        name,
-      } as unknown as Blob,
+      filePart({ uri: asset.uri, type, name }),
     );
   }
 
@@ -405,11 +394,7 @@ export async function updateReviewMultipart(
     const name = rawName.includes(".") ? rawName : `${rawName}.jpg`;
     form.append(
       "images",
-      {
-        uri: asset.uri,
-        type,
-        name,
-      } as unknown as Blob,
+      filePart({ uri: asset.uri, type, name }),
     );
   }
 

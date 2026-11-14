@@ -1,4 +1,4 @@
-import { Audio } from "expo-av";
+import { setAudioModeAsync } from "expo-audio";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -103,9 +103,9 @@ export default function UserPostsFeedScreen() {
 
   useEffect(() => {
     if (!token) return;
-    void Audio.setAudioModeAsync({
-      playsInSilentModeIOS: true,
-      staysActiveInBackground: false,
+    void setAudioModeAsync({
+      playsInSilentMode: true,
+      shouldPlayInBackground: false,
     });
   }, [token]);
 
@@ -537,7 +537,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#FAFAFA",
   },
   loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: "rgba(255,255,255,0.6)",

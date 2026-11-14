@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Animated,
   Easing,
@@ -15,6 +15,7 @@ import { Menu, MessageCircle, Search, X } from "lucide-react-native";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
 import { useAuth } from "../context/AuthContext";
+import { useSearchState } from "../context/SearchStateContext";
 import { navigateToInboxMessagesList } from "../utils/navigateToInboxChat";
 import CreateSunMenu from "./CreateSunMenu";
 
@@ -26,7 +27,15 @@ export default function TopNav({ onOpenSettings }: TopNavProps) {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NavigationProp<ParamListBase>>();
   const { token } = useAuth();
-  const [query, setQuery] = useState("");
+  const {
+    query,
+    setQuery,
+    setSearchOpen: setSharedSearchOpen,
+    setDropdownTop,
+    closeSignal,
+  } = useSearchState();
+  // Per-instance: several TopNavs stay mounted across tabs, only the one the
+  // user tapped should show the field.
   const [searchOpen, setSearchOpen] = useState(false);
   const inputRef = useRef<TextInput>(null);
   const progress = useRef(new Animated.Value(0)).current;
@@ -35,6 +44,7 @@ export default function TopNav({ onOpenSettings }: TopNavProps) {
   const openSearch = () => {
     if (searchOpen || closingRef.current) return;
     setSearchOpen(true);
+    setSharedSearchOpen(true);
     progress.setValue(0);
     requestAnimationFrame(() => {
       Animated.spring(progress, {
@@ -61,9 +71,19 @@ export default function TopNav({ onOpenSettings }: TopNavProps) {
       closingRef.current = false;
       if (!finished) return;
       setSearchOpen(false);
+      setSharedSearchOpen(false);
       setQuery("");
     });
   };
+
+  // The dropdown asks us to close (e.g. after a result is picked or the
+  // backdrop is tapped) so the same close animation runs.
+  const lastCloseSignal = useRef(closeSignal);
+  useEffect(() => {
+    if (lastCloseSignal.current === closeSignal) return;
+    lastCloseSignal.current = closeSignal;
+    closeSearch();
+  });
 
   const barOpacity = progress.interpolate({
     inputRange: [0, 1],
@@ -79,7 +99,12 @@ export default function TopNav({ onOpenSettings }: TopNavProps) {
   });
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
+    <View
+      style={[styles.container, { paddingTop: insets.top + 8 }]}
+      onLayout={(e) =>
+        setDropdownTop(e.nativeEvent.layout.y + e.nativeEvent.layout.height)
+      }
+    >
       <View style={styles.side}>
         {token ? <CreateSunMenu /> : <View style={styles.iconBtn} />}
       </View>

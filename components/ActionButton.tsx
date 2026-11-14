@@ -230,7 +230,7 @@ const styles = StyleSheet.create({
     alignSelf: "auto",
   },
   shadowPlate: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   face: {
     alignItems: "center",

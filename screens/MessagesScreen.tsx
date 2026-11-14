@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Alert,
   FlatList,
   Image,
   RefreshControl,
@@ -11,7 +12,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { ArrowLeft, MessageCircle } from "lucide-react-native";
+import { ArrowLeft, MessageCircle, SquarePen } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
@@ -20,11 +21,14 @@ import type { RootStackParamList } from "../types/navigation";
 import { getUserAvatarColor, getUserInitials } from "../utils/avatar";
 import {
   chatPeerDisplayName,
+  deleteChatConversation,
   fetchChatConversations,
   isConversationUnread,
   type ChatConversation,
 } from "../utils/chatApi";
 import { describeBodyForPreview } from "../utils/messageShare";
+import NewMessageModal from "../components/NewMessageModal";
+import SwipeToDeleteRow from "../components/SwipeToDeleteRow";
 
 /** Per-user cache key for the conversations list. */
 const CACHE_KEY_PREFIX = "chat:conversations:";
@@ -58,17 +62,15 @@ function formatListTime(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
 
-  const diffMs = Date.now() - date.getTime();
-  const diffMinutes = Math.floor(diffMs / 60000);
-  if (diffMinutes < 1) return "Just now";
-  if (diffMinutes < 60) return `${diffMinutes}m ago`;
-
+  const diffMinutes = Math.floor((Date.now() - date.getTime()) / 60000);
+  if (diffMinutes < 1) return "now";
+  if (diffMinutes < 60) return `${diffMinutes}m`;
   const diffHours = Math.floor(diffMinutes / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-
+  if (diffHours < 24) return `${diffHours}h`;
   const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 7) return `${diffDays}d ago`;
-
+  if (diffDays < 7) return `${diffDays}d`;
+  const diffWeeks = Math.floor(diffDays / 7);
+  if (diffWeeks < 52) return `${diffWeeks}w`;
   return date.toLocaleDateString();
 }
 
@@ -84,6 +86,7 @@ export default function MessagesScreen() {
    * round-trip; after that we always render the list (with cached rows). */
   const [hydrated, setHydrated] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [composeOpen, setComposeOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const rowsRef = useRef<ChatConversation[]>([]);
 
@@ -179,6 +182,25 @@ export default function MessagesScreen() {
     void load();
   };
 
+  const removeConversation = (c: ChatConversation) => {
+    // Optimistic: drop it from the list right away, restore on failure.
+    const previous = rowsRef.current;
+    const next = previous.filter((r) => r.id !== c.id);
+    rowsRef.current = next;
+    setRows(next);
+    void persistRows(next);
+    if (!token) return;
+    deleteChatConversation(token, c.id).catch((e) => {
+      rowsRef.current = previous;
+      setRows(previous);
+      void persistRows(previous);
+      Alert.alert(
+        "Delete conversation",
+        e instanceof Error ? e.message : "Could not delete conversation.",
+      );
+    });
+  };
+
   const openThread = (c: ChatConversation) => {
     const peer = c.other_user ?? undefined;
     navigation.navigate("ChatThread", {
@@ -216,9 +238,10 @@ export default function MessagesScreen() {
         : "";
 
     return (
+      <SwipeToDeleteRow onDelete={() => removeConversation(item)}>
       <TouchableOpacity
-        style={[styles.row, unread && styles.rowUnread]}
-        activeOpacity={0.85}
+        style={styles.row}
+        activeOpacity={0.6}
         onPress={() => openThread(item)}
       >
         <View
@@ -234,22 +257,30 @@ export default function MessagesScreen() {
           )}
         </View>
         <View style={styles.rowBody}>
-          <View style={styles.rowTop}>
-            <Text style={styles.rowTitle} numberOfLines={1}>
-              {label}
+          <Text
+            style={[styles.rowTitle, unread && styles.rowTitleUnread]}
+            numberOfLines={1}
+          >
+            {label}
+          </Text>
+          <View style={styles.previewRow}>
+            <Text
+              style={[styles.preview, unread && styles.previewUnread]}
+              numberOfLines={1}
+            >
+              {preview}
             </Text>
             {!!when && (
               <Text style={styles.rowTime} numberOfLines={1}>
+                {" · "}
                 {when}
               </Text>
             )}
           </View>
-          <Text style={styles.preview} numberOfLines={2}>
-            {preview}
-          </Text>
         </View>
         {unread ? <View style={styles.unreadDot} /> : null}
       </TouchableOpacity>
+      </SwipeToDeleteRow>
     );
   };
 
@@ -266,7 +297,14 @@ export default function MessagesScreen() {
         <View style={styles.headerCopy}>
           <Text style={styles.title}>Messages</Text>
         </View>
-        <View style={[styles.iconButton, styles.hiddenIconButton]} />
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={() => setComposeOpen(true)}
+          style={styles.iconButton}
+          accessibilityLabel="New message"
+        >
+          <SquarePen size={22} color={Colors.dark} strokeWidth={2.2} />
+        </TouchableOpacity>
       </View>
 
       {!token ? (
@@ -326,6 +364,19 @@ export default function MessagesScreen() {
           }
         />
       )}
+
+      <NewMessageModal
+        visible={composeOpen}
+        token={token}
+        onClose={() => setComposeOpen(false)}
+        onStarted={(conversation, peer) => {
+          setComposeOpen(false);
+          navigation.navigate("ChatThread", {
+            conversationId: conversation.id,
+            peer: peer ?? conversation.other_user ?? undefined,
+          });
+        }}
+      />
     </View>
   );
 }
@@ -344,7 +395,6 @@ const styles = StyleSheet.create({
   },
   iconButton: {
     alignItems: "center",
-    backgroundColor: "#fff",
     borderRadius: 16,
     height: 38,
     justifyContent: "center",
@@ -364,9 +414,7 @@ const styles = StyleSheet.create({
     fontSize: 21,
   },
   listContent: {
-    paddingHorizontal: 16,
     paddingBottom: 28,
-    gap: 10,
   },
   listContentEmpty: {
     flexGrow: 1,
@@ -399,61 +447,58 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "#fff",
-  },
-  rowUnread: {
-    borderColor: "rgba(26, 97, 168, 0.18)",
-    backgroundColor: "#F8FBFF",
+    gap: 14,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
   },
   avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 58,
+    height: 58,
+    borderRadius: 29,
     overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarImg: { width: 48, height: 48, borderRadius: 24 },
+  avatarImg: { width: 58, height: 58, borderRadius: 29 },
   avatarLetter: {
     fontFamily: Fonts.gabarito.bold,
-    fontSize: 18,
+    fontSize: 21,
     color: "#fff",
   },
   rowBody: { flex: 1, minWidth: 0 },
-  rowTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-    marginBottom: 4,
-  },
   rowTitle: {
-    flex: 1,
-    fontFamily: Fonts.gabarito.semiBold,
+    fontFamily: Fonts.gabarito.medium ?? Fonts.gabarito.semiBold,
     fontSize: 16,
     color: Colors.dark,
   },
-  rowTime: {
-    fontFamily: Fonts.instrument.medium,
-    fontSize: 12,
-    color: "#888",
+  rowTitleUnread: {
+    fontFamily: Fonts.gabarito.bold,
   },
-  preview: {
+  previewRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 2,
+  },
+  rowTime: {
     fontFamily: Fonts.instrument.regular,
     fontSize: 14,
-    color: "#666",
-    lineHeight: 19,
+    color: "#8A8F96",
+  },
+  preview: {
+    flexShrink: 1,
+    fontFamily: Fonts.instrument.regular,
+    fontSize: 14,
+    color: "#8A8F96",
+  },
+  previewUnread: {
+    fontFamily: Fonts.instrument.semiBold ?? Fonts.instrument.medium,
+    color: Colors.dark,
   },
   unreadDot: {
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: Colors.accent,
+    backgroundColor: Colors.primary,
   },
   emptyCard: {
     backgroundColor: "#fff",

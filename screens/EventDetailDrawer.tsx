@@ -1322,7 +1322,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "rgba(0,0,0,0.45)",
   },
   sheet: {
@@ -1540,7 +1540,7 @@ const styles = StyleSheet.create({
   },
   // ── Leave confirm ────────────────────────────────────────────────────────
   confirmBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "rgba(0,0,0,0.35)",
     alignItems: "center",
     justifyContent: "center",
@@ -1583,7 +1583,7 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   deleteModalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "rgba(0,0,0,0.45)",
     alignItems: "center",
     justifyContent: "center",

@@ -956,10 +956,8 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
                 onPress={() => void sendProfileAction(primaryAction.next)}
               />
             </View>
-          ) : (
-            <View style={styles.actionBtnCell} />
-          )}
-          {relationship !== "self" ? (
+          ) : null}
+          {relationship === "friends" ? (
             <View style={styles.actionBtnCell}>
               <Button
                 fullWidth
@@ -970,9 +968,7 @@ export default function PublicProfileScreen({ navigation, route }: Props) {
                 onPress={() => void openDirectChat()}
               />
             </View>
-          ) : (
-            <View style={styles.actionBtnCell} />
-          )}
+          ) : null}
         </View>
 
         <ProfileTabsBar

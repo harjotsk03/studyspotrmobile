@@ -7,7 +7,6 @@ import { Fonts } from "../constants/Fonts";
 import { isGoogleConfigured } from "../constants/OAuth";
 import { useAuth } from "../context/AuthContext";
 import Button from "./Button";
-import GoogleGIcon from "./GoogleGIcon";
 import AppleIcon from "./AppleIcon";
 import {
   exchangeOAuthIdToken,
@@ -141,13 +140,11 @@ export default function SocialAuthButtons({
     }
   };
 
-  const googleLabel =
-    intent === "signup" ? "Continue with Google" : "Continue with Google";
   const appleLabel =
     intent === "signup" ? "Continue with Apple" : "Continue with Apple";
 
   const dividerRow =
-    divider === "none" ? null : (
+    divider === "none" || !appleAvailable ? null : (
       <View
         style={[
           styles.dividerRow,
@@ -165,16 +162,7 @@ export default function SocialAuthButtons({
       <View style={styles.wrap}>
         {divider === "above" ? dividerRow : null}
 
-        <Button
-          label={googleLabel}
-          variant="outline"
-          size={size}
-          disabled={blocked}
-          loading={busy === "google"}
-          icon={<GoogleGIcon size={18} />}
-          onPress={() => void handleGoogle()}
-        />
-
+        {/* Google sign-in intentionally hidden. */}
         {appleAvailable ? (
           <Button
             label={appleLabel}

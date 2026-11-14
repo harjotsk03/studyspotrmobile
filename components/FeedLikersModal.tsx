@@ -291,7 +291,7 @@ export default function FeedLikersModal({
         {/* Dimmed backdrop */}
         <Animated.View
           pointerEvents="box-none"
-          style={[StyleSheet.absoluteFillObject, { opacity: backdropOpacity }]}
+          style={[StyleSheet.absoluteFill, { opacity: backdropOpacity }]}
         >
           <Pressable
             style={styles.backdrop}
@@ -377,7 +377,7 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "rgba(0,0,0,0.45)",
   },
   sheetAnimatedWrap: {

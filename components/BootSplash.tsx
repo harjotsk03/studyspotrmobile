@@ -5,8 +5,9 @@ import StudySpotrLogo from "../assets/studyspotrlogo.svg";
 import { Colors } from "../constants/Colors";
 
 const LOGO_SIZE = 72;
-const FADE_IN_MS = 2500;
-const FADE_OUT_MS = 560;
+const FADE_IN_MS = 900;
+const FADE_OUT_MS = 400;
+const MAX_HOLD_MS = 2500;
 
 type Props = {
   /** Session/fonts are ready — splash can dismiss after the fade-in. */
@@ -14,7 +15,7 @@ type Props = {
   onFinished?: () => void;
 };
 
-/** White load screen: black logo fades in over 2.5s, then the overlay lifts. */
+/** White load screen: logo fades in, then the overlay lifts. */
 export default function BootSplash({ ready = false, onFinished }: Props) {
   const overlayOpacity = useRef(new Animated.Value(1)).current;
   const logoOpacity = useRef(new Animated.Value(0)).current;
@@ -25,8 +26,11 @@ export default function BootSplash({ ready = false, onFinished }: Props) {
   readyRef.current = ready;
   onFinishedRef.current = onFinished;
 
-  const dismiss = useCallback(() => {
-    if (finishedRef.current || !readyRef.current || !introDoneRef.current) {
+  const dismiss = useCallback((force = false) => {
+    if (finishedRef.current) {
+      return;
+    }
+    if (!force && (!readyRef.current || !introDoneRef.current)) {
       return;
     }
     finishedRef.current = true;
@@ -57,6 +61,11 @@ export default function BootSplash({ ready = false, onFinished }: Props) {
   }, [dismiss, logoOpacity]);
 
   useEffect(() => {
+    const timeoutId = setTimeout(() => dismiss(true), MAX_HOLD_MS);
+    return () => clearTimeout(timeoutId);
+  }, [dismiss]);
+
+  useEffect(() => {
     if (ready) {
       dismiss();
     }
@@ -82,7 +91,7 @@ export default function BootSplash({ ready = false, onFinished }: Props) {
 
 const styles = StyleSheet.create({
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "#fff",
     alignItems: "center",
     justifyContent: "center",
