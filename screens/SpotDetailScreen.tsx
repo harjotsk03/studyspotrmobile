@@ -683,6 +683,7 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
     setDeleteLoading(true);
     try {
       await deleteSpotJson({
+        token,
         spot_id: spotId,
         user_id: user.id,
         deleting_user_points: true,
@@ -707,6 +708,7 @@ export default function SpotDetailScreen({ route, navigation }: Props) {
     setDeleteLoading(true);
     try {
       await deleteReviewJson({
+        token,
         review_id: rid,
         spot_id: spotId,
         user_id: user.id,

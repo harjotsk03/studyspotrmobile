@@ -22,7 +22,7 @@ import Input from "./Input";
 import { SkeletonBox } from "./Skeleton";
 import { Colors } from "../constants/Colors";
 import { Fonts } from "../constants/Fonts";
-import type { UserProfileData } from "../context/AuthContext";
+import { useAuth, type UserProfileData } from "../context/AuthContext";
 import {
   createReviewMultipart,
   updateReviewMultipart,
@@ -71,6 +71,7 @@ export default function SpotReviewComposerModal({
   onSuccess,
 }: Props) {
   const insets = useSafeAreaInsets();
+  const { token } = useAuth();
   const [rating, setRating] = useState(5);
   const [content, setContent] = useState("");
   const [newImages, setNewImages] = useState<ImagePicker.ImagePickerAsset[]>([]);
@@ -291,9 +292,9 @@ export default function SpotReviewComposerModal({
             rating,
             user_name: reviewDisplayName(currentUser),
             user_profile_photo: profilePhotoUri(currentUser),
-            ...(typeof currentUser?.points === "number" ? { user_points: currentUser.points } : {}),
           },
           newImages.map((a) => ({ uri: a.uri, mimeType: a.mimeType, fileName: a.fileName })),
+          token,
         );
       } else if (review) {
         const rid = spotReviewPrimaryId(review);
@@ -307,6 +308,7 @@ export default function SpotReviewComposerModal({
             ...(removedUrls.length > 0 ? { removed_image_urls: removedUrls } : {}),
           },
           newImages.map((a) => ({ uri: a.uri, mimeType: a.mimeType, fileName: a.fileName })),
+          token,
         );
       }
       await onSuccess();

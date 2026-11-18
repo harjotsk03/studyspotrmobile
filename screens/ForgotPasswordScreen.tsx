@@ -40,8 +40,8 @@ export default function ForgotPasswordScreen() {
 
   const canVerifyCode = code.trim().length === 6 && !loading;
   const canSubmitNewPassword =
-    newPassword.trim().length >= 6 &&
-    confirmPassword.trim().length >= 6 &&
+    newPassword.trim().length >= 8 &&
+    confirmPassword.trim().length >= 8 &&
     newPassword === confirmPassword &&
     !loading;
 
@@ -177,8 +177,8 @@ export default function ForgotPasswordScreen() {
       return;
     }
 
-    if (newPassword.length < 6) {
-      Alert.alert("Password too short", "Your new password must be at least 6 characters.");
+    if (newPassword.length < 8) {
+      Alert.alert("Password too short", "Your new password must be at least 8 characters.");
       return;
     }
 
