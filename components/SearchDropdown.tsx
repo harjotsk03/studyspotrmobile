@@ -110,6 +110,19 @@ export default function SearchDropdown() {
   const { query, searchOpen, dropdownTop, requestCloseSearch } =
     useSearchState();
 
+  // True while the root stack is showing the tabs (not a pushed screen).
+  const [onTabs, setOnTabs] = useState(true);
+  useEffect(() => {
+    const sync = () => {
+      if (!navigationRef.isReady()) return;
+      const root = navigationRef.getRootState();
+      const name = root?.routes?.[root.index ?? 0]?.name;
+      setOnTabs(name === "MainTabs");
+    };
+    sync();
+    return navigationRef.addListener("state", sync);
+  }, []);
+
   const trimmed = query.trim();
   // `dismissed` hides the panel instantly once a result is picked, so it never
   // draws over the incoming screen while the push transition runs.
@@ -304,14 +317,21 @@ export default function SearchDropdown() {
   // Result picked: hide the panel at once (no fade over the incoming screen),
   // start the screen push, and only then collapse the search bar — by that
   // point it's covered by the new screen, so nothing visibly jumps.
+  // By default the search is kept (query, results, tab) and merely hidden
+  // while the pushed screen covers the tabs, so going back restores it.
+  // `closeAfter` is for results that stay on the tabs (nothing covers it).
   const pick = useCallback(
-    (go: () => void) => {
+    (go: () => void, closeAfter = false) => {
+      Keyboard.dismiss();
+      if (!closeAfter) {
+        go();
+        return;
+      }
       closingRef.current = true;
       appear.stopAnimation();
       appear.setValue(0);
       setMounted(false);
       setDismissed(true);
-      Keyboard.dismiss();
       go();
       setTimeout(() => requestCloseSearch(), 450);
     },
@@ -355,6 +375,7 @@ export default function SearchDropdown() {
 
   const openEvent = useCallback(
     (e: EventResult) => {
+      const standalone = !e.community_id;
       pick(() => {
         if (e.community_id) {
           const role = e.user_community_role ?? undefined;
@@ -377,7 +398,7 @@ export default function SearchDropdown() {
             params: { openEventId: e.id, openEventNonce: Date.now() },
           },
         });
-      });
+      }, standalone);
     },
     [pick],
   );
@@ -399,7 +420,9 @@ export default function SearchDropdown() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settledFor, visible]);
 
-  if (!mounted) return null;
+  // Hide (not close) while a screen is pushed over the tabs, e.g. Messages.
+  // Query and results are kept, so going back shows the search as it was.
+  if (!mounted || !onTabs) return null;
 
   const counts: Record<Tab, number> = {
     people: users.length,

@@ -4,6 +4,14 @@ import type { StudySpot } from "../context/SpotsContext";
 
 export const SPOTS_API_BASE = `${API_BASE_URL}/api/v1/spots`;
 
+/** Adds `Authorization: Bearer` when a token is available. */
+function withAuth(
+  headers: Record<string, string>,
+  token?: string | null,
+): Record<string, string> {
+  return token ? { ...headers, Authorization: `Bearer ${token}` } : headers;
+}
+
 /** Nested user object returned with reviews from some API endpoints. */
 export type SpotReviewUserSnippet = {
   id?: string;
@@ -217,6 +225,7 @@ export async function fetchReviewsByUserId(
 export async function createSpotMultipart(
   spotData: Record<string, unknown>,
   imageAssets: { uri: string; mimeType?: string | null; fileName?: string | null }[],
+  token?: string | null,
 ): Promise<{ spot?: StudySpot } & Record<string, unknown>> {
   if (imageAssets.length < 1 || imageAssets.length > 5) {
     throw new Error("Choose between 1 and 5 photos for your spot.");
@@ -249,7 +258,7 @@ export async function createSpotMultipart(
 
   const res = await fetch(`${SPOTS_API_BASE}/createSpot`, {
     method: "POST",
-    headers: { Accept: "application/json" },
+    headers: withAuth({ Accept: "application/json" }, token),
     body: form,
   });
 
@@ -282,6 +291,7 @@ export async function createSpotMultipart(
 export async function updateSpotMultipart(
   spotData: Record<string, unknown>,
   imageAssets: { uri: string; mimeType?: string | null; fileName?: string | null }[] = [],
+  token?: string | null,
 ): Promise<Record<string, unknown>> {
   if (imageAssets.length > 5) {
     throw new Error("You can attach at most 5 photos.");
@@ -314,7 +324,7 @@ export async function updateSpotMultipart(
 
   const res = await fetch(`${SPOTS_API_BASE}/updateSpot`, {
     method: "POST",
-    headers: { Accept: "application/json" },
+    headers: withAuth({ Accept: "application/json" }, token),
     body: form,
   });
 
@@ -336,6 +346,7 @@ export async function updateSpotMultipart(
 export async function createReviewMultipart(
   reviewData: Record<string, unknown>,
   imageAssets: { uri: string; mimeType?: string | null; fileName?: string | null }[],
+  token?: string | null,
 ): Promise<void> {
   const form = new FormData();
   form.append("reviewData", JSON.stringify(reviewData));
@@ -359,7 +370,7 @@ export async function createReviewMultipart(
 
   const res = await fetch(`${SPOTS_API_BASE}/createReview`, {
     method: "POST",
-    headers: { Accept: "application/json" },
+    headers: withAuth({ Accept: "application/json" }, token),
     body: form,
   });
 
@@ -377,6 +388,7 @@ export async function createReviewMultipart(
 export async function updateReviewMultipart(
   reviewData: Record<string, unknown>,
   newImageAssets: { uri: string; mimeType?: string | null; fileName?: string | null }[],
+  token?: string | null,
 ): Promise<void> {
   const form = new FormData();
   form.append("reviewData", JSON.stringify(reviewData));
@@ -400,7 +412,7 @@ export async function updateReviewMultipart(
 
   const res = await fetch(`${SPOTS_API_BASE}/updateReview`, {
     method: "POST",
-    headers: { Accept: "application/json" },
+    headers: withAuth({ Accept: "application/json" }, token),
     body: form,
   });
 
@@ -420,15 +432,20 @@ export async function deleteReviewJson(payload: {
   spot_id: string;
   user_id: string;
   deleting_user_points?: boolean;
+  token?: string | null;
 }): Promise<void> {
   const res = await fetch(`${SPOTS_API_BASE}/deleteReview`, {
     method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
+    headers: withAuth(
+      {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      payload.token,
+    ),
     body: JSON.stringify({
       ...payload,
+      token: undefined,
       deleting_user_points: payload.deleting_user_points ?? true,
     }),
   });
@@ -499,15 +516,20 @@ export async function deleteSpotJson(payload: {
   spot_id: string;
   user_id: string;
   deleting_user_points?: boolean;
+  token?: string | null;
 }): Promise<void> {
   const res = await fetch(`${SPOTS_API_BASE}/deleteSpot`, {
     method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
+    headers: withAuth(
+      {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      payload.token,
+    ),
     body: JSON.stringify({
       ...payload,
+      token: undefined,
       deleting_user_points: payload.deleting_user_points ?? true,
     }),
   });

@@ -584,7 +584,7 @@ type WizardProps = NativeStackScreenProps<
 export default function SpotWizardScreen({ route, navigation }: WizardProps) {
   const insets = useSafeAreaInsets();
   const mapRef = useRef<MapView | null>(null);
-  const { profile } = useAuth();
+  const { profile, token } = useAuth();
   const { refetchSpots } = useSpots();
   const { showToast } = useToast();
   const user = profile?.userProfile;
@@ -961,11 +961,15 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
     setLoading(true);
     try {
       if (isEdit) {
-        await updateSpotMultipart({
-          ...basePayload,
-          spot_id: editSpot!.id,
-          user_id: user.id,
-        });
+        await updateSpotMultipart(
+          {
+            ...basePayload,
+            spot_id: editSpot!.id,
+            user_id: user.id,
+          },
+          [],
+          token,
+        );
         await refetchSpots();
         Alert.alert("Spot updated", `"${name.trim()}" was saved.`, [
           { text: "OK", onPress: () => navigation.goBack() },
@@ -984,6 +988,7 @@ export default function SpotWizardScreen({ route, navigation }: WizardProps) {
           mimeType: a.mimeType,
           fileName: a.fileName,
         })),
+        token,
       );
       await refetchSpots();
       let listed = asStudySpot(created);

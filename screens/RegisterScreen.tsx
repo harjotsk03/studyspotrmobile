@@ -43,8 +43,8 @@ const STEP_SUBTITLES = [
 
 const PASSWORD_REQUIREMENTS = [
   {
-    label: "Must be at least 6 characters",
-    test: (value: string) => value.length >= 6,
+    label: "Must be at least 8 characters",
+    test: (value: string) => value.length >= 8,
   },
   {
     label: "Must have a special character",
